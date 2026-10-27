@@ -1,0 +1,207 @@
+# 固定项目名：与 opendataworks 的 deploy/ 目录同名，不固定会被 Compose 当成同一项目，
+# 共用 deploy_mysql-data 等卷并互相识别为孤儿容器。
+name: opendataagent
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: dataagent-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_DATABASE: dataagent
+      MYSQL_USER: dataagent
+      MYSQL_PASSWORD: ${DATAAGENT_MYSQL_PASSWORD:-dataagent123}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+    - 3326:3306
+    volumes:
+    - mysql-data:/var/lib/mysql
+    - ./database/mysql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysqladmin ping -h localhost -uroot
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+    - --character-set-server=utf8mb4
+    - --collation-server=utf8mb4_unicode_ci
+    - --default-authentication-plugin=mysql_native_password
+  redis:
+    image: redis:7.2-alpine
+    container_name: dataagent-redis
+    restart: always
+    command:
+    - redis-server
+    - --appendonly
+    - 'yes'
+    ports:
+    - 6389:6379
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  dataagent-home-init:
+    image: ${ODA_BACKEND_IMAGE:-mikefan2019/oda-backend:latest}
+    container_name: dataagent-home-init
+    user: 0:0
+    restart: 'no'
+    command:
+    - sh
+    - -c
+    - 'set -e
+
+      mkdir -p /dataagent_runtime /app/.claude/skills
+
+      chown -R ${DATAAGENT_RUNTIME_UID:-1000}:${DATAAGENT_RUNTIME_GID:-1000} /dataagent_runtime
+      /app/.claude/skills
+
+      chmod -R u+rwX /dataagent_runtime /app/.claude/skills
+
+      '
+    volumes:
+    - ${DATAAGENT_HOST_ROOT:-/dataagent_runtime}:/dataagent_runtime
+    - dataagent-skills:/app/.claude/skills
+  dataagent-backend:
+    image: ${ODA_BACKEND_IMAGE:-mikefan2019/oda-backend:latest}
+    container_name: dataagent-backend
+    restart: always
+    env_file:
+    - ./.env
+    user: ${DATAAGENT_RUNTIME_UID:-1000}:${DATAAGENT_RUNTIME_GID:-1000}
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_USER: ${DATAAGENT_MYSQL_USER:-dataagent}
+      MYSQL_PASSWORD: ${DATAAGENT_MYSQL_PASSWORD:-dataagent123}
+      MYSQL_DATABASE: ${DATAAGENT_SESSION_MYSQL_DATABASE:-dataagent}
+      SESSION_MYSQL_DATABASE: ${DATAAGENT_SESSION_MYSQL_DATABASE:-dataagent}
+      SKILLS_ROOT_DIR: /app/.claude/skills
+      REDIS_HOST: redis
+      DATAAGENT_SANDBOX_RUNNER_URL: http://dataagent-sandbox-runner:8910
+      DATAAGENT_SANDBOX_MODE: ${DATAAGENT_SANDBOX_MODE:-container}
+      DATAAGENT_CONFIG: /app/docker/dataagent/dataagent_config.py
+    ports:
+    - 8900:8900
+    depends_on:
+      dataagent-home-init:
+        condition: service_completed_successfully
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      dataagent-sandbox-runner:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://localhost:8900/api/v1/nl2sql/health').read()
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    volumes:
+    - ${DATAAGENT_HOST_ROOT:-/dataagent_runtime}:/dataagent_runtime
+    - ./docker/dataagent:/app/docker/dataagent:ro
+    - dataagent-skills:/app/.claude/skills
+  dataagent-sandbox-runner:
+    image: ${ODA_RUNNER_IMAGE:-mikefan2019/oda-runner:latest}
+    container_name: dataagent-sandbox-runner
+    restart: always
+    env_file:
+    - ./.env
+    user: ${DATAAGENT_RUNNER_UID:-0}:${DATAAGENT_RUNNER_GID:-0}
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_USER: ${DATAAGENT_MYSQL_USER:-dataagent}
+      MYSQL_PASSWORD: ${DATAAGENT_MYSQL_PASSWORD:-dataagent123}
+      MYSQL_DATABASE: ${DATAAGENT_SESSION_MYSQL_DATABASE:-dataagent}
+      SESSION_MYSQL_DATABASE: ${DATAAGENT_SESSION_MYSQL_DATABASE:-dataagent}
+      SKILLS_ROOT_DIR: /app/.claude/skills
+      DATAAGENT_HOST_ROOT: ${DATAAGENT_HOST_ROOT:-/dataagent_runtime}
+      DATAAGENT_RUNTIME_UID: ${DATAAGENT_RUNTIME_UID:-1000}
+      DATAAGENT_RUNTIME_GID: ${DATAAGENT_RUNTIME_GID:-1000}
+      DATAAGENT_SANDBOX_MODE: ''
+      DATAAGENT_SANDBOX_IMAGE: ${ODA_RUNNER_IMAGE:-mikefan2019/oda-runner:latest}
+      DATAAGENT_SANDBOX_NETWORK: container:dataagent-sandbox-runner
+    depends_on:
+      dataagent-home-init:
+        condition: service_completed_successfully
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://localhost:8910/').read()
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    volumes:
+    - ${DATAAGENT_HOST_ROOT:-/dataagent_runtime}:/dataagent_runtime
+    - ${DATAAGENT_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    - dataagent-skills:/app/.claude/skills
+  dataagent-frontend:
+    image: ${ODA_FRONTEND_IMAGE:-mikefan2019/oda-frontend:latest}
+    container_name: dataagent-frontend
+    restart: always
+    ports:
+    - 8901:80
+    depends_on:
+      dataagent-backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - -q
+      - -O
+      - /dev/null
+      - http://localhost/
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  # 日志收集 sidecar：只读挂 docker socket，对每个目标容器实时 `docker logs --follow`
+  # 写到宿主机 deploy/logs/<container>.log；task child 日志由 runner 另行落盘在
+  # <DATAAGENT_HOST_ROOT>/<topic>/logs/。如需增减目标容器，在 .env 设置 LOG_COLLECTOR_CONTAINERS。
+  log-collector:
+    image: ${LOG_COLLECTOR_IMAGE:-docker:27.5.1-cli}
+    container_name: dataagent-log-collector
+    restart: always
+    user: "0:0"
+    environment:
+      LOG_COLLECTOR_CONTAINERS: ${LOG_COLLECTOR_CONTAINERS:-dataagent-backend dataagent-sandbox-runner}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+    - |
+      set -u
+      mkdir -p /logs
+      echo "[log-collector] following: $$LOG_COLLECTOR_CONTAINERS"
+      for c in $$LOG_COLLECTOR_CONTAINERS; do
+        (
+          while true; do
+            # --tail 0：仅从挂接点起的新日志，避免重连后重复回灌历史。
+            docker logs --follow --timestamps --tail 0 "$$c" >> "/logs/$$c.log" 2>>"/logs/_collector.err" || true
+            sleep 3
+          done
+        ) &
+      done
+      wait
+    volumes:
+    - ./logs:/logs
+    - ${DATAAGENT_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+
+volumes:
+  mysql-data:
+    driver: local
+  dataagent-skills:
+    driver: local

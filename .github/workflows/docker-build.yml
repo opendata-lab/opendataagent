@@ -1,0 +1,152 @@
+name: Build DataAgent images
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        default: latest
+env:
+  REGISTRY: docker.io
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - name: dataagent-frontend
+            image: oda-frontend
+            context: .
+            dockerfile: ./dataagent-frontend/Dockerfile
+            build_args: ""
+          - name: dataagent-backend
+            image: oda-backend
+            context: .
+            dockerfile: ./dataagent-backend/Dockerfile
+            build_args: ""
+          - name: dataagent-runner
+            image: oda-runner
+            context: .
+            dockerfile: ./dataagent-backend/Dockerfile.runner
+            build_args: ""
+          - name: dataagent-evals-builtin
+            image: oda-evals-builtin
+            context: .
+            dockerfile: ./tools/dataagent-evals/builtin/Dockerfile
+            build_args: ""
+          - name: dataagent-evals-deepeval
+            image: oda-evals-deepeval
+            context: .
+            dockerfile: ./tools/dataagent-evals/deepeval/Dockerfile
+            build_args: ""
+
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/${{ matrix.service.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version != '' && (github.event.inputs.version != 'latest' || github.ref == 'refs/heads/main') }}
+
+      - name: Build
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          build-args: ${{ matrix.service.build_args }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ runner.os }}-buildx-${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ runner.os }}-buildx-${{ matrix.service.name }},sharing=locked
+
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Push
+        id: push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: ${{ matrix.service.build_args }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ runner.os }}-buildx-${{ matrix.service.name }}
+
+      - name: Image digest
+        if: github.event_name != 'pull_request'
+        run: echo "Image digest ${{ steps.push.outputs.digest }}"
+
+  create-release:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create offline deployment package
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          scripts/create-offline-package.sh \
+            --namespace "${{ secrets.DOCKER_USERNAME }}" \
+            --tag "$VERSION" \
+            --output "oda-deployment-${VERSION}.tar.xz" \
+            --platform linux/amd64
+          sha256sum "oda-deployment-${VERSION}.tar.xz" > "oda-deployment-${VERSION}.tar.xz.sha256"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Create release body
+        run: |
+          NS="${{ secrets.DOCKER_USERNAME }}"
+          {
+            echo "## DataAgent v${VERSION}"
+            echo ""
+            echo "### 离线部署包"
+            echo "- \`oda-deployment-${VERSION}.tar.xz\`（xz 解压：\`tar -xJf\`，再执行 \`scripts/load-package-and-start.sh --package .\`）"
+            echo "- 校验和：\`oda-deployment-${VERSION}.tar.xz.sha256\`"
+            echo ""
+            echo "### Docker 镜像"
+            echo '```bash'
+            echo "docker pull ${NS}/oda-frontend:${VERSION}"
+            echo "docker pull ${NS}/oda-backend:${VERSION}"
+            echo "docker pull ${NS}/oda-runner:${VERSION}"
+            echo '```'
+          } > release_body.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          body_path: release_body.md
+          files: |
+            oda-deployment-${{ env.VERSION }}.tar.xz
+            oda-deployment-${{ env.VERSION }}.tar.xz.sha256

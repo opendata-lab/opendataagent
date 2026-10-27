@@ -1,71 +1,28 @@
-# OpenDataAgent
+# DataAgent
 
-MySQL-only 的 Skill 驱动通用 Agent 平台 MVP。
+独立智能体平台：FastAPI 后端、Vue 前端、Pi / Claude 运行时，以及通用图表和报告 Skill。
 
-## 目录结构
+## 本地运行
 
-- `frontend/`: Vue 3 + Element Plus + TailwindCSS + ECharts 聊天台
-- `backend/`: FastAPI + MySQL + Worker + Claude Agent SDK 适配层
-- `skills/`: 文件优先的 skill 包
-- `docs/`: 设计与实施计划
-
-## 快速启动
-
-### 1. Node 环境
-
-```bash
-export NVM_DIR="$HOME/.nvm"
-. "$NVM_DIR/nvm.sh"
+```sh
+python3.13 -m venv dataagent-backend/.venv-py313
+dataagent-backend/.venv-py313/bin/pip install -r dataagent-backend/requirements.txt
+. "$HOME/.nvm/nvm.sh"
 nvm use
+npm --prefix dataagent-runtime-pi ci
+npm --prefix dataagent-runtime-pi run build
+npm --prefix dataagent-frontend ci
 ```
 
-### 2. 安装前端依赖
+配置 MySQL 会话 schema、Redis、SKILLS_ROOT_DIR（仓库 .claude/skills 的绝对路径）和 DATAAGENT_HOST_ROOT。在 dataagent-backend 中运行 `.venv-py313/bin/alembic upgrade head`，再运行 `.venv-py313/bin/uvicorn main:app --port 8900`；前端运行 `npm --prefix dataagent-frontend run dev`。
+模型在设置中配置；MCP 服务需管理员显式添加并绑定到智能体。没有选择 MCP 时不挂载任何 MCP。
 
-```bash
-cd frontend
-npm install
-```
+## 部署
 
-### 3. 初始化 MySQL schema
+复制 `deploy/.env.example` 为 `deploy/.env`，按需配置 `deploy/docker/dataagent/`，运行 `scripts/start.sh`（离线环境用 `scripts/create-offline-package.sh` 打包、`scripts/load-package-and-start.sh` 安装）。只部署本产品的 MySQL、Redis、后端、runner 和前端。运行配置、登录、被门户内嵌时的转发，以及从 OpenDataWorks 内置部署迁移旧数据的步骤见 [deploy/README.md](deploy/README.md)。
 
-默认连接：
+## 验证
 
-- host: `127.0.0.1`
-- port: `3306`
-- user: `root`
-- password: `root`
-- database: `opendata_agent`
+后端在 dataagent-backend 下运行 `.venv-py313/bin/pytest`；仓库根运行 `.venv-py313` 对应 Python 的 `-m pytest tests`。Node 命令前先 `nvm use`，前端运行 test、build、build:widget，Pi 运行 test、build。
 
-可通过环境变量覆盖：
-
-- `MYSQL_HOST`
-- `MYSQL_PORT`
-- `MYSQL_USER`
-- `MYSQL_PASSWORD`
-- `MYSQL_DATABASE`
-
-### 4. 启动 API
-
-```bash
-PYTHONPATH=backend python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-### 5. 启动 Worker
-
-```bash
-PYTHONPATH=backend python3 -m app.worker.main
-```
-
-### 6. 启动前端
-
-```bash
-cd frontend
-npm run dev
-```
-
-## 运行测试
-
-```bash
-PYTHONPATH=backend pytest backend/tests -q
-```
-
+架构、会话 API 与 Widget 嵌入见 [docs/handbook/](docs/handbook/architecture.md)。迁移契约见 [docs/migration.md](docs/migration.md)，后续事项见 [docs/TODO.md](docs/TODO.md)。
