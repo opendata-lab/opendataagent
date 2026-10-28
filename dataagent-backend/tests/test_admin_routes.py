@@ -431,6 +431,7 @@ def test_agent_profile_routes_contract(monkeypatch):
         "skills": [{"folder": "marketing-insights", "source": "managed", "enabled": True}],
         "permission_modes": ["inherit", "default", "bypassPermissions"],
     })
+    monkeypatch.setattr(admin_routes, "skill_folders_from_documents", lambda documents: {"marketing-insights"})
 
     def _create(payload, available_skill_folders):
         calls["create"] = {"payload": payload, "available_skill_folders": available_skill_folders}

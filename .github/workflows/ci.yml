@@ -14,8 +14,16 @@ jobs:
           python-version-file: .python-version
           cache: pip
           cache-dependency-path: dataagent-backend/requirements.txt
+      # test_agent_record_compat builds the Pi runtime to compare both readers.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: dataagent-runtime-pi/package-lock.json
       - name: Install dependencies
-        run: pip install -r dataagent-backend/requirements.txt
+        run: |
+          pip install -r dataagent-backend/requirements.txt
+          npm --prefix dataagent-runtime-pi ci
       - name: Test
         run: python -m pytest -q
 
