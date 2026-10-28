@@ -174,4 +174,16 @@ scripts/start.sh
 - Redis 只保存任务协调状态，不需要迁移。
 - 迁移版本 `20261027_000031` 会把旧的平台 MCP 记录和平台内置智能体转为普通可编辑记录；
   管理员随后更新 MCP 地址、`X-ODW-MCP-Token` 头和提示词中的 `odw_*` 工具名，并按上面第 4 步重新导入平台 Skill。
+- 2026-10-28 之前的镜像在升级到 `20261027_000031` 时会把会话、任务的 `updated_at` 全部改成迁移时刻，会话列表因此都显示同一个时间。
+  已经这样迁移过的库，用下面的语句按最后一条消息和任务的结束时间恢复（智能体草稿与 MCP 记录的修改时间无法恢复）：
+
+  ```sh
+  docker exec -i dataagent-mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot dataagent' <<'SQL'
+  UPDATE da_agent_topic t
+  LEFT JOIN (SELECT topic_id, MAX(updated_at) last_at FROM da_agent_message GROUP BY topic_id) m ON m.topic_id = t.topic_id
+  SET t.updated_at = GREATEST(t.created_at, COALESCE(m.last_at, t.created_at));
+  UPDATE da_agent_task
+  SET updated_at = GREATEST(created_at, COALESCE(finished_at, heartbeat_at, started_at, created_at));
+  SQL
+  ```
 - 确认新部署正常后，再自行备份并删除旧 OpenDataWorks MySQL 中的 `dataagent` 库。

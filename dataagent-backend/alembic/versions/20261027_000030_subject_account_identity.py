@@ -15,7 +15,8 @@ def upgrade() -> None:
         "da_agent_task": ["agent_snapshot_json"],
     }.items():
         for column in columns:
-            op.execute(f"UPDATE {table} SET {column} = JSON_REMOVE({column}, '$.data_scope') "
+            # updated_at = updated_at keeps MySQL from stamping every row with the migration time.
+            op.execute(f"UPDATE {table} SET {column} = JSON_REMOVE({column}, '$.data_scope'), updated_at = updated_at "
                        f"WHERE {column} IS NOT NULL AND JSON_VALID({column})")
 
 
