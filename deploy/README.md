@@ -32,7 +32,7 @@ scripts/create-offline-package.sh --tag 1.0.0 --output oda-deployment-1.0.0.tar.
 
 包内含 `deploy/`（只有 `.env.example`，不带打包机的 `.env`）、部署脚本和去重后的单个镜像归档
 `deploy/docker-images/all-images.tar`（oda-frontend/backend/runner、mysql、redis、docker CLI）。
-`.env.example` 中的 `ODA_*_IMAGE` 会被改写为本地镜像名。发版 tag（`v*`）时 CI 自动生成并上传到 GitHub Release。
+`.env.example` 中的 `ODA_*_IMAGE` 会被改写为本地镜像名。发版 tag（`v*`）时 CI 自动生成并上传到 GitHub Release；main 分支每次推送刷新 `latest` Release。
 
 目标机器（需 `xz`）：
 

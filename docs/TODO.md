@@ -7,12 +7,12 @@
 ### 定时消息（会话定时任务）功能完善
 
 - **现状**（2026-10-27 核实）：只有后端。`/message-schedule` 接口（增删改查、执行日志）和协调器里的定时循环都在，数据存于 `da_agent_message_schedule`；前端 `dataagent-frontend/src/api/nl2sql.js` 封装了 `scheduleApi`，但没有任何页面或菜单调用，用户无入口。来源：2026-03-23 提交 `8bb5d774`。
-- **身份**：定时消息以所属会话的所有者（`da_agent_topic.auth_user_id`）身份执行，和手动发消息走同一条"人 EXPLAIN → 智能体执行"路径；[身份设计](https://github.com/MingkeVan/opendataworks/blob/828eb2f8/docs/design/2026-10-26-dataagent-datasource-identity-design.md)。
+- **身份**：定时消息以所属会话的所有者（`da_agent_topic.auth_user_id`）身份执行，和手动发消息走同一条"人 EXPLAIN → 智能体执行"路径；[身份设计](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-26-dataagent-datasource-identity-design.md)。
 - **要做**：决定是否正式提供定时任务。若提供，需要单独的定时任务菜单（列表、创建/编辑 cron、启停、执行记录），并按中大型变更先写设计和计划；若不提供，删除后端接口、定时循环、两张表和前端封装。
 
 ### 插件管理与导入（暂缓，后续专门实施）
 
-- **现状**（2026-10-23）：只有设计和计划，没有代码改动。见 [插件管理设计](https://github.com/MingkeVan/opendataworks/blob/828eb2f8/docs/design/2026-10-22-dataagent-plugin-management-design.md) 和 [计划](https://github.com/MingkeVan/opendataworks/blob/828eb2f8/docs/plans/2026-10-22-dataagent-plugin-management-plan.md)。已拍板：skill folder 加 `<plugin_id>__` 前缀；升级立即生效；第一阶段拒绝引用 `${CLAUDE_PLUGIN_ROOT}` 的 MCP；认证关闭的部署照常允许导入。
+- **现状**（2026-10-23）：只有设计和计划，没有代码改动。见 [插件管理设计](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-22-dataagent-plugin-management-design.md) 和 [计划](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/plans/2026-10-22-dataagent-plugin-management-plan.md)。已拍板：skill folder 加 `<plugin_id>__` 前缀；升级立即生效；第一阶段拒绝引用 `${CLAUDE_PLUGIN_ROOT}` 的 MCP；认证关闭的部署照常允许导入。
 - **评审结论**：codex 两轮评审都是"需要修改后定稿"。第二轮复核第一轮的 14 项：6 项已解决、8 项部分解决；新发现 6 项 Critical，都和"原地替换 skill 目录"这条路有关：
   1. 替换目录的各步之间存在无法可靠恢复的中断窗口（需要按 folder 记录交换意图并做幂等恢复）；
   2. `SKILLS_ROOT_DIR` 与插件仓库不在同一挂载点时 `rename` 会失败，现有部署是单独 bind mount 的；
@@ -28,8 +28,8 @@
 
 - **现状**：`dataagent-runtime-pi` 只用了 `pi-agent-core`。commands、子代理、workflow、hooks 都依赖 `pi-coding-agent` 的扩展系统。
 - **要做**：单独写设计文档。需要重写 `kernel/cell.ts`，把工作区边界、结果折叠、上下文压缩、工具结果注册改写成扩展事件；关闭 SDK 默认的编码工具、会话文件、项目信任和 `~/.pi` 配置；子代理示例会启动独立的 `pi` 进程，需要重新接入边界、取消和事件记录；hooks 需要另做安全评审。
-- **进展（2026-10-25）**：用户已确认迁移方向，设计见 [pi-coding-agent 迁移设计](https://github.com/MingkeVan/opendataworks/blob/828eb2f8/docs/design/2026-10-25-pi-coding-agent-migration-design.md)，计划见 [实施计划](https://github.com/MingkeVan/opendataworks/blob/828eb2f8/docs/plans/2026-10-25-pi-coding-agent-migration-plan.md)，第 0 步是试验。
-- **暂缓（2026-10-26）**：先完成问题卡片与计划卡片。之后与 [服务化架构](https://github.com/MingkeVan/opendataworks/blob/828eb2f8/docs/design/2026-10-25-dataagent-service-architecture-design.md) 的重构一起做，两份设计改的是同一批模块：技能 ↔ `getSkills`，隔离 ↔ 工具 `operations`，凭据与 MCP ↔ 宿主侧 MCP 扩展，会话状态 ↔ 会话条目存 MySQL。
+- **进展（2026-10-25）**：用户已确认迁移方向，设计见 [pi-coding-agent 迁移设计](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-25-pi-coding-agent-migration-design.md)，计划见 [实施计划](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/plans/2026-10-25-pi-coding-agent-migration-plan.md)，第 0 步是试验。
+- **暂缓（2026-10-26）**：先完成问题卡片与计划卡片。之后与 [服务化架构](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-25-dataagent-service-architecture-design.md) 的重构一起做，两份设计改的是同一批模块：技能 ↔ `getSkills`，隔离 ↔ 工具 `operations`，凭据与 MCP ↔ 宿主侧 MCP 扩展，会话状态 ↔ 会话条目存 MySQL。
   - 开工前先定：SA-02（是否只保留 Pi 引擎；保留 Claude Code 引擎的话，凭据、隔离、会话都要做两套）；SA-01（隔离方式，需要生产宿主机的 `uname -r`，以及容器是否允许用户命名空间）。
   - codex 评审结论记在迁移设计第 8 节，重点：MCP 扩展会另外读全局 `mcp.json`；工具白名单要列全；会话条目恢复不了执行中的工具调用；新增的帧和对话卡片是跨层变更。
   - 建议顺序：试验 → 换内核 + `run.json` + 按本轮列技能 → MCP 和凭据移到编排侧 → 会话条目存库、删除 `home/` → 用 `operations` 接新隔离、删除文本规则；技能钉版本可以随时单独做。
@@ -39,7 +39,7 @@
 
 - **现状**（2026-10-26）：问题卡片和计划卡片等待期间，Pi Cell 进程和执行槽位一直占着，只暂停总超时和空闲超时。`park` 的计划会一直等待；服务重启后，等待中的运行按现有设计结束为 `suspended`，用户要重新发送消息。
 - **要做**：等待时释放进程；用户回答后从事件日志和会话条目恢复，接着执行原来的工具调用。接续不了的，把回答作为新一轮的第一条消息自动发出。需要设计：待处理交互的记录方式、同一批里还没执行的工具、扩展状态（例如计划是否已批准）、避免重复写入。
-- **关联**：[卡片设计](https://github.com/MingkeVan/opendataworks/blob/828eb2f8/docs/design/2026-10-25-dataagent-plan-and-question-cards-design.md) PQ-06；并入上面的运行时迁移与架构升级（迁移设计 MG-07、MG-D4，服务化架构 4.5），作为其验收目标“DataAgent 重启不影响用户会话”的一部分。
+- **关联**：[卡片设计](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-25-dataagent-plan-and-question-cards-design.md) PQ-06；并入上面的运行时迁移与架构升级（迁移设计 MG-07、MG-D4，服务化架构 4.5），作为其验收目标“DataAgent 重启不影响用户会话”的一部分。
 
 ### MCP 工具名命名空间
 
@@ -53,9 +53,9 @@
 
 ### 生产运行拓扑回归
 
-- **现状**（2026-10-27）：真实模型账号已恢复，本地主进程 Pi 问数、MCP 和系统提示落库通过；生产 child-container 沙箱跳转尚未跑。后续在部署环境补测同一身份头、CLI 通道、撤权及任务持久化，不能用本地进程冒烟代替容器跳转。见[主体映射报告](https://github.com/MingkeVan/opendataworks/blob/828eb2f8/docs/reports/2026-10-26-dataagent-datasource-identity-verification.md)。
+- **现状**（2026-10-27）：真实模型账号已恢复，本地主进程 Pi 问数、MCP 和系统提示落库通过；生产 child-container 沙箱跳转尚未跑。后续在部署环境补测同一身份头、CLI 通道、撤权及任务持久化，不能用本地进程冒烟代替容器跳转。见[主体映射报告](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/reports/2026-10-26-dataagent-datasource-identity-verification.md)。
 
-- **DataAgent 前端已有失败**（来源：2026-10-27 本轮验证）：ToolOutputRenderer 的 10 项断言与当前折叠/结果展示不一致，已在未修改 HEAD 副本复现相同 10 项失败；后续单独对齐组件与测试。其余 743 项通过；见[主体映射报告](https://github.com/MingkeVan/opendataworks/blob/828eb2f8/docs/reports/2026-10-26-dataagent-datasource-identity-verification.md)。
+- **前端测试与组件对齐**（来源：2026-10-27 本轮验证）：ToolOutputRenderer 的 10 项断言与当前折叠/结果展示不一致，已在未修改 HEAD 副本复现相同 10 项失败；先确认是组件回归（运行中工具不再自动展开、展开后缺命令行）还是测试过时，再对齐。疑由 opendataworks `d8d434a1`（消息 UI 抽入 SDK 包）引入。CI（`.github/workflows/ci.yml`）暂时排除该 spec，对齐后删掉排除项。其余 743 项通过；见[主体映射报告](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/reports/2026-10-26-dataagent-datasource-identity-verification.md)。
 
 ## 部署
 
@@ -79,6 +79,8 @@
 - `da_agent_draft` 表的排序规则是 `utf8mb4_0900_ai_ci`，与其他 `da_*` 表的 `utf8mb4_unicode_ci` 不一致，以后与其他表做字符串关联时会报错。
 - `test_pi_runtime_e2e::test_real_cell_completes_the_protocol_round_trip` 假设环境里没有模型凭据；本机 `dataagent-backend/.env` 有凭据时请求会真实发出，导致失败。测试应显式清空凭据相关的环境变量。
 - Pi 测试 `cell.init Bash timeout 2s reaches the real command` 为既有时序问题；本轮新仓库与来源 HEAD 副本单独运行均复现超时，详见下方验证补充。
+- Pi 测试 `timeout stops background descendants and closes their output pipes`（`tool_env.test.js`）偶发失败：2026-10-28 本机连续 3 次 `npm test` 失败 1 次。CI 若因此变红，需让它不依赖调度时序。
+- README 还没有界面截图；前端图标文件仍沿用 `opendataworks-icon-*` 命名。来源：2026-10-28 README 整理。
 - `tools/dataagent-evals/pi-kernel-spike` 仍使用 Pi `0.85.1`，作为早期验证脚本不再维护，可以考虑归档。
 
 ## 本轮验证补充（2026-10-27）

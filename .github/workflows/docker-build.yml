@@ -43,6 +43,17 @@ jobs:
 
 
     steps:
+      - name: Check Docker Hub secrets
+        if: github.event_name != 'pull_request'
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+        run: |
+          if [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_TOKEN" ]; then
+            echo "::error::Repository secrets DOCKER_USERNAME and DOCKER_TOKEN must be set"
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -150,3 +161,87 @@ jobs:
           files: |
             oda-deployment-${{ env.VERSION }}.tar.xz
             oda-deployment-${{ env.VERSION }}.tar.xz.sha256
+
+  create-latest-release:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: create-latest-release
+      cancel-in-progress: true
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: latest
+      IMAGE_TAG: latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create latest offline deployment package
+        run: |
+          scripts/create-offline-package.sh \
+            --namespace "${{ secrets.DOCKER_USERNAME }}" \
+            --tag "${IMAGE_TAG}" \
+            --output "oda-deployment-${RELEASE_TAG}.tar.xz" \
+            --platform linux/amd64
+          sha256sum "oda-deployment-${RELEASE_TAG}.tar.xz" > "oda-deployment-${RELEASE_TAG}.tar.xz.sha256"
+
+      - name: Create latest release body
+        run: |
+          NS="${{ secrets.DOCKER_USERNAME }}"
+          {
+            echo "## DataAgent ${RELEASE_TAG}"
+            echo ""
+            echo "Source commit: \`${{ github.sha }}\`"
+            echo ""
+            echo "### 离线部署包"
+            echo "- \`oda-deployment-${RELEASE_TAG}.tar.xz\`（xz 解压：\`tar -xJf\`，再执行 \`scripts/load-package-and-start.sh --package .\`）"
+            echo "- 校验和：\`oda-deployment-${RELEASE_TAG}.tar.xz.sha256\`"
+            echo ""
+            echo "### Docker 镜像"
+            echo '```bash'
+            echo "docker pull ${NS}/oda-frontend:${IMAGE_TAG}"
+            echo "docker pull ${NS}/oda-backend:${IMAGE_TAG}"
+            echo "docker pull ${NS}/oda-runner:${IMAGE_TAG}"
+            echo '```'
+          } > latest_release_body.md
+
+      - name: Reset latest release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release delete "${RELEASE_TAG}" --repo "${REPO}" --cleanup-tag --yes
+          fi
+          gh api -X DELETE "repos/${REPO}/git/refs/tags/${RELEASE_TAG}" >/dev/null 2>&1 || true
+
+      - name: Create latest release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: DataAgent latest
+          target_commitish: ${{ github.sha }}
+          body_path: latest_release_body.md
+          files: |
+            oda-deployment-${{ env.RELEASE_TAG }}.tar.xz
+            oda-deployment-${{ env.RELEASE_TAG }}.tar.xz.sha256
+
+  summary:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Create summary
+        run: |
+          NS="${{ secrets.DOCKER_USERNAME }}"
+          {
+            echo "## Docker images pushed"
+            for image in oda-frontend oda-backend oda-runner oda-evals-builtin oda-evals-deepeval; do
+              echo "- \`${NS}/${image}\`"
+            done
+            echo ""
+            echo "Platforms: linux/amd64, linux/arm64"
+          } >> "$GITHUB_STEP_SUMMARY"

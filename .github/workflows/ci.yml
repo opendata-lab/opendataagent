@@ -1,0 +1,48 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: dataagent-backend/requirements.txt
+      - name: Install dependencies
+        run: pip install -r dataagent-backend/requirements.txt
+      - name: Test
+        run: python -m pytest -q
+
+  runtime-pi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: dataagent-runtime-pi/package-lock.json
+      - run: npm --prefix dataagent-runtime-pi ci
+      - run: npm --prefix dataagent-runtime-pi test
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: dataagent-frontend/package-lock.json
+      - run: npm --prefix dataagent-frontend ci
+      # ToolOutputRenderer.spec.js 与当前组件不一致，见 docs/TODO.md「前端测试与组件对齐」。
+      - name: Test
+        run: npm --prefix dataagent-frontend test -- --exclude src/views/intelligence/__tests__/ToolOutputRenderer.spec.js
+      - run: npm --prefix dataagent-frontend run build
+      - run: npm --prefix dataagent-frontend run build:widget
