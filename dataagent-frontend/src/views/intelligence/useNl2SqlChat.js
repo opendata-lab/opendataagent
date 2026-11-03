@@ -129,6 +129,12 @@ export function useNl2SqlChat(options) {
   const isActiveTask = (msg) => Boolean(activeTaskId.value && msg.task_id === activeTaskId.value)
 
   const loadTopicMessages = async (targetTopicId) => {
+    const requestRunToken = runToken
+    // A late history response must not replace optimistic/streaming messages
+    // or messages belonging to a conversation selected after this request.
+    const canApply = () => requestRunToken === runToken
+      && targetTopicId === topicId.value && !isBusy.value
+    if (!canApply()) return messages.value
     if (!targetTopicId) {
       messages.value = []
       return messages.value
@@ -136,13 +142,14 @@ export function useNl2SqlChat(options) {
     if (String(targetTopicId).startsWith('topic_mock_')) return messages.value
     try {
       const page = await api.topicApi.getTopicMessages(targetTopicId, { page: 1, page_size: messagePageSize, order: 'asc' })
+      if (!canApply()) return messages.value
       messages.value = (page?.items || [])
         .filter((item) => item?.sender_type === 'user' || item?.sender_type === 'assistant')
         .map(hydrateMessageFromApi)
       hydratedTopicIds.add(targetTopicId)
     } catch (error) {
       console.warn('[useNl2SqlChat] failed to load messages:', error)
-      messages.value = []
+      if (canApply()) messages.value = []
     }
     return messages.value
   }
@@ -165,15 +172,20 @@ export function useNl2SqlChat(options) {
   }
 
   const loadTopics = async () => {
+    const requestRunToken = runToken
+    const requestedTopicId = topicId.value
+    const canReloadMessages = () => requestRunToken === runToken
+      && requestedTopicId === topicId.value && !isBusy.value
     try {
       await refreshTopics()
+      if (!canReloadMessages()) return
       // Default to a fresh conversation on open instead of auto-selecting the
       // latest topic, so a new question can be asked immediately.
       await loadTopicMessages(topicId.value || '')
       resumeActiveTopicTask(topicId.value)
     } catch {
       topics.value = []
-      messages.value = []
+      if (canReloadMessages()) messages.value = []
     }
   }
 

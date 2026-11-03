@@ -82,6 +82,73 @@ describe('useNl2SqlChat engine', () => {
     expect(userMsg.content).toContain('sales.csv')
   })
 
+  it('keeps the live conversation when the initial topic list arrives after sending', async () => {
+    const api = makeApi()
+    let resolveList
+    let resolveStream
+    api.topicApi.listTopics.mockImplementation(() => new Promise((resolve) => { resolveList = resolve }))
+    api.taskApi.streamSdkEvents.mockImplementation(() => new Promise((resolve) => { resolveStream = resolve }))
+    const chat = await ready(api)
+    const initialLoad = chat.loadTopics()
+
+    chat.inputText.value = '正在查询'
+    const sending = chat.send()
+    await flushPromises()
+    const assistant = chat.messages.value[1]
+    resolveList([])
+    await initialLoad
+
+    expect(chat.isBusy.value).toBe(true)
+    expect(chat.messages.value.map((message) => message.role)).toEqual(['user', 'assistant'])
+    expect(chat.messages.value[1]).toBe(assistant)
+    expect(api.topicApi.getTopicMessages).not.toHaveBeenCalled()
+    resolveStream()
+    await sending
+  })
+
+  it.each(['resolve', 'reject'])('ignores a stale history %s after a new run starts', async (settle) => {
+    const api = makeApi()
+    let resolveHistory
+    let rejectHistory
+    let resolveStream
+    api.topicApi.getTopicMessages.mockImplementation(() => new Promise((resolve, reject) => {
+      resolveHistory = resolve
+      rejectHistory = reject
+    }))
+    api.taskApi.streamSdkEvents.mockImplementation(() => new Promise((resolve) => { resolveStream = resolve }))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const chat = await ready(api)
+    chat.topicId.value = 'topic-existing'
+    const loading = chat.loadTopicMessages('topic-existing')
+    chat.inputText.value = '新问题'
+    const sending = chat.send()
+    await flushPromises()
+    const assistant = chat.messages.value[1]
+
+    if (settle === 'resolve') resolveHistory({ items: [] })
+    else rejectHistory(new Error('history failed'))
+    await loading
+
+    expect(chat.messages.value[0].content).toBe('新问题')
+    expect(chat.messages.value[1]).toBe(assistant)
+    resolveStream()
+    await sending
+  })
+
+  it('does not restore a previous topic when its history arrives after starting a new conversation', async () => {
+    const api = makeApi()
+    let resolveHistory
+    api.topicApi.getTopicMessages.mockImplementation(() => new Promise((resolve) => { resolveHistory = resolve }))
+    const chat = await ready(api)
+    const selecting = chat.selectTopic('topic-old')
+    await chat.newConversation()
+    resolveHistory({ items: [{ sender_type: 'user', content: '旧问题' }] })
+    await selecting
+
+    expect(chat.topicId.value).toBe('')
+    expect(chat.messages.value).toEqual([])
+  })
+
   it('loads run-generated attachments onto the assistant message after the stream ends', async () => {
     const api = makeApi()
     api.taskApi.streamSdkEvents.mockImplementation(async (_taskId, opts) => {
