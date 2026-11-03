@@ -24,21 +24,24 @@
 - **下次实施前先决定**：是否放弃"原地替换目录"，改为"每次安装或升级写入新的版本目录，运行时把稳定的 skill 标识解析到当前版本"。后一种方式能一并避开上面 1、2、3、5 项，代价是运行时要增加一层通用的 skill 路径解析。确定后再修订设计、重新评审。
 - **可以先单独做的通用修正**：快照里的 skill 与当前启用状态取交集（计划第 0 项），注意沙箱会自动补入平台工具 skill，以及空配置与全局 fallback 的区别。
 
-### 运行时迁到 `pi-coding-agent` SDK
+### 运行时迁到 `pi-coding-agent` SDK 与 Docker 沙箱架构整合
 
-- **现状**：`dataagent-runtime-pi` 只用了 `pi-agent-core`。commands、子代理、workflow、hooks 都依赖 `pi-coding-agent` 的扩展系统。
-- **要做**：单独写设计文档。需要重写 `kernel/cell.ts`，把工作区边界、结果折叠、上下文压缩、工具结果注册改写成扩展事件；关闭 SDK 默认的编码工具、会话文件、项目信任和 `~/.pi` 配置；子代理示例会启动独立的 `pi` 进程，需要重新接入边界、取消和事件记录；hooks 需要另做安全评审。
-- **进展（2026-10-25）**：用户已确认迁移方向，设计见 [pi-coding-agent 迁移设计](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-25-pi-coding-agent-migration-design.md)，计划见 [实施计划](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/plans/2026-10-25-pi-coding-agent-migration-plan.md)，第 0 步是试验。
-- **暂缓（2026-10-26）**：先完成问题卡片与计划卡片。之后与 [服务化架构](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-25-dataagent-service-architecture-design.md) 的重构一起做，两份设计改的是同一批模块：技能 ↔ `getSkills`，隔离 ↔ 工具 `operations`，凭据与 MCP ↔ 宿主侧 MCP 扩展，会话状态 ↔ 会话条目存 MySQL。
-  - 开工前先定：SA-02（是否只保留 Pi 引擎；保留 Claude Code 引擎的话，凭据、隔离、会话都要做两套）；SA-01（隔离方式，需要生产宿主机的 `uname -r`，以及容器是否允许用户命名空间）。
-  - codex 评审结论记在迁移设计第 8 节，重点：MCP 扩展会另外读全局 `mcp.json`；工具白名单要列全；会话条目恢复不了执行中的工具调用；新增的帧和对话卡片是跨层变更。
-  - 建议顺序：试验 → 换内核 + `run.json` + 按本轮列技能 → MCP 和凭据移到编排侧 → 会话条目存库、删除 `home/` → 用 `operations` 接新隔离、删除文本规则；技能钉版本可以随时单独做。
-  - **验收目标（2026-10-26 用户确认）：DataAgent 重启不影响用户会话。** 重启前等待中的问题卡片和计划卡片，重启后仍可回答，回答后接着原来的运行继续，不要求用户重发消息；重启前已完成的对话完整保留工具上下文。下面的 PQ-06 并入这次升级，不单独在现有运行时上做。
+- **工具配置修订（2026-11-03 用户讨论）**：保留 `write/edit` 并让全部基础工具在沙箱执行，固定启用 `bash/read/write/edit/ls/find/grep`，删除旧基础工具勾选及 `allowed_tools` 业务契约，保留 Skills/MCP 选择。设计 3.2.1、3.2.4 和计划 Step 0–3 已同步，代码尚未实施；来源见[评审报告 R2](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
+- **现状**：`dataagent-runtime-pi` 只用了 `pi-agent-core`；容器模式下经 `backend -> sandbox-runner -> sandbox_task_main -> Pi Cell -> bash` 5 层进程跳转，静态正则 `boundary_policy` 频繁误报路径拦截。
+- **已拍板并完成评审修订（2026-11-03）**：
+  - 合并原服务化架构与 `pi-coding-agent` 迁移方案，并按[静态评审报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)及后续用户讨论简化机制，设计见 [运行时整合与 Docker 沙箱架构设计](design/2026-11-03-agent-runtime-sandbox-architecture-design.md) 和 [实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)。
+  - `SA-01`（隔离与生命周期）：采用单轮按需启动的 Docker 沙箱容器（`oda-sandbox`），同段多次工具调用通过 `docker exec` 复用（命令超时或取消即结束本段并销毁容器，清理全部后代进程），本轮结束或卡片挂起时在 `finally` 中立即 `docker rm -f` 销毁；取消无隔离的宿主 `local` 回退模式。
+  - `SA-02`（引擎）：只保留 Pi 引擎（迁至 `pi-coding-agent` SDK），删除 `claude-agent-sdk` 分支与每会话 `home/` 目录。
+  - `SA-03`（服务收敛）：砍掉 `dataagent-sandbox-runner` 服务与 `sandbox_task_main.py`，由 `dataagent-backend`（`Pi Cell`）直接通过本地 Docker/Podman CLI 管理沙箱容器。
+  - `SA-04`（工具边界）：关闭 SDK 默认宿主实现（`tools: []`），固定启用 `bash/read/write/edit/ls/find/grep` 并全部路由进 `oda-sandbox` 容器内执行（不在宿主进程调用 `node:fs` 解析模型路径），彻底删除 `boundary_policy` 正则检查与工作区 `.claude/skills` 拷贝。
+  - `SA-05`（卡片续聊与串行门控）：保持串行执行与业务门控；卡片结束当前执行段，保存会话并释放资源；用户回答后在原 Topic/任务下正常续聊，不保存延迟工具队列、不改写历史结果或补跑工具批次。具体写操作批准绑定原工具和参数，结果未知不自动重放。
+  - `SA-06`（大输出落盘、权限与配置瘦身）：大输出自动保存原始 JSON/文本，当前 Topic 结果目录只读挂载 `/mnt/results`，工具结果返回路径供基础工具和脚本直接读取；移除专用分页/搜索工具，不增加导出工具。旧结果一次性迁移，后端入口初始化权限并降权，精简冗余配置。
+  - **要做**：按[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md) Step 0 -> Step 5 执行代码改动与全链路冒烟验收。
 
 ### 等待用户时释放运行资源（卡片设计 PQ-06）
 
 - **现状**（2026-10-26）：问题卡片和计划卡片等待期间，Pi Cell 进程和执行槽位一直占着，只暂停总超时和空闲超时。`park` 的计划会一直等待；服务重启后，等待中的运行按现有设计结束为 `suspended`，用户要重新发送消息。
-- **要做**：等待时释放进程；用户回答后从事件日志和会话条目恢复，接着执行原来的工具调用。接续不了的，把回答作为新一轮的第一条消息自动发出。需要设计：待处理交互的记录方式、同一批里还没执行的工具、扩展状态（例如计划是否已批准）、避免重复写入。
+- **要做**：按新版设计 3.4 实施：等待时结束本执行段并保存会话，回答后在原任务下以新输入续聊，保留计划批准和预算；同批未执行工具明确记为未执行，交给模型重新决定，不实现断点补跑。写确认仅执行已批准的具体操作，未知结果不自动重放。
 - **关联**：[卡片设计](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-25-dataagent-plan-and-question-cards-design.md) PQ-06；并入上面的运行时迁移与架构升级（迁移设计 MG-07、MG-D4，服务化架构 4.5），作为其验收目标“DataAgent 重启不影响用户会话”的一部分。
 
 ### MCP 工具名命名空间
@@ -92,3 +95,9 @@
 
 - 2026-11-03 再验仍为相同两项：全量 182/184，通过定向重跑 channel_flush，Bash 2 秒仍失败，详见[构建验证报告](reports/2026-11-03-ci-build-optimization-verification.md)。Pi 的 Bash 2 秒时序用例在本机全量与单独运行均超时；来源仓库未修改的 HEAD 副本同样失败，保留后续稳定性治理。另一次并发全量中 channel_flush 的负向控制用例未发生预期截断，重跑通过；需使该测试不依赖机器调度时序。来源：opendataworks `docs/reports/2026-10-27-dataagent-opendataworks-decoupling-verification.md`。
 - 生产 child-container 及命名 Skill 卷初始化/升级尚未实跑，需在部署环境补齐；本轮覆盖本地主进程 Pi、MCP、Java 与真实 MySQL。沿用上方生产拓扑待办。
+
+## 已完成
+
+- **评审后简化方案同步（2026-11-03）**：原“简化待同步”已完成文档修订，采用卡片结束当前段后续聊、大输出自动落盘返回 `/mnt/results` 路径、7 个基础工具固定启用并保留编辑能力；删除延迟批次补跑及专用导出路径，统一迁移、超时清理、协议和验收要求。结果见[设计](design/2026-11-03-agent-runtime-sandbox-architecture-design.md) 3.2–3.7、[计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)和[评审修订](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。仅文档检查通过，代码和端到端验收仍由上方运行时改造待办跟踪。
+
+- **运行时与沙箱方案评审补齐（文档修订，2026-11-03）**：对照[静态评审报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)的 R1–R8 共 8 项问题，已在[设计文档](design/2026-11-03-agent-runtime-sandbox-architecture-design.md)（3.2–3.6、4.1–4.2 节）与[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)（Step 0–Step 5）中逐项补齐机制、涉及文件与验收标准；代码实现与新架构冒烟归入上方“运行时迁到 `pi-coding-agent` SDK 与 Docker 沙箱架构整合”跟踪。
