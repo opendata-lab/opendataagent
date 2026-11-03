@@ -122,7 +122,7 @@
                       </div>
 
                       <!-- Tool use block (chart-producing tools render their chart directly below the block) -->
-                      <div v-else-if="block.type === 'tool_use'" class="query-tool-row">
+                      <div v-else-if="block.type === 'tool_use' && !isQuestionToolBlock(block)" class="query-tool-row">
                         <ToolOutputRenderer :tool="blockToToolProp(block)" :file-url-resolver="resolveWorkspaceFileHref" />
                       </div>
 
@@ -132,6 +132,13 @@
                         :block="block"
                         :disabled="msg._v2state.status !== 'streaming'"
                         @decide="(payload) => handlePermissionDecision(msg, payload)"
+                      />
+
+                      <QuestionCard
+                        v-else-if="block.type === 'question_request'"
+                        :block="block"
+                        :disabled="msg._v2state.status !== 'streaming'"
+                        @answer="(payload) => handleQuestionAnswer(msg, payload)"
                       />
 
                       <!-- Text block (inline chart_spec rendered as a real chart) -->
@@ -355,6 +362,7 @@ import { Lock } from '@element-plus/icons-vue'
 import { createNl2SqlApiClient } from '@/api/nl2sql'
 import ToolOutputRenderer from '../../packages/agent-conversation/src/ui/ToolOutput.vue'
 import ChartSpecView from '../../packages/agent-conversation/src/ui/ChartSpecView.vue'
+import QuestionCard from '../../packages/agent-conversation/src/ui/QuestionCard.vue'
 import PermissionConfirmationCard from '../../packages/agent-conversation/src/ui/PermissionCard.vue'
 import { splitChartSpecText, stripChartSpecsFromText } from '@/views/intelligence/chartSpec'
 import { blockToToolProp, processV2Record } from '@/views/intelligence/v2StreamParser'
@@ -645,6 +653,8 @@ const formatBytes = (size) => {
 // (fenced, tagged, or raw JSON) renders as a real chart instead of leaking JSON.
 const answerSegments = (content) => splitChartSpecText(String(content || ''))
 
+const isQuestionToolBlock = (block) => String(block?.name || '').split('__').pop() === 'AskUserQuestion'
+
 // A block conveys its own live progress: streaming text/thinking shows the
 // blinking cursor (or the "深度思考" badge dot), and a tool_use shows its
 // running state until its result lands. While one of these is the tail block,
@@ -659,7 +669,7 @@ const isBlockActivelyProgressing = (block) => {
 // Show the trailing typing dots whenever the task is still running but the tail
 // block is not itself streaming — this fills the gaps the inline cursor leaves
 // (between turns, before a turn's first block, after a settled block). A pending
-// permission card means the run is waiting on the user, not working, so suppress.
+// permission or question card means the run is waiting on the user, so suppress.
 const showTrailingActivity = (msg) => {
   if (!isActiveTask(msg)) return false
   const state = msg._v2state
@@ -668,6 +678,7 @@ const showTrailingActivity = (msg) => {
   const lastTurn = state.turns[state.turns.length - 1]
   const lastBlock = lastTurn?.blocks?.[lastTurn.blocks.length - 1]
   if (lastBlock?.type === 'permission_request' && lastBlock.decision === 'pending') return false
+  if (lastBlock?.type === 'question_request' && !lastBlock.answered) return false
   return !isBlockActivelyProgressing(lastBlock)
 }
 
@@ -686,6 +697,24 @@ const handlePermissionDecision = async (msg, payload) => {
     if (block && block.decision === 'pending') {
       block.summary = (block.summary || '') + '\n[提交失败，请重试]'
       block._submitFailed = Date.now()
+    }
+  }
+}
+
+// Streamed question_answer records remain the source of the answered state.
+const handleQuestionAnswer = async (msg, payload) => {
+  const taskId = String(msg?.task_id || activeTaskId.value || '').trim()
+  const requestId = String(payload?.requestId || '').trim()
+  if (!taskId || !requestId) return
+  try {
+    await api.taskApi.submitQuestionAnswer(taskId, requestId, payload.answers || [])
+  } catch (_err) {
+    const block = (msg?._v2state?.blocks || []).find(
+      (b) => b.type === 'question_request' && b.requestId === requestId,
+    )
+    if (block && !block.answered) {
+      block._submitFailed = (block._submitFailed || 0) + 1
+      triggerRef(messages)
     }
   }
 }

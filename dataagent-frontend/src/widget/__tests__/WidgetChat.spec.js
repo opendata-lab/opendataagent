@@ -56,7 +56,8 @@ const apiMocks = vi.hoisted(() => ({
     deliverMessage: vi.fn(),
     streamSdkEvents: vi.fn(),
     getTask: vi.fn(),
-    cancelTask: vi.fn()
+    cancelTask: vi.fn(),
+    submitQuestionAnswer: vi.fn()
   }
 }))
 
@@ -157,6 +158,7 @@ describe('WidgetChat history conversations', () => {
     apiMocks.topicApi.updateMessageFeedback.mockImplementation(async (_topicId, messageId, feedback) => ({ message_id: messageId, feedback }))
     apiMocks.topicApi.fetchFileBlob.mockResolvedValue(new Blob(['file-content']))
     apiMocks.taskApi.deliverMessage.mockResolvedValue({ task_id: 'task-1' })
+    apiMocks.taskApi.submitQuestionAnswer.mockResolvedValue({})
     apiMocks.taskApi.getTask.mockResolvedValue({ task_status: 'finished' })
     apiMocks.taskApi.streamSdkEvents.mockResolvedValue()
     vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -907,6 +909,51 @@ describe('WidgetChat history conversations', () => {
     expect(apiMocks.taskApi.deliverMessage).toHaveBeenCalledWith(expect.objectContaining({
       agent_id: 'agent_widget'
     }))
+  })
+
+  it.each(['inline', 'floating'])('renders and answers AskUserQuestion in %s mode, with retry on failure', async (displayMode) => {
+    let controls
+    apiMocks.taskApi.streamSdkEvents.mockImplementation((_taskId, options) => new Promise((resolve) => {
+      controls = { options, resolve }
+    }))
+    const { wrapper } = mountChat({ config: { displayMode } })
+    await flushPromises()
+    await wrapper.get('textarea').setValue('请确认统计口径')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    const record = (record_type, data) => controls.options.onRecord({ record_type, data })
+    record('stream', { type: 'message_start', usage: {} })
+    record('stream', { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'ask-1', name: 'AskUserQuestion' } })
+    record('stream', { type: 'content_block_stop', index: 0 })
+    record('question_request', {
+      request_id: 'question-1',
+      questions: [{ header: '口径', question: '按什么维度统计？', options: [{ label: '按天', description: '每天汇总' }] }],
+    })
+    await flushPromises()
+    expect(wrapper.get('.dac-q-card').text()).toContain('按什么维度统计？')
+    expect(wrapper.find('.query-tool-row').exists()).toBe(false)
+    expect(wrapper.find('.query-typing-indicator-trailing').exists()).toBe(false)
+
+    apiMocks.taskApi.submitQuestionAnswer.mockRejectedValueOnce(new Error('network error'))
+    await wrapper.get('.dac-q-opt').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.dac-q-failed').text()).toContain('提交失败')
+    expect(wrapper.get('.dac-q-opt').attributes('disabled')).toBeUndefined()
+    await wrapper.get('.dac-q-opt').trigger('click')
+    await flushPromises()
+    const answers = [{ header: '口径', question: '按什么维度统计？', selected: ['按天'], other: '', skipped: false }]
+    expect(apiMocks.taskApi.submitQuestionAnswer).toHaveBeenLastCalledWith('task-1', 'question-1', answers)
+    expect(apiMocks.taskApi.submitQuestionAnswer).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('.dac-q-opt').attributes('disabled')).toBeDefined()
+
+    record('question_answer', { request_id: 'question-1', answers })
+    await flushPromises()
+    expect(wrapper.get('.dac-q-result').text()).toContain('已补充 1 项 · 按天')
+    expect(wrapper.find('.query-typing-indicator-trailing').exists()).toBe(true)
+    record('done', {})
+    controls.resolve()
+    await flushPromises()
+    wrapper.unmount()
   })
 
   it('keeps a trailing activity cue visible between streamed blocks while the run is still working', async () => {
