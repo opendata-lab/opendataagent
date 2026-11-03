@@ -1,9 +1,9 @@
-FROM node:20.19-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:20.19-alpine AS builder
 
 WORKDIR /app
 
 COPY dataagent-frontend/package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY dataagent-frontend ./
 RUN npm run build && npm run build:widget

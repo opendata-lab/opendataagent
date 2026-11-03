@@ -3,7 +3,7 @@
 # process when DATAAGENT_RUNTIME_KIND=pi_agent_core. NODE_ENV is deliberately
 # left unset: npm's `omit` config defaults to ["dev"] when NODE_ENV=production,
 # which would drop typescript and break the build below.
-FROM node:22-bookworm-slim AS pi-cell
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS pi-cell
 WORKDIR /build
 COPY dataagent-runtime-pi/package.json dataagent-runtime-pi/package-lock.json dataagent-runtime-pi/tsconfig.json ./
 RUN npm ci --ignore-scripts
