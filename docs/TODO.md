@@ -26,8 +26,8 @@
 
 ### 真实 provider 与业务问数最终验收
 
-- **现状（2026-11-03）**：运行时/沙箱改造已实施，真实 MySQL/Redis/Docker + 本地模型/MCP fixture 的 HTTP 流程及浏览器卡片续聊通过，未使用真实 provider。用户将配置本地 provider。
-- **要做**：配置后运行真实模型 liveness 与“最近 30 天工作流发布次数趋势”，核对目标 MCP 身份、真实查询、图表和完整报告下载。来源：用户本轮要求将凭据相关验证留后；关联[设计](design/2026-11-03-agent-runtime-sandbox-architecture-design.md)、[计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)、[验证报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
+- **现状（2026-11-03）**：运行时/沙箱改造已实施。2026-11-04 真实 DeepSeek + OpenDataWorks MCP 对现有验收订单表查询 2 / 30.00 通过；Stop 的模型断流/进程/容器清理通过。当前服务账号仅有验收数据源权限，真实零售业务数据和图表报告仍未验收，见[最新报告](reports/2026-11-04-agent-stop-and-odw-verification.md)。
+- **要做**：在用户明确批准进一步付费测试并配置真实业务数据源权限后运行“最近 30 天工作流发布次数趋势”，核对目标 MCP 身份、真实查询、图表和完整报告下载。来源：用户本轮要求将凭据相关验证留后；关联[设计](design/2026-11-03-agent-runtime-sandbox-architecture-design.md)、[计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)、[验证报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
 
 ### MCP 工具名命名空间
 

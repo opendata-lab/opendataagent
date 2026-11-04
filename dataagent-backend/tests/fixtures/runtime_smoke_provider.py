@@ -6,6 +6,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
 app=FastAPI()
+requests=[]
+
+@app.get('/smoke-state')
+async def smoke_state(): return requests
+
 
 @app.post('/v1/chat/completions')
 async def complete(request:Request):
@@ -52,19 +57,25 @@ async def complete(request:Request):
     elif scenario in {'MCP_WRITE','MCP_DENY','MCP_UNKNOWN'}:
         if not tools: call('smoke_write_record',value=scenario,hold=scenario=='MCP_UNKNOWN')
         else: answer='write-resumed-ok'
-    elif scenario=='BASH_TIMEOUT':
+    elif scenario in {'BASH_TIMEOUT','CANCEL_BASH'}:
         if not tools: call('bash',command='sleep 20 & wait')
     async def stream():
-        if scenario in {'IDLE','CANCEL'}: await asyncio.sleep(60)
-        base={'id':'local-smoke','object':'chat.completion.chunk','created':1,'model':payload.get('model','smoke')}
-        yield 'data: '+json.dumps({**base,'choices':[{'index':0,'delta':{'role':'assistant'},'finish_reason':None}]})+'\n\n'
-        if calls:
-            for i,c in enumerate(calls):
-                yield 'data: '+json.dumps({**base,'choices':[{'index':0,'delta':{'tool_calls':[{'index':i,**c}]},'finish_reason':None}]})+'\n\n'
-            finish='tool_calls'
-        else:
-            yield 'data: '+json.dumps({**base,'choices':[{'index':0,'delta':{'content':answer},'finish_reason':None}]})+'\n\n'
-            finish='stop'
-        yield 'data: '+json.dumps({**base,'choices':[{'index':0,'delta':{},'finish_reason':finish}],'usage':{'prompt_tokens':10,'completion_tokens':5,'total_tokens':15}})+'\n\n'
-        yield 'data: [DONE]\n\n'
+        entry={'scenario':scenario,'state':'running'}
+        requests.append(entry)
+        try:
+            if scenario in {'IDLE','CANCEL'}: await asyncio.sleep(60)
+            base={'id':'local-smoke','object':'chat.completion.chunk','created':1,'model':payload.get('model','smoke')}
+            yield 'data: '+json.dumps({**base,'choices':[{'index':0,'delta':{'role':'assistant'},'finish_reason':None}]})+'\n\n'
+            if calls:
+                for i,c in enumerate(calls):
+                    yield 'data: '+json.dumps({**base,'choices':[{'index':0,'delta':{'tool_calls':[{'index':i,**c}]},'finish_reason':None}]})+'\n\n'
+                finish='tool_calls'
+            else:
+                yield 'data: '+json.dumps({**base,'choices':[{'index':0,'delta':{'content':answer},'finish_reason':None}]})+'\n\n'
+                finish='stop'
+            yield 'data: '+json.dumps({**base,'choices':[{'index':0,'delta':{},'finish_reason':finish}],'usage':{'prompt_tokens':10,'completion_tokens':5,'total_tokens':15}})+'\n\n'
+            yield 'data: [DONE]\n\n'
+            entry['state']='finished'
+        finally:
+            if entry['state']=='running': entry['state']='disconnected'
     return StreamingResponse(stream(),media_type='text/event-stream')

@@ -120,3 +120,7 @@
 ### 报告技能文件输入修正
 
 完整结果 smoke 发现报告技能文档声明 `--input-file`，但 generate_report.py 未实现，且 JSON 路径按 CSV 读取。本轮在技能本地实现互斥的 `--input`/`--input-file`，JSON 文件直接读取 rows；保留已有 CSV/内联 JSON 调用，更新技能文档及回归测试。共享运行时不增加报告专用调用层。
+
+### 2026-11-04 Stop 的实际资源验收补充
+
+在不使用真实模型额度的 HTTP fixture 中观测请求生命周期：取消时确认服务端流断开、Pi 子进程消失、Redis lease 释放、运行中 sandbox 及后代销毁、任务/助手/SSE 均终态且记录不再增长。复用正在运行的 backend，新增专用 cancel smoke，仅创建自己的本地 provider/agent/topics，不改用户模型。真实 ODW 只读查询另外记录实际工具结果，不把验收测试表声称为生产业务数据。

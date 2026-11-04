@@ -108,8 +108,21 @@ jobs:
         run: |
           export DATAAGENT_NODE_BIN="$(command -v node)"
           python dataagent-backend/tests/runtime_http_smoke.py
+      - name: Cancellation closes streams, Pi processes and sandbox descendants
+        run: |
+          export DATAAGENT_NODE_BIN="$(command -v node)"
+          export SKILLS_ROOT_DIR="$GITHUB_WORKSPACE/.claude/skills"
+          export DATAAGENT_HOST_ROOT="$GITHUB_WORKSPACE"
+          export DATAAGENT_SANDBOX_IMAGE=oda-sandbox:test
+          (cd dataagent-backend && exec python -m uvicorn main:app --host 127.0.0.1 --port 8900) > /tmp/cancel-backend.log 2>&1 &
+          backend_pid=$!
+          trap 'kill "$backend_pid" 2>/dev/null || true' EXIT
+          python dataagent-backend/tests/runtime_cancel_smoke.py
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: runtime-http-logs
-          path: /tmp/dataagent-http-smoke-*/**/*.log
+          path: |
+            /tmp/dataagent-http-smoke-*/**/*.log
+            /tmp/cancel-smoke-*/**/*
+            /tmp/cancel-backend.log
