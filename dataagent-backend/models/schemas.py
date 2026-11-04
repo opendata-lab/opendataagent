@@ -515,7 +515,6 @@ class AgentProfileBase(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     system_prompt: Optional[str] = None
-    allowed_tools: Optional[List[str]] = None
     mcp_server_ids: Optional[List[str]] = None
     skill_folders: Optional[List[str]] = None
     max_turns: Optional[int] = None
@@ -558,7 +557,6 @@ class AgentMcpServerCapability(BaseModel):
 
 
 class AgentCapabilitiesResponse(BaseModel):
-    tools: List[str] = Field(default_factory=list)
     mcp_servers: List[AgentMcpServerCapability] = Field(default_factory=list)
     skills: List[AgentSkillCapability] = Field(default_factory=list)
 
@@ -568,7 +566,6 @@ class AgentProfile(BaseModel):
     name: str
     description: str = ""
     system_prompt: str = ""
-    allowed_tools: List[str] = Field(default_factory=list)
     mcp_server_ids: List[str] = Field(default_factory=list)
     skill_folders: List[str] = Field(default_factory=list)
     max_turns: int = 0
@@ -591,7 +588,6 @@ class AgentReadableProfile(BaseModel):
     name: str
     description: str = ""
     system_prompt: str = ""
-    allowed_tools: List[str] = Field(default_factory=list)
     mcp_server_ids: List[str] = Field(default_factory=list)
     skill_folders: List[str] = Field(default_factory=list)
     max_turns: int = 0

@@ -1,7 +1,7 @@
 # DataAgent 部署
 
 `deploy/docker-compose.yml` 是一个独立的 Compose 项目（项目名固定为 `opendataagent`），
-自带 MySQL、Redis、backend、sandbox runner 和前端，不依赖任何其他平台。
+自带 MySQL、Redis、backend 和前端，工具使用按需启动的 oda-sandbox 容器，不依赖任何其他平台。
 
 ```sh
 cp deploy/.env.example deploy/.env      # 按需修改；缺失时 start.sh 会从模板复制
@@ -31,7 +31,7 @@ scripts/create-offline-package.sh --tag 1.0.0 --output oda-deployment-1.0.0.tar.
 ```
 
 包内含 `deploy/`（只有 `.env.example`，不带打包机的 `.env`）、部署脚本和去重后的单个镜像归档
-`deploy/docker-images/all-images.tar`（oda-frontend/backend/runner、mysql、redis、docker CLI）。
+`deploy/docker-images/all-images.tar`（oda-frontend/backend/sandbox、mysql、redis、docker CLI）。
 `.env.example` 中的 `ODA_*_IMAGE` 会被改写为本地镜像名。发版 tag（`v*`）时 CI 自动生成并上传到 GitHub Release；main 分支每次推送刷新 `latest` Release。
 
 目标机器（需 `xz`）：
@@ -45,9 +45,9 @@ scripts/load-package-and-start.sh --package .   # 加载镜像；deploy/.env 不
 
 ## 日志
 
-- `log-collector` 把 `dataagent-backend`、`dataagent-sandbox-runner` 的日志实时写到 `deploy/logs/<容器名>.log`；
+- `log-collector` 把 `dataagent-backend` 的日志实时写到 `deploy/logs/<容器名>.log`；
   在 `.env` 用 `LOG_COLLECTOR_CONTAINERS` 增减目标容器。
-- `scripts/dump-logs.sh` 导出全部服务日志到 `deploy/logs/services/`，并把 task child 日志汇总到 `deploy/logs/task-child/<topic>/`；
+- `scripts/dump-logs.sh` 导出全部服务日志到 `deploy/logs/services/`，并把 旧版本 task child 日志汇总到 `deploy/logs/task-child/<topic>/`；
   打包带走：`tar -czf dataagent-logs.tgz -C deploy logs`。
 
 ## 运行配置
@@ -65,24 +65,39 @@ scripts/load-package-and-start.sh --package .   # 加载镜像；deploy/.env 不
 | `agent_*_max_turns` | 24 | 40 |
 | `agent_*_max_tool_calls`（Pi） | 100 | 200 |
 | `agent_*_timeout_seconds` | 360 | 1800 |
-| `agent_*_bash_timeout_seconds`（Pi） | 300 | 900 |
-| `agent_*_sql_read_timeout_seconds` | 300 | 900 |
+| `agent_*_bash_timeout_seconds`（Pi） | 300 | 600 |
+| `agent_*_sql_read_timeout_seconds` | 300 | 300 |
 
 `*` 为 `interactive` 或 `background`；页面发送 `auto`，走后台档。Pi 无活动超时
-`dataagent_run_idle_timeout_seconds` 为 300 秒。SQL 超时不大于 Bash 超时，Bash 小于总超时。
+`dataagent_run_idle_timeout_seconds` 为 300 秒。SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。
 反向代理的读写超时必须大于后台总超时（1800 秒），前端镜像内置 nginx 为 1860 秒。
 
 ## 运行时目录与沙箱
 
-- `DATAAGENT_HOST_ROOT`（默认 `/dataagent_runtime`）是宿主机持久化目录，挂到容器内 `/dataagent_runtime`。
-  每个 topic 位于 `/dataagent_runtime/<topic_id>/`，agent 工作目录是其中的 `workspace/`。
-  runner 会按该路径为 task child 绑定挂载；相对路径由 `scripts/start.sh` 展开。
-- `dataagent-home-init` 以 root 运行一次，预建运行时目录和 Skill 卷并修正属主为 `DATAAGENT_RUNTIME_UID/GID`（默认 `1000:1000`）。
-- backend 负责 topic/task 协调；`DATAAGENT_SANDBOX_MODE=container` 时把任务交给 runner，
-  runner 为每个 task 启动一次性 child 容器（`--rm`），只把当前 topic 目录挂到 child 的 `/mnt/workspace`。
-- `DATAAGENT_DOCKER_SOCKET` 只挂到 runner。Podman 宿主挂载其 Docker 兼容 socket。
-- Skill 存放在命名卷 `opendataagent_dataagent-skills`，首次创建时从镜像带入通用 Skill；其他 Skill 用管理界面导入。
-- task child 日志由 runner 写在 `<DATAAGENT_HOST_ROOT>/<topic_id>/logs/<task_id>.log`（`--rm` 删容器不影响留存）。
+- `DATAAGENT_HOST_ROOT`（默认 `/dataagent_runtime`）是宿主机持久化目录，挂到 backend 的 `/dataagent_runtime`。每个 topic 的 `workspace/` 读写挂为 `/mnt/workspace`，`results/` 只读挂为 `/mnt/results`；只有启用的技能目录只读挂到 `/opt/skills/<folder>`。
+- backend 入口以 root 同步内置技能、初始化卷和 socket 附加组，再以 `DATAAGENT_RUNTIME_UID/GID`（默认 1000:1000）运行迁移和服务。沙箱使用相同 UID/GID；不修改宿主 socket 权限。
+- `DATAAGENT_DOCKER_SOCKET` 只挂到 backend。Pi/MCP/模型编排在控制面；沙箱没有凭据、网络或 socket。第一次基础工具调用创建容器，同段复用，卡片、结束、取消及命令超时均销毁。不支持宿主工具执行回退。
+- `ODA_SANDBOX_IMAGE` 必须预先拉取/加载，`scripts/start.sh` 不会为按需容器拉取镜像。在线升级除 Compose pull 外须执行 `docker pull <配置的 oda-sandbox 镜像>`。
+- Skill 存放在命名卷 `opendataagent_dataagent-skills`，入口按内置技能内容版本同步通用技能，管理员导入的其它技能保留。新事件存于 MySQL，旧 home/logs 文件保留供回退。
+
+## 本次架构升级与回退
+
+先关闭入口并排空运行任务，备份 MySQL、runtime 目录和 skills 卷。使用新版镜像、现有配置和卷运行一次性命令（覆盖 entrypoint，避免启动协调器）：
+
+```sh
+docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint sh dataagent-backend -c \
+  'alembic upgrade head && python scripts/migrate_runtime_results.py'
+```
+
+迁移把 `workspace/.dataagent/results` 的旧 JSONL 转为同名标准 JSON，保留原文件，重复执行不覆盖；原始缓存缺少的元数据明确标记。旧内存等待任务改为 suspended。随后 `scripts/start.sh`，核对 topic 创建、Pi 工具及卡片续聊。
+
+回退同样先关闭入口、停止新版 backend，使用**新版镜像**运行：
+
+```sh
+docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint python dataagent-backend scripts/prepare_runtime_rollback.py
+```
+
+该脚本仅接受 revision 32，关闭等待卡片并将版本戳恢复为 31，保留 checkpoint 表和结果。恢复旧 Compose/镜像后启动；旧版使用历史文本，不恢复新版卡片或工具上下文。新 results 不自动转成旧分页缓存。再次升级保留表结构并清空旧 SDK 快照，从完整文本历史重建；避免漏掉回退期间新增消息。运行 root 的一次性命令后，正常入口会重新修正文件属主。
 
 ## 登录配置
 
@@ -152,8 +167,7 @@ docker exec -i dataagent-mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -ur
 # 4. 初始化新 Skill 卷（首次挂载时带入镜像里的通用 Skill），再复制自己导入或放入的 Skill。
 #    旧版本随仓库发布的 Skill 不复制：通用的 chart-visualization、report-generation 以镜像里的新版为准；
 #    opendataworks-*、ontology-modeling-assistant 改名为 odw_* 工具后，从 OpenDataWorks 仓库 odw-skills/ 重新导入。
-docker compose -f deploy/docker-compose.yml up dataagent-home-init
-docker compose -f deploy/docker-compose.yml run --rm --no-deps -v "$OLD_SKILLS":/from:ro --entrypoint sh dataagent-home-init -c '
+docker compose -f deploy/docker-compose.yml run --rm --no-deps -v "$OLD_SKILLS":/from:ro --entrypoint sh dataagent-backend -c '
   cd /from && for d in */; do
     case "${d%/}" in chart-visualization|report-generation|opendataworks-*|ontology-modeling-assistant) continue;; esac
     cp -a "$d" /app/.claude/skills/
@@ -168,7 +182,7 @@ cp <旧 OpenDataWorks 目录>/deploy/docker/dataagent/custom_sso_user_info.py de
 scripts/start.sh
 ```
 
-- 第 4 步只用本部署的 `dataagent-home-init` 服务（即 oda-backend 镜像），离线环境不需要额外镜像。
+- 第 4 步只用本部署的 `dataagent-backend` 服务（覆盖入口执行复制，下一次正常启动初始化权限），离线环境不需要额外镜像。
 - 同一台机器且 `DATAAGENT_HOST_ROOT` 不变时，topic 工作区直接沿用；换机器时用 `rsync -a` 把该目录复制到新机器的同一路径，Skill 目录同样先复制过去。
 - 新部署的 `dataagent` 用户密码由本目录 `.env` 的 `DATAAGENT_MYSQL_PASSWORD` 决定。
 - Redis 只保存任务协调状态，不需要迁移。

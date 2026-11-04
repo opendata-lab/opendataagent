@@ -372,7 +372,10 @@ SYSTEM_PROMPT_MAX_BYTES = 16 * 1024 * 1024 - 1
 SYSTEM_PROMPT_IO_TIMEOUT_SECONDS = 5
 
 
-class TopicTaskStore:
+from core.session_checkpoint import SessionCheckpointStore
+
+
+class TopicTaskStore(SessionCheckpointStore):
     def __init__(self):
         self._ready = False
         self._ready_lock = threading.Lock()
@@ -2056,9 +2059,6 @@ class TopicTaskStore:
                 if not task_row:
                     conn.rollback()
                     return "not_found"
-                if str(task_row.get("task_status") or "") != waiting_status or task_row.get("cancel_requested_at") is not None:
-                    conn.rollback()
-                    return "status_mismatch"
                 cur.execute(
                     """
                     SELECT id, topic_id, turn_index, record_type, data
@@ -2077,6 +2077,9 @@ class TopicTaskStore:
                 if str(interaction.get("status") or "") == "resolved":
                     conn.rollback()
                     return "already_resolved"
+                if str(task_row.get("task_status") or "") != waiting_status or task_row.get("cancel_requested_at") is not None:
+                    conn.rollback()
+                    return "status_mismatch"
                 cur.execute(
                     """
                     INSERT INTO da_agent_sdk_record (topic_id, task_id, turn_index, record_type, event_type, data)
@@ -2091,6 +2094,19 @@ class TopicTaskStore:
                         json.dumps(payload, ensure_ascii=False, default=_json_default),
                     ),
                 )
+                cur.execute("SELECT topic_id,state_json FROM da_agent_session_checkpoint WHERE task_id=%s FOR UPDATE", (task_id,))
+                checkpoint = cur.fetchone()
+                if checkpoint:
+                    state = _safe_json_load(checkpoint["state_json"]) or {}
+                    interaction_state = state.get("interaction") or {}
+                    if interaction_state.get("request_id") != request_id:
+                        raise ValueError("Checkpoint interaction mismatch")
+                    interaction_state["result"] = payload
+                    if interaction_state.get("kind") == "plan":
+                        state["plan_approved"] = payload.get("decision") == "allow"
+                    cur.execute("UPDATE da_agent_session_checkpoint SET state_json=%s WHERE topic_id=%s", (_json_dump(state),checkpoint["topic_id"]))
+                    cur.execute("UPDATE da_agent_task SET task_status='waiting' WHERE task_id=%s", (task_id,))
+                    cur.execute("UPDATE da_agent_topic SET current_task_status='waiting' WHERE current_task_id=%s", (task_id,))
             conn.commit()
         except Exception:
             conn.rollback()

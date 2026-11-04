@@ -59,8 +59,9 @@ export class EventNormalizer {
      */
     private readonly uiResults?: {
       take(toolCallId: string): UiToolResult | null;
-    }
-  ) {}
+    },
+    turnOffset = 0
+  ) { this.turnCounter = turnOffset; }
 
   public get turnId(): string {
     return this.currentTurnId;

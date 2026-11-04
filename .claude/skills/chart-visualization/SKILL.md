@@ -2,7 +2,7 @@
 name: chart-visualization
 description: "当回答涉及趋势、分布、排行、占比、对比等可视化需求，需要把一组行数据转成前端可渲染的图表契约时使用。用户提到画图、图表、可视化、趋势图、饼图、柱状图、折线图时必须使用。只负责图表契约构建与图表选型，不负责取数。"
 compatibility: "需要 DATAAGENT_PYTHON_BIN 与 SKILLS_ROOT_DIR。仅依赖 Python 标准库，不需要任何数据平台、MCP 或外部服务。"
-tools: [Bash, Read]
+tools: [bash, read]
 ---
 
 # 图表可视化技能
@@ -29,7 +29,7 @@ tools: [Bash, Read]
 ## 调用方式
 
 图表契约只能由脚本实际执行产出。`build_chart_spec.py` 不是独立注册的工具名，
-它是通过 Bash 工具执行的脚本：
+它是通过 bash 工具执行的脚本：
 
 ```bash
 "$DATAAGENT_PYTHON_BIN" "${SKILLS_ROOT_DIR}/chart-visualization/scripts/build_chart_spec.py" \
@@ -43,7 +43,7 @@ tools: [Bash, Read]
 
 ## 硬规则
 
-- 必须通过 Bash 工具实际调用脚本。不得凭记忆把契约 JSON 写进回答，也不得用 ASCII 或 Unicode 字符模拟图表。
+- 必须通过 bash 工具实际调用脚本。不得凭记忆把契约 JSON 写进回答，也不得用 ASCII 或 Unicode 字符模拟图表。
 - 回答中出现的 `chart_spec` JSON 只能是本轮脚本实际运行后 stdout 的原样内容，不加标签、不加代码块包裹。
 - 严禁手写 `<chart_spec>` / `</chart_spec>` 标签、` ```chart ` 代码块，或 `type=bar` 之类自创的图表配置块。
 - 严禁用 Markdown 图片语法（`![](...)`）、图片链接、`chart_spec://`、`sandbox:`、`attachment:`

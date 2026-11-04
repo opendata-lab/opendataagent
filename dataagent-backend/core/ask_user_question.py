@@ -22,7 +22,7 @@ from core.task_control import RunnerStoppedError, TaskCancelledError
 
 logger = logging.getLogger(__name__)
 
-# The built-in tool name as it appears in tool_use blocks and allowed_tools.
+# The built-in tool name as it appears in tool calls and interaction records.
 ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion"
 
 

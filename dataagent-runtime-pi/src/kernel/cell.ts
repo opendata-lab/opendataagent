@@ -6,17 +6,22 @@
  * completion, model error, policy denial, cancel, or a limit being hit.
  */
 
-import { Agent } from "@earendil-works/pi-agent-core";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import type { AgentSession, SessionManager, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
+import { createDataAgentSession } from "./sdk-session.js";
+import { DockerSandboxManager } from "../sandbox/docker-sandbox-manager.js";
+import { createSandboxTools } from "../sandbox/sandbox-tools.js";
 import type { AgentEvent as PiAgentEvent, StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import type { CellInitPayload, NeutralAgentEvent } from "../protocol/frames.js";
 import { RunStateMachine } from "./run-state-machine.js";
 import { EventNormalizer, unwrapToolResult } from "./event-normalizer.js";
-import { WorkspaceBoundaryEnforcer, type BoundaryPolicy } from "../policy/workspace-boundary-enforcer.js";
-import { createTools } from "../tools/tool-registry.js";
+
+
 import { connectMcpServers, type McpBridgeResult } from "../mcp/mcp-client.js";
 import { logDiagnostic } from "../protocol/channel.js";
-import { saveToolResult } from "../context/result-store.js";
+import { saveResult } from "../context/result-files.js";
 import {
   shouldFold,
   extractDigest,
@@ -24,15 +29,10 @@ import {
   formatDigestText,
   STRUCTURED_OUTPUT_MAX_BYTES,
 } from "../context/tabular-digest.js";
-import { CompactionSession } from "../context/compaction-session.js";
-import { UiToolResultRegistry } from "./ui-tool-result-registry.js";
-import type { InteractionBroker } from "../interaction/interaction-broker.js";
-import { createAskUserQuestionTool, createExitPlanModeTool } from "../interaction/interaction-tools.js";
 
-/** `mcp__example__example_create_task` -> `example_create_task`. */
-function bareToolName(name: string): string {
-  return name.startsWith("mcp__") ? name.split("__").pop() ?? name : name;
-}
+import { UiToolResultRegistry } from "./ui-tool-result-registry.js";
+
+
 
 /**
  * Attach fold provenance without touching anything the tool wrote.
@@ -80,7 +80,11 @@ export interface RunModelFactory {
 }
 
 export interface CellRunResult {
-  terminal_status: "success" | "failed" | "cancelled";
+  terminal_status: "success" | "failed" | "cancelled" | "parked";
+  checkpoint?: { header: unknown; entries: unknown[]; leaf_id: string | null };
+  interaction?: { request_id: string; kind: string; payload: Record<string, unknown> };
+  tool_calls?: number;
+  turns?: number;
   last_sequence: number;
   error?: string;
 }
@@ -88,11 +92,13 @@ export interface CellRunResult {
 export class Cell {
   private agent: Agent | null = null;
   private cancelled = false;
+  private readonly cancellation = new AbortController();
 
   constructor(private readonly modelFactory: RunModelFactory) {}
 
   public cancel(): void {
     this.cancelled = true;
+    this.cancellation.abort();
     this.agent?.abort();
   }
 
@@ -100,14 +106,14 @@ export class Cell {
     init: CellInitPayload,
     sink: EventSink,
     onHeartbeat: HeartbeatSink = () => {},
-    broker: InteractionBroker | null = null
+    onOperationResult?: (requestId: string, result: unknown) => Promise<void>
   ): Promise<CellRunResult> {
     const heartbeat = onHeartbeat;
     const sm = new RunStateMachine(init.run_id, init.task_id, init.run_id);
     // Holds the UI copy of a tool result between afterToolCall and the
     // normalizer. Scoped to this run so nothing survives it.
     const uiResults = new UiToolResultRegistry();
-    const normalizer = new EventNormalizer(sm, uiResults);
+    const normalizer = new EventNormalizer(sm, uiResults, init.turn_offset ?? 0);
 
     const emit = (event: NeutralAgentEvent | null) => {
       if (event) {
@@ -124,18 +130,23 @@ export class Cell {
     let activeToolTimer: NodeJS.Timeout | null = null;
     // Plan mode holds the listed tools until the user approves a plan.
     const planMode = init.permission_mode === "plan";
-    let planApproved = false;
-    const planDenied = new Set((init.plan_denied_tools ?? []).map(bareToolName));
-    // Commands see the plan state too: skill scripts that write results refuse
-    // while it is pending, since Bash itself stays open for read-only research.
-    // Bash reads this object on every call, so approval reaches later commands.
-    const runtimeEnv: Record<string, string> = { ...(init.runtime_env ?? {}) };
-    if (planMode) {
-      runtimeEnv.DATAAGENT_PLAN_STATE = "pending";
-    }
+    let planApproved = Boolean(init.plan_approved);
+    let parked: CellRunResult["interaction"];
+    let sdk: { session: AgentSession; manager: SessionManager } | undefined;
+    let sandbox: DockerSandboxManager | undefined;
+    let segmentError: string | undefined;
+    const park = (kind: string, request_id: string, payload: Record<string, unknown>) => {
+      if (parked) throw new Error("Interaction already pending");
+      parked = { kind, request_id: `${init.run_id}:${request_id}`, payload };
+      return { content: [{ type: "text" as const, text: "Waiting for user; this execution segment has ended." }], details: { waiting: true } };
+    };
 
     try {
-      mcpBridge = await connectMcpServers(init.mcp_servers, { connectTimeoutMs: 10_000 });
+      const deadline = Date.now() + init.limits.total_timeout_seconds * 1000;
+      mcpBridge = await connectMcpServers(init.mcp_servers, { connectTimeoutMs: 10_000,
+        remainingMs: () => deadline - Date.now(),
+        readTimeoutMs: Number(init.runtime_env.DATAAGENT_SQL_READ_TIMEOUT_SECONDS || 300) * 1000,
+        writeTimeoutMs: Number(init.runtime_env.DATAAGENT_SQL_WRITE_TIMEOUT_SECONDS || 60) * 1000 });
       const mcpAnnotations = new Map(mcpBridge.tools.map((tool: any) => [String(tool.name), tool.mcpAnnotations ?? {}]));
       // Cache retention must reach the stream options, not merely the init
       // frame: pi-ai defaults to "short" whenever the option is absent.
@@ -147,93 +158,42 @@ export class Cell {
         init.model.max_output_tokens,
         init.model.context_window
       );
-      const boundary = new WorkspaceBoundaryEnforcer(init.boundary_policy as unknown as BoundaryPolicy);
-      const tools = createTools({
-        boundary,
-        workspaceRoot: init.workspace.project_cwd,
-        toolTimeoutMs: init.limits.bash_timeout_seconds * 1000,
-        runtimeEnv,
-        skills: init.skills,
-        extraTools: [
-          ...mcpBridge.tools,
-          // Without a broker there is nobody to ask, so the tools are not offered.
-          ...(broker ? [createAskUserQuestionTool(broker)] : []),
-          ...(broker && planMode ? [createExitPlanModeTool(broker, () => {
-            planApproved = true;
-            runtimeEnv.DATAAGENT_PLAN_STATE = "approved";
-          })] : []),
-        ],
-      });
-
-      // Extract history messages and current prompt
-      let historyItems: Array<{ role: string; content: string }> = [];
-      let promptText = "";
-
-      if (init.prompt !== undefined && init.prompt !== null) {
-        promptText = init.prompt;
-        historyItems = init.history || [];
-      } else if (init.messages && init.messages.length > 0) {
-        // Backwards compatibility fallback for older cell.init frames
-        promptText = init.messages[init.messages.length - 1]?.content || "";
-        historyItems = init.messages.slice(0, -1);
+      if (!init.sandbox || !init.results_dir) throw new Error("Protocol v2 requires sandbox and results_dir");
+      sandbox = new DockerSandboxManager({ ...init.sandbox, env: { ...init.sandbox.env, DATAAGENT_PLAN_STATE: planApproved || !planMode ? "approved" : "pending" } });
+      const baseTools = createSandboxTools(sandbox, { resultsDir: init.results_dir,
+        timeoutMs: init.limits.bash_timeout_seconds * 1000,
+        inlineBytes: init.governance_settings?.max_inline_result_bytes ?? DEFAULT_FOLD_THRESHOLD_BYTES,
+        onUiResult: (id, result) => { const unwrapped = unwrapToolResult(result);
+          uiResults.set(id, { output: unwrapped.output, meta: unwrapped.output_meta }); } });
+      const reservedNames = new Set(["bash", "read", "write", "edit", "ls", "find", "grep", "AskUserQuestion", "ExitPlanMode"]);
+      for (const tool of mcpBridge.tools as any[]) {
+        if (reservedNames.has(tool.name)) throw new Error("MCP_TOOL_NAME_COLLISION");
+        reservedNames.add(tool.name);
       }
+      const interactionTools: ToolDefinition[] = [
+        { name: "AskUserQuestion", label: "AskUserQuestion", description: "Ask the user a question and end this segment until they answer.",
+          parameters: Type.Object({ questions: Type.Array(Type.Object({ question: Type.String(),
+            header: Type.Optional(Type.String()), multiSelect: Type.Optional(Type.Boolean()),
+            options: Type.Array(Type.Object({ label: Type.String(), description: Type.Optional(Type.String()), recommended: Type.Optional(Type.Boolean()) }), { minItems: 2, maxItems: 4 }) }), { minItems: 1, maxItems: 4 }) }),
+          execute: async (id, args) => park("question", id, args as Record<string, unknown>) },
+        ...(planMode ? [{ name: "ExitPlanMode", label: "ExitPlanMode", description: "Submit a plan for approval and end this segment.",
+          parameters: Type.Object({ plan: Type.String() }),
+          execute: async (id: string, args: unknown) => park("plan", id, args as Record<string, unknown>) }] : []),
+      ];
+      if (init.allow_questions === false) interactionTools.splice(0, 1);
+      sdk = await createDataAgentSession(init, model, streamFn,
+        [...baseTools, ...mcpBridge.tools, ...interactionTools] as ToolDefinition[]);
+      const agent = sdk.session.agent;
+      agent.afterToolCall = async (context) => {
+          const details = context.result?.details as { segment_failed?: boolean; error?: string } | undefined;
+          if (details?.segment_failed) segmentError = details.error || "Sandbox command failed";
 
-      const emptyUsage: Usage = {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      };
-
-      const initialMessages = historyItems.map((message) => {
-        if (message.role === "assistant") {
-          return {
-            role: "assistant" as const,
-            content: [{ type: "text" as const, text: message.content }],
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
-            usage: emptyUsage,
-            stopReason: "stop" as const,
-            timestamp: Date.now(),
-          };
-        }
-        return {
-          role: "user" as const,
-          content: [{ type: "text" as const, text: message.content }],
-          timestamp: Date.now(),
-        };
-      });
-
-      const governance = init.governance_settings;
-      const compaction = new CompactionSession({
-        protectTailCount: governance?.protect_tail_turns ?? 6,
-        // A window configured on the model wins over the deployment-wide default.
-        maxContextTokens: init.model.context_window ?? governance?.max_context_tokens ?? 64_000,
-        highWatermarkRatio: governance?.prune_high_watermark_ratio,
-        targetRatio: governance?.prune_target_ratio,
-      });
-
-      const agent = new Agent({
-        initialState: {
-          systemPrompt: init.system_prompt,
-          model,
-          tools: tools as never,
-          messages: initialMessages as never,
-        },
-        streamFn,
-        // DataAgent tools mutate shared workspace state and issue SQL; running
-        // them concurrently would make ordering — and therefore the boundary
-        // decisions and the event stream — nondeterministic.
-        toolExecution: "sequential",
-        // One session per run: compaction state must not leak between runs, and
-        // reusing a prefix built from another conversation would be wrong.
-        transformContext: async (messages) => compaction.transform(messages),
-        afterToolCall: async (context) => {
           const foldThreshold = init.governance_settings?.max_inline_result_bytes ?? DEFAULT_FOLD_THRESHOLD_BYTES;
           const toolResult = context.result;
+          const mcpWrite = mcpAnnotations.has(context.toolCall.name) &&
+            (mcpAnnotations.get(context.toolCall.name)?.readOnlyHint !== true || mcpAnnotations.get(context.toolCall.name)?.destructiveHint === true);
+          if (mcpWrite && toolResult?.isError) segmentError = "MCP_WRITE_FAILED: check the external operation state before retrying";
+          if ((toolResult?.details as { storage_path?: string })?.storage_path) return undefined;
           if (!toolResult || !Array.isArray(toolResult.content)) {
             return undefined;
           }
@@ -287,12 +247,12 @@ export class Cell {
 
           try {
             const toolName = String(context.toolCall?.name ?? "tool");
-            const saveOutcome = await saveToolResult(init.workspace.project_cwd, rawText);
+            const saveOutcome = await saveResult(init.results_dir!, rawText);
             const digest = extractDigest(rawText, {
               resultRef: saveOutcome.result_ref,
               toolName,
             });
-            let compactText = formatDigestText(digest);
+            let compactText = `Saved output: ${saveOutcome.relative_path} (${saveOutcome.format}, ${saveOutcome.byte_size} bytes).\n` + formatDigestText(digest, saveOutcome.relative_path);
             // Last-resort guard: folding must never make the context larger.
             // Cell capping handles the common case, but a very wide schema or
             // many columns can still out-grow the original.
@@ -321,9 +281,7 @@ export class Cell {
             const foldedDetails = withFoldProvenance(toolResult.details, {
               result_ref: saveOutcome.result_ref,
               storage_path: saveOutcome.relative_path,
-              // What was folded, not what it compacted to: a tabular result is
-              // rewritten to JSONL on the way to disk, so the stored size
-              // understates the payload this digest stands in for.
+              // Both sizes describe the original raw JSON/text, never the preview.
               original_bytes: uiBytes,
               stored_bytes: saveOutcome.byte_size,
               folded_text_blocks: textBlocks.length,
@@ -345,13 +303,16 @@ export class Cell {
               details: foldedDetails,
             };
           } catch (err) {
-            logDiagnostic(`afterToolCall fold failed, keeping raw: ${err}`);
-            return undefined;
+            segmentError = `RESULT_STORAGE_FAILED: ${String(err)}`;
+            logDiagnostic(segmentError);
+            return { content: [{ type: "text" as const, text: segmentError }],
+              details: { error: segmentError, segment_failed: true }, isError: true };
           }
-        },
-        beforeToolCall: async (context) => {
+        };
+      agent.beforeToolCall = async (context) => {
+          if (parked || segmentError) return { block: true, reason: parked ? "Not executed: waiting for user" : segmentError };
           toolCalls += 1;
-          if (init.limits.max_tool_calls > 0 && toolCalls > init.limits.max_tool_calls) {
+          if (toolCalls > init.limits.max_tool_calls) {
             limitDenial = `已达到本次任务工具调用上限 ${init.limits.max_tool_calls}`;
             return { block: true, reason: limitDenial, terminate: true };
           }
@@ -363,9 +324,9 @@ export class Cell {
           const isMcp = mcpAnnotations.has(toolName);
           const write = isMcp && (hints?.readOnlyHint !== true || hints?.destructiveHint === true);
           const reason =
-            planMode && !planApproved && (write || planDenied.has(bareToolName(toolName)))
+            planMode && !planApproved && (write || ["write", "edit"].includes(toolName))
               ? `计划模式：批准计划前不能调用 ${toolName}。先调用 ExitPlanMode 提交计划，批准后再执行。`
-              : boundary.validate(toolName, args);
+              : null;
           if (reason) {
             emit(
               sm.createEvent("tool.denied", {
@@ -381,17 +342,19 @@ export class Cell {
           }
           const mode = planApproved ? "acceptEdits" : init.permission_mode ?? "default";
           if (write && mode !== "bypassPermissions" && (mode !== "acceptEdits" || hints?.destructiveHint === true)) {
-            if (!broker) return { block: true, reason: "操作需要用户确认。" };
-            const result = await broker.request("permission", String(context.toolCall?.id ?? ""), {
+            park("permission", String(context.toolCall?.id ?? ""), {
               tool_name: toolName, arguments: args, annotations: hints, plan_approved: planApproved,
+              server_name: (mcpBridge!.tools.find((tool: any) => tool.name === toolName) as any)?.mcpServerName,
+              server_identity: (mcpBridge!.tools.find((tool: any) => tool.name === toolName) as any)?.mcpServerIdentity,
             });
-            if (result.decision !== "allow") return { block: true, reason: "用户拒绝了该操作。" };
+            return { block: true, reason: "Not executed: waiting for approval" };
           }
           return undefined;
-        },
+        };
         // Error and aborted responses are hard exits already; only a normal
         // response may end the run early at the turn ceiling.
-        finishTurn: async (turn) => {
+      agent.finishTurn = async (turn) => {
+          if (parked || segmentError || limitDenial) return { action: "end" };
           if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") {
             return undefined;
           }
@@ -399,8 +362,7 @@ export class Cell {
             return undefined;
           }
           return sm.lastSequence > 0 && turnCount >= init.limits.max_turns ? { action: "end" } : undefined;
-        },
-      });
+        };
 
       this.agent = agent;
 
@@ -429,7 +391,41 @@ export class Cell {
         }
       });
 
-      await agent.prompt(promptText);
+      let prompt = init.prompt ?? init.messages.at(-1)?.content ?? "";
+      if (init.resume_operation) {
+        const operation = init.resume_operation;
+        let result = operation.operation_result;
+        if (operation.operation_status !== "done") {
+          if (!onOperationResult) throw new Error("Operation result persistence unavailable");
+          const tool: any = mcpBridge.tools.find((tool: any) => tool.name === operation.payload.tool_name &&
+            tool.mcpServerName === operation.payload.server_name && tool.mcpServerIdentity === operation.payload.server_identity);
+          if (!tool) throw new Error("Approved MCP tool is no longer available");
+          emit(sm.createEvent("tool.started", { tool_call_id: operation.request_id,
+            tool_name: tool.name, input: operation.payload.arguments }));
+          result = await tool.execute(operation.request_id, operation.payload.arguments, this.cancellation.signal);
+          const resultText = JSON.stringify(result);
+          if (Buffer.byteLength(resultText) > STRUCTURED_OUTPUT_MAX_BYTES) {
+            const stored = await saveResult(init.results_dir!, resultText);
+            result = { content: [{ type: "text", text: `Approved operation result saved: ${stored.relative_path} (${stored.byte_size} bytes).` }],
+              details: { storage_path: stored.relative_path, byte_count: stored.byte_size, preview_truncated: true } };
+          }
+          await onOperationResult(operation.request_id, result);
+          emit(sm.createEvent("tool.completed", { tool_call_id: operation.request_id,
+            tool_name: tool.name, output: (result as any)?.content, is_error: Boolean((result as any)?.isError) }));
+        }
+        const raw = JSON.stringify(result);
+        if (shouldFold(raw, init.governance_settings?.max_inline_result_bytes ?? DEFAULT_FOLD_THRESHOLD_BYTES)) {
+          const file = await saveResult(init.results_dir!, raw);
+          prompt += `\nApproved operation result: ${file.relative_path} (${file.byte_size} bytes). Read the saved JSON as needed.`;
+        } else prompt += "\nApproved operation actual result: " + raw;
+      }
+      if (this.cancelled) throw new Error("cancelled");
+      await sdk.session.prompt(prompt, { expandPromptTemplates: false });
+      const checkpoint = { header: sdk.manager.getHeader(), entries: sdk.manager.getEntries(), leaf_id: sdk.manager.getLeafId() };
+      if (Buffer.byteLength(JSON.stringify(checkpoint)) > 8 * 1024 * 1024) throw new Error("SESSION_SNAPSHOT_TOO_LARGE");
+      if (parked) return { terminal_status: "parked", last_sequence: sm.lastSequence,
+        checkpoint, interaction: parked, tool_calls: toolCalls, turns: turnCount };
+      if (segmentError) throw new Error(segmentError);
 
       if (this.cancelled || agent.signal?.aborted) {
         emit(sm.createEvent("run.cancelled", { reason: "cancelled by control plane" }));
@@ -461,7 +457,7 @@ export class Cell {
       }
 
       emit(sm.createEvent("run.completed", { terminal_status: "success" }));
-      return { terminal_status: "success", last_sequence: sm.lastSequence };
+      return { terminal_status: "success", last_sequence: sm.lastSequence, checkpoint, tool_calls: toolCalls, turns: turnCount };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : message;
@@ -480,6 +476,8 @@ export class Cell {
         activeToolTimer = null;
       }
       this.agent = null;
+      sdk?.session.dispose();
+      await sandbox?.close();
       // Whatever was never consumed goes now, on every exit path — a run that
       // failed or was cancelled mid-tool would otherwise leave results behind.
       if (uiResults.unconsumed > 0) {

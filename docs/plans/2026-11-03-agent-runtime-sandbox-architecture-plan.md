@@ -2,7 +2,7 @@
 
 日期：2026-11-03
 
-状态：设计已按用户讨论简化，尚未实施或完成 SDK 验证。
+状态：实施完成；SDK、事务、真实 HTTP/Docker 与 UI 卡片验证通过。真实 provider 业务问数及远程/离线发布验收按报告列明边界。
 
 设计文档：[2026-11-03-agent-runtime-sandbox-architecture-design.md](../design/2026-11-03-agent-runtime-sandbox-architecture-design.md)
 
@@ -21,7 +21,7 @@
 
 - **涉及文件**：`dataagent-runtime-pi/package.json`、`package-lock.json`、`test/sdk_spike.test.ts`。
 - 固定 `@earendil-works/pi-coding-agent` 为 `1.4.0`；确认内存 SettingsManager、SessionManager、凭据及自定义 resourceLoader 的实际配置接口，禁止工作区或全局配置自动发现。
-- 使用 `tools: []` 关闭默认宿主实现，注册小写 `bash/read/write/edit/ls/find/grep` 沙箱工具；检查执行入口，验证 `write/edit` 可修改工作区而不能修改只读挂载或宿主文件。不得按工具名禁止编辑能力。
+- 使用明确的工具名 allowlist，并通过 customTools 同名覆盖默认宿主实现，注册小写 `bash/read/write/edit/ls/find/grep` 沙箱工具；检查执行入口，验证 `write/edit` 可修改工作区而不能修改只读挂载或宿主文件。不得按工具名禁止编辑能力。
 - 验证模型配置和凭据只驻留控制面，MCP 扩展只使用数据库下发配置，不读取额外 `mcp.json`。
 - 设置串行执行；用 `[已完成工具, 问题卡, 尚未执行工具]` 验证：后续工具被阻止并形成明确的未执行结果，SDK 能停止且导出合法会话。重新导入 header/entries、恢复 leaf 后，用新的用户回答正常 prompt，已有工具结果仍在上下文中。不得修改历史结果或补跑旧批次。
 - 验证停止接口不在当前工具回调内自等待，不假定 `turn_end` 的返回值能终止循环；验证问答和计划卡不会在下一次模型请求前继续执行副作用工具。
@@ -49,14 +49,14 @@
   - 保留调用数、轮次、计划模式写门控和 MCP 写操作确认；批准绑定具体计划版本或具体操作，不能扩大权限。
   - 卡片工具返回“等待用户”结果并结束本段，阻止同批后续工具；会话收尾后导出，不保存或补跑 SDK 调度队列。
   - 回答后导入同一会话，将回答或操作实际结果作为新上下文继续正常 prompt；重复恢复不能重复追加同一 request_id 的输入。
-- **修改** `src/context/result-store.ts`、`tabular-digest.ts`、`src/tools/tool-registry.ts` 和事件归一化适配：
+- **修改** `src/context/result-files.ts`、`tabular-digest.ts`、`src/sandbox/sandbox-tools.ts` 和事件归一化适配：
   - 新结果按原始 JSON/文本保存在 `<topic_root>/results/`，不再转换为私有 JSONL 行格式；工具返回 `/mnt/results/<文件名>`、实际格式、大小、有界预览和原有截断标记。
   - bash 输出接收时先保存、再限制预览，覆盖成功、失败及超时部分输出；明确保存失败或存储限额，不宣称已丢弃数据能够读回。
   - 文件名由运行时生成，写入不覆盖已有文件；基础工具可在只读挂载中读同一文件，跨段路径保持稳定。
   - 移除原分页/搜索专用工具及其提示；不增加导出工具或中间复制目录。需要格式转换时由 Agent 使用普通 Python 处理，不增加报表专用运行时逻辑。
   - 保留 UI 所需的完整结构化结果、图表契约和折叠溯源；不能因模型折叠而破坏前端渲染。
 - **修改** `src/protocol/frames.ts` 与 `src/main.ts`：升级到协议 v2，增加 `session.entries`、`run.parked`；明确它们与原任务等待状态的关系，验证快照大小限制及输出排空。
-- **移除替代实现**：旧边界正则、旧 Skill loader/MCP client、自研上下文压缩模块；现有事件和 UI 结果适配仅在对应行为已保留并测试后删除冗余部分。
+- **移除替代实现**：旧边界正则、旧 Skill loader、自研上下文压缩模块；保留现有数据库驱动的 MCP bridge 作为唯一连接路径；现有事件和 UI 结果适配仅在对应行为已保留并测试后删除冗余部分。
 - **同步文档与测试**：提示词、技能文档、同步模板、演示数据统一工具名和 `/mnt/results` 读取方式，技能可执行引用始终使用 `"$DATAAGENT_PYTHON_BIN" "${SKILLS_ROOT_DIR}/<skill-folder>/scripts/<name>.py" ...`。
 - **验证**：先 nvm use，运行 Pi 定向的会话、工具、大结果、事件/图表契约测试，再执行 `npm run build && npm test`；新增用例验证完整文件直接交给沙箱脚本消费，不能只检查摘要字段。
 
@@ -110,5 +110,13 @@
 
 - 交付一个完整架构变更，Step 0–5 是实现顺序，不分阶段上线，不保留双执行主路径。
 - 发布前停止接单并排空 running，保留旧卷/配置用于回退；执行数据库升级、一次性旧结果迁移并处理旧版内存等待任务，再使用新版 backend/sandbox 镜像及 Compose 启动、完成冒烟后恢复入口。
-- 回退先停止入口与新版执行，恢复旧镜像/Compose。新增会话表由旧版忽略，历史消息按旧版能力读取；等待任务需重新发起，旧版不恢复新版工具上下文。
+- 回退先停止入口与新版执行，运行新版 `prepare_runtime_rollback.py`，再恢复旧镜像/Compose。新增会话表由旧版忽略，历史消息按旧版能力读取；等待任务需重新发起，旧版不恢复新版工具上下文。
 - 保留的新结果文件和用户产物不会自动转成旧版分页工具格式，旧版仅能读取原缓存目录中的旧文件；不承诺旧工具能消费新版结果路径。新版移除的 allowed_tools 业务字段对应的历史表列保留，回退不需要重建该列。
+
+### 回退版本戳（2026-11-03 容器演练修订）
+
+旧镜像的启动迁移不能识别新增 revision。停止入口与运行中任务后，使用新版镜像的 `scripts/prepare_runtime_rollback.py` 关闭等待卡片并将 Alembic 版本戳恢复为 `20261027_000031`，保留新增会话表及文件。新增迁移使用 `CREATE TABLE IF NOT EXISTS`，再次升级可重复应用，并清空回退前的 SDK 快照，从包含旧镜像期间消息的文本历史重建，避免使用过期上下文。此脚本只支持本次明确的 31→32 回退，不推测其它版本。验证须启动真实旧镜像并继续历史文本会话。
+
+### 报告技能文件输入修正
+
+完整结果 smoke 发现报告技能文档声明 `--input-file`，但 generate_report.py 未实现，且 JSON 路径按 CSV 读取。本轮在技能本地实现互斥的 `--input`/`--input-file`，JSON 文件直接读取 rows；保留已有 CSV/内联 JSON 调用，更新技能文档及回归测试。共享运行时不增加报告专用调用层。

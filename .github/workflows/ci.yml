@@ -37,7 +37,8 @@ jobs:
           cache: npm
           cache-dependency-path: dataagent-runtime-pi/package-lock.json
       - run: npm --prefix dataagent-runtime-pi ci
-      - run: npm --prefix dataagent-runtime-pi test
+      - run: docker build -f dataagent-backend/Dockerfile.sandbox -t oda-sandbox:test .
+      - run: DATAAGENT_SANDBOX_TEST_IMAGE=oda-sandbox:test npm --prefix dataagent-runtime-pi test
 
   frontend:
     runs-on: ubuntu-latest
@@ -54,3 +55,60 @@ jobs:
         run: npm --prefix dataagent-frontend test -- --exclude src/views/intelligence/__tests__/ToolOutputRenderer.spec.js
       - run: npm --prefix dataagent-frontend run build
       - run: npm --prefix dataagent-frontend run build:widget
+
+  runtime-http:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: dataagent
+          MYSQL_USER: dataagent
+          MYSQL_PASSWORD: dataagent123
+          MYSQL_ROOT_PASSWORD: root123
+        ports: ["3326:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -proot123"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7.2-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-retries=20
+    env:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: 3326
+      MYSQL_USER: dataagent
+      MYSQL_PASSWORD: dataagent123
+      SESSION_MYSQL_DATABASE: dataagent
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      DATAAGENT_TEST_MYSQL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: dataagent-backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: dataagent-runtime-pi/package-lock.json
+      - run: pip install -r dataagent-backend/requirements.txt
+      - run: npm --prefix dataagent-runtime-pi ci && npm --prefix dataagent-runtime-pi run build
+      - run: docker build -f dataagent-backend/Dockerfile.sandbox -t oda-sandbox:test .
+      - name: Migrate and test checkpoint transactions
+        run: |
+          export SKILLS_ROOT_DIR="$GITHUB_WORKSPACE/.claude/skills"
+          (cd dataagent-backend && alembic upgrade head)
+          python -m pytest -q dataagent-backend/tests/test_session_checkpoint.py
+      - name: Real HTTP coordinator, Pi and Docker smoke with local provider fixtures
+        run: |
+          export DATAAGENT_NODE_BIN="$(command -v node)"
+          python dataagent-backend/tests/runtime_http_smoke.py
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: runtime-http-logs
+          path: /tmp/dataagent-http-smoke-*/**/*.log

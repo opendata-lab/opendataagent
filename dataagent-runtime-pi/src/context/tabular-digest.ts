@@ -169,17 +169,10 @@ export function extractDigest(
     }
 
     const sampleCount = previewHead.length + (previewTail?.length ?? 0);
-    const notice =
-      `[SYSTEM NOTICE: This query returned ${totalRows} rows in total. ` +
-      `To protect the context window from token overflow, only a sample of ${sampleCount} rows (head 5 + tail 5) ` +
-      `is displayed. The actual dataset contains ${totalRows} rows in storage (ref: '${resultRef}'). ` +
-      `Do NOT assume the total count is ${sampleCount}. ` +
-      `If you need specific rows or column slices, call 'fetch_tool_result(result_ref="${resultRef}", offset=..., limit=...)'; ` +
-      `to find rows without knowing where they are, call 'search_result(result_ref="${resultRef}", query="...")'. ` +
-      `Prefer either over re-running the query that produced this — its ${totalRows} returned rows are stored ` +
-      `(row data only; fields around the rows such as counts or warnings are not). ` +
-      `You need not explain this storage to the reader, but never mention it, the ref, or the context window ` +
-      `unless your answer rests on rows you have not read — then say what you did not see.]`;
+    const notice = `[SYSTEM NOTICE: This tool returned ${totalRows} rows. Only ${sampleCount} sample rows are shown. ` +
+      `Read the saved /mnt/results path with read, grep or bash for complete captured data. ` +
+      `The original JSON and its counts, warnings and truncation flags are preserved. Do not infer unseen rows. ` +
+      `You need not explain storage to the reader, but say what you did not see when it limits your conclusion.]`;
 
     return {
       _type: "dataagent_folded_result",
@@ -202,14 +195,9 @@ export function extractDigest(
   const previewHead = textStr.slice(0, headChars);
   const previewTail = totalChars > 2000 ? textStr.slice(totalChars - 600) : undefined;
 
-  const notice =
-    `[SYSTEM NOTICE: Output exceeded size limit (${totalChars} characters). ` +
-    `Full content has been preserved in ResultStore (ref: '${resultRef}'). ` +
-    `Showing truncated preview. Call 'fetch_tool_result(result_ref="${resultRef}", offset=..., limit=...)' to read more, ` +
-    `or 'search_result(result_ref="${resultRef}", query="...")' to locate part of it. ` +
-    `Prefer either over re-running the tool that produced this — the captured output is stored. ` +
-    `You need not explain this storage to the reader, but never mention it, the ref, or the context window ` +
-    `unless your answer rests on output you have not read — then say what you did not see.]`;
+  const notice = `[SYSTEM NOTICE: Captured output has ${totalChars} characters; only a preview is shown. ` +
+    `Read the saved /mnt/results path with read, grep or bash rather than rerunning the tool. ` +
+    `You need not explain storage to the reader, but say what you did not see when it limits your conclusion.]`;
 
   return {
     _type: "dataagent_folded_result",
@@ -231,28 +219,24 @@ export function extractDigest(
  * query instead of following the ref. State the three things plainly: why the
  * output is not here, where it is, and how to get the part it wants.
  */
-export function formatDigestText(digest: CompactResultDigest): string {
-  // Derived rather than carried: saveToolResult writes every result to exactly
-  // this path, so threading it through the digest would only create a second
-  // place for it to be wrong.
-  const storedPath = (ref: string) => `.dataagent/results/${ref}.json`;
+export function formatDigestText(digest: CompactResultDigest, storagePath: string): string {
   const lines: string[] = ["<persisted-output>"];
 
   if (digest.is_tabular) {
     lines.push(
-      `提示 [RESULT_FOLDED]：输出过大未内联；本次返回的 ${digest.total_rows} 行已保存到 ${storedPath(digest.result_ref)}` +
-        "（只存行数据，行以外的字段如总数、警告未保存）。"
+      `提示 [RESULT_FOLDED]：输出过大未内联；本次返回的 ${digest.total_rows} 行已保存到 ${storagePath}` +
+        "（完整保留本次收到的原始结果及其元数据；上游截断标记仍然有效）。"
     );
   } else {
     lines.push(
-      `提示 [RESULT_FOLDED]：输出 ${digest.total_chars} 个字符，过大未内联；捕获到的输出已保存到 ${storedPath(digest.result_ref)}。`
+      `提示 [RESULT_FOLDED]：输出 ${digest.total_chars} 个字符，过大未内联；捕获到的输出已保存到 ${storagePath}。`
     );
   }
 
   lines.push(
     "",
-    `Read a slice:  fetch_tool_result(result_ref="${digest.result_ref}", offset=0, limit=20)`,
-    `Find rows:     search_result(result_ref="${digest.result_ref}", query="...")`,
+    `Read the saved file with read or bash: ${storagePath}`,
+    `Search the saved file with grep: ${storagePath}`,
     "",
     "需要的部分优先从已保存的结果里取，不必重跑原工具。",
     "一般不必向用户解释这些存储细节；但结论依赖你没读到的数据时，要向用户说明没看到什么。",
@@ -296,7 +280,7 @@ function capRowCells(row: Record<string, unknown>): Record<string, unknown> {
   const capped: Record<string, unknown> = Object.create(null);
   for (const [key, value] of Object.entries(row)) {
     if (typeof value === "string" && value.length > MAX_CELL_CHARS) {
-      capped[key] = `${value.slice(0, MAX_CELL_CHARS)}…[+${value.length - MAX_CELL_CHARS} chars, use fetch_tool_result]`;
+      capped[key] = `${value.slice(0, MAX_CELL_CHARS)}…[+${value.length - MAX_CELL_CHARS} chars, use read/grep/bash]`;
     } else {
       capped[key] = value;
     }
@@ -353,7 +337,7 @@ export function stripRenderedPreview(text: string): string | null {
   }
   return [
     ...lines.slice(0, firstPreview),
-    "Preview dropped: this result arrived in an earlier turn. Read it back with fetch_tool_result or search_result.",
+    "Preview dropped: this result arrived in an earlier turn. Read it back with read, grep or bash using the saved /mnt/results path.",
     "</persisted-output>",
   ].join("\n");
 }

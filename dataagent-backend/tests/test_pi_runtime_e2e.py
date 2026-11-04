@@ -21,7 +21,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.boundary_policy import build_boundary_policy  # noqa: E402
 from core.pi_runtime import PiRunContext, execute_pi_run  # noqa: E402
 
 REPO_DATAAGENT = Path(__file__).resolve().parents[2]
@@ -51,9 +50,6 @@ def _context(tmp_path: Path, provider_id: str, model_id: str) -> PiRunContext:
         system_prompt="你是 DataAgent 的数据助手。",
         messages=[{"role": "user", "content": "你好"}],
         project_cwd=tmp_path,
-        boundary_policy=build_boundary_policy(
-            tmp_path, {"enabled_roots": {}}, [str(tmp_path)], {}, profile="pi_agent_core"
-        ),
         runtime_env={"DATAAGENT_PYTHON_BIN": sys.executable},
         total_timeout_seconds=60,
         idle_timeout_seconds=30,
@@ -105,7 +101,7 @@ async def test_real_cell_events_are_unwrapped_and_contiguous(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_real_cell_receives_the_boundary_policy(tmp_path: Path):
+async def test_real_cell_receives_topic_identity(tmp_path: Path):
     """A malformed policy would make the Cell fail differently than a bad provider.
 
     Reaching run.started proves cell.init parsed cleanly, boundary policy
@@ -113,8 +109,7 @@ async def test_real_cell_receives_the_boundary_policy(tmp_path: Path):
     """
     writer = _RecordingWriter()
     ctx = _context(tmp_path, "definitely-not-a-provider", "x")
-    assert ctx.boundary_policy["profile"] == "pi_agent_core"
-    assert str(tmp_path) in ctx.boundary_policy["allowed_roots"]
+    assert ctx.to_init_payload()["topic_id"] == "topic-e2e"
 
     await execute_pi_run(ctx, writer=writer)
 

@@ -231,7 +231,7 @@ class TaskCoordinator:
                     bool(result.session_id),
                     bool(result.usage),
                 )
-                if self._is_parked_waiting(task_id) and str((result.error or {}).get("code") or "") != "task_cancelled":
+                if result.task_status == "parked":
                     logger.info(
                         "task.run.left_parked task_id=%s topic_id=%s result_status=%s error_code=%s",
                         task_id,
@@ -464,15 +464,11 @@ class TaskCoordinator:
                 str(task.get("topic_id") or ""),
                 str(task.get("heartbeat_at") or ""),
             )
-            replacement = self.store.create_recovery_task(task_id)
-            if replacement:
-                logger.info(
-                    "task.recovery.replacement_created old_task_id=%s new_task_id=%s topic_id=%s",
-                    task_id,
-                    str(replacement.get("task_id") or ""),
-                    str(replacement.get("topic_id") or ""),
-                )
-                await self.submit_task(str(replacement.get("task_id") or ""))
+            # Never replay in-flight work with unknown external side effects.
+            error = {"code":"run_interrupted","message":"运行进程中断，外部操作结果可能未知；请核对状态后重新发起。"}
+            self.store.update_assistant_message(topic_id=str(task.get("topic_id") or ""),task_id=task_id,
+                status="suspended",content="",usage=None,error=error)
+            self.store.finish_task(task_id=task_id,task_status="suspended",error=error)
 
     async def _recover_parked_tasks(self, *, batch_size: int) -> None:
         for task in self.store.list_parked_tasks(limit=batch_size):
@@ -483,17 +479,28 @@ class TaskCoordinator:
             if await self._lease_exists(task_id):
                 continue
             error: dict[str, Any] | None = None
+            checkpoint = self.store.get_session_checkpoint(topic_id)
             if self.store.is_task_cancel_requested(task_id):
-                error = {"code": "task_cancelled", "message": "任务已取消"}
-            elif (
-                self.store.get_pending_permission_request(task_id) is None
-                and self.store.get_pending_question_request(task_id) is None
-                and self.store.has_resolved_waiting_interaction(task_id)
-            ):
-                error = {
-                    "code": "run_lost",
-                    "message": "确认/输入已提交，但原运行器已释放，请重新发送请求继续。",
-                }
+                error = {"code":"task_cancelled","message":"任务已取消"}
+            elif not checkpoint or checkpoint["task_id"] != task_id:
+                error = {"code":"session_checkpoint_missing","message":"等待任务缺少会话快照，请重新发送请求。"}
+            else:
+                interaction = checkpoint["state"].get("interaction") or {}
+                if interaction.get("result"):
+                    self.store.set_task_status(task_id,"waiting")
+                    await self.submit_task(task_id)
+                    continue
+                deadline = interaction.get("deadline_at")
+                if deadline:
+                    from datetime import datetime, timezone
+                    from core.interaction_policy import recommended_answers, AUTO_TIMEOUT_SOURCE
+                    if datetime.now(timezone.utc) >= datetime.fromisoformat(deadline):
+                        if interaction["kind"] == "question":
+                            self.store.append_question_answer_if_waiting(task_id=task_id,request_id=interaction["request_id"],
+                                answers=recommended_answers(interaction["payload"]["questions"]),source=AUTO_TIMEOUT_SOURCE)
+                        elif interaction["kind"] == "plan":
+                            self.store.append_permission_decision_if_waiting(task_id=task_id,request_id=interaction["request_id"],decision="allow",source=AUTO_TIMEOUT_SOURCE)
+                        await self.submit_task(task_id)
             if not error:
                 continue
             logger.warning(

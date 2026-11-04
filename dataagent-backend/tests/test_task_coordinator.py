@@ -126,121 +126,24 @@ def test_task_stop_reason_distinguishes_lease_loss_from_user_cancel():
     assert anyio.run(run) == (None, "user_cancel", "runner_stop")
 
 
-def test_recover_parked_tasks_leaves_unresolved_parked_task_untouched():
-    class FakeStore:
-        def __init__(self):
-            self.finished = []
-            self.messages = []
-
-        def list_parked_tasks(self, *, limit=20):
-            return [{"task_id": "task-1", "topic_id": "topic-1", "task_status": "waiting_permission"}]
-
-        def is_task_cancel_requested(self, task_id):
-            return False
-
-        def has_resolved_waiting_interaction(self, task_id):
-            return False
-
-        def get_pending_permission_request(self, task_id):
-            return {"request_id": "req-1"}
-
-        def get_pending_question_request(self, task_id):
-            return None
-
-        def update_assistant_message(self, **kwargs):
-            self.messages.append(kwargs)
-
-        def finish_task(self, **kwargs):
-            self.finished.append(kwargs)
-
-    coordinator = TaskCoordinator(store=FakeStore())
-
-    anyio.run(lambda: coordinator._recover_parked_tasks(batch_size=10))
-
-    assert coordinator.store.messages == []
-    assert coordinator.store.finished == []
-
-
-def test_recover_parked_tasks_suspends_resolved_orphan():
-    class FakeStore:
-        def __init__(self):
-            self.finished = []
-            self.messages = []
-
-        def list_parked_tasks(self, *, limit=20):
-            return [{"task_id": "task-1", "topic_id": "topic-1", "task_status": "waiting_input"}]
-
-        def is_task_cancel_requested(self, task_id):
-            return False
-
-        def has_resolved_waiting_interaction(self, task_id):
-            return True
-
-        def get_pending_permission_request(self, task_id):
-            return None
-
-        def get_pending_question_request(self, task_id):
-            return None
-
-        def update_assistant_message(self, **kwargs):
-            self.messages.append(kwargs)
-
-        def finish_task(self, **kwargs):
-            self.finished.append(kwargs)
-
-    coordinator = TaskCoordinator(store=FakeStore())
-
-    anyio.run(lambda: coordinator._recover_parked_tasks(batch_size=10))
-
-    assert coordinator.store.messages[0]["status"] == "suspended"
-    assert coordinator.store.messages[0]["error"]["code"] == "run_lost"
-    assert coordinator.store.finished == [
-        {
-            "task_id": "task-1",
-            "task_status": "suspended",
-            "error": {
-                "code": "run_lost",
-                "message": "确认/输入已提交，但原运行器已释放，请重新发送请求继续。",
-            },
-        }
-    ]
-
-
-def test_recover_parked_tasks_keeps_later_unresolved_request_parked():
-    class FakeStore:
-        def __init__(self):
-            self.finished = []
-            self.messages = []
-
-        def list_parked_tasks(self, *, limit=20):
-            return [{"task_id": "task-1", "topic_id": "topic-1", "task_status": "waiting_permission"}]
-
-        def is_task_cancel_requested(self, task_id):
-            return False
-
-        def has_resolved_waiting_interaction(self, task_id):
-            # A prior permission in the same run was already answered, but the
-            # current request is still pending and must remain visible.
-            return True
-
-        def get_pending_permission_request(self, task_id):
-            return {"request_id": "req-2"}
-
-        def get_pending_question_request(self, task_id):
-            return None
-
-        def update_assistant_message(self, **kwargs):
-            self.messages.append(kwargs)
-
-        def finish_task(self, **kwargs):
-            self.finished.append(kwargs)
-
-    coordinator = TaskCoordinator(store=FakeStore())
-
-    anyio.run(lambda: coordinator._recover_parked_tasks(batch_size=10))
-
-    assert coordinator.store.messages == []
-    assert coordinator.store.finished == []
+def test_recover_checkpointed_cards_without_a_live_process():
+    class Store:
+        def __init__(self): self.state={"interaction":{"request_id":"r1"}}; self.finished=[]; self.status=[]
+        def list_parked_tasks(self,**kw): return [{"task_id":"task-1","topic_id":"topic-1"}]
+        def get_session_checkpoint(self,_): return {"task_id":"task-1","state":self.state}
+        def is_task_cancel_requested(self,_): return False
+        def set_task_status(self,*args): self.status.append(args)
+        def update_assistant_message(self,**kw): pass
+        def finish_task(self,**kw): self.finished.append(kw)
+    store=Store(); coordinator=TaskCoordinator(store=store)
+    queued=[]
+    async def submit(task_id): queued.append(task_id)
+    coordinator.submit_task=submit
+    anyio.run(lambda:coordinator._recover_parked_tasks(batch_size=10))
+    assert not store.finished and not queued
+    store.state["interaction"]["result"]={"answers":[]}
+    anyio.run(lambda:coordinator._recover_parked_tasks(batch_size=10))
+    assert queued==["task-1"] and store.status==[("task-1","waiting")]
 
 
 def test_execution_identity_prefers_dataagent_login_then_host_reported_widget_user():

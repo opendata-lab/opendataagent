@@ -116,7 +116,7 @@ def test_default_agent_payload_is_general_builtin_agent():
     # 默认助手开箱具备与平台无关的展示能力，不依赖任何 DataAgent 技能
     assert payload["skill_folders"] == ["chart-visualization", "report-generation"]
     assert payload["mcp_server_ids"] == []
-    assert payload["allowed_tools"] == ["Read", "LS", "Glob", "Grep"]
+    assert "allowed_tools" not in payload
     assert payload["is_default"] is True
     assert payload["is_builtin"] is True
 
@@ -157,7 +157,7 @@ def test_normalize_agent_profile_payload_accepts_scoped_runtime_config():
 
     assert payload["name"] == "质量巡检助手"
     assert "permission_mode" not in payload
-    assert payload["allowed_tools"] == ["Read", "Skill", "Grep"]
+    assert "allowed_tools" not in payload
     assert payload["mcp_server_ids"] == ["web"]
     assert payload["skill_folders"] == ["example-business-knowledge"]
     assert payload["max_turns"] == 12
@@ -253,8 +253,7 @@ def test_build_agent_snapshot_keeps_runtime_fields_without_timestamps():
             "description": "只处理数据质量规则和巡检结果分析。",
             "system_prompt": "你是数据质量巡检场景的智能体。",
             "permission_mode": "default",
-            "allowed_tools": ["Skill", "Read"],
-            "mcp_server_ids": ["web"],
+                "mcp_server_ids": ["web"],
             "skill_folders": ["example-business-knowledge"],
             "max_turns": 8,
             "plan_timeout_action": "park",
@@ -271,7 +270,6 @@ def test_build_agent_snapshot_keeps_runtime_fields_without_timestamps():
         "name": "质量巡检助手",
         "description": "只处理数据质量规则和巡检结果分析。",
         "system_prompt": "你是数据质量巡检场景的智能体。",
-        "allowed_tools": ["Skill", "Read"],
         "mcp_server_ids": ["web"],
         "skill_folders": ["example-business-knowledge"],
         "max_turns": 8,

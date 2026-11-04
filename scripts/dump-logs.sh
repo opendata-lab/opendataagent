@@ -5,7 +5,7 @@
 #
 # 服务日志来自 compose（json-file 驱动，容器重启不丢），导出到:
 #   deploy/logs/services/<service>.log
-# task child 日志由 dataagent-sandbox-runner 实时写在挂载卷上（--rm 删容器不影响），来自:
+# 旧版本 task child 日志保留在挂载卷上，来自:
 #   <DATAAGENT_HOST_ROOT>/<topic>/logs/<task>.log
 # 复制到:
 #   deploy/logs/task-child/<topic>/<task>.log
@@ -74,7 +74,7 @@ pushd "$DEPLOY_DIR" >/dev/null
 # 解析服务列表（失败则回退到已知服务清单）
 SERVICES="$("${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE_NAME" "${ENV_ARGS[@]}" config --services 2>/dev/null || true)"
 if [ -z "$SERVICES" ]; then
-    SERVICES="mysql redis dataagent-home-init dataagent-backend dataagent-sandbox-runner dataagent-frontend log-collector"
+    SERVICES="mysql redis dataagent-backend dataagent-frontend log-collector"
 fi
 
 echo "📦 导出服务日志 -> $SERVICES_DIR"
@@ -90,7 +90,7 @@ done
 
 popd >/dev/null
 
-# task child 日志（runner 已落盘在挂载卷上）
+# 兼容导出旧版本已落盘的 task child 日志；新执行事件在 MySQL 中。
 HOST_ROOT="$(resolve_dataagent_host_root)"
 echo ""
 echo "🧩 汇总 task child 日志 (DATAAGENT_HOST_ROOT=$HOST_ROOT) -> $CHILD_DIR"

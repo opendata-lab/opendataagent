@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import threading
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_validator, AliasChoices
+from typing import Literal
 from pydantic_settings import BaseSettings
 
 
@@ -30,9 +31,9 @@ class Settings(BaseSettings):
     agent_interactive_timeout_seconds: int = Field(default=360, gt=0)
     agent_background_timeout_seconds: int = Field(default=1800, gt=0)
     agent_interactive_bash_timeout_seconds: int = Field(default=300, gt=0)
-    agent_background_bash_timeout_seconds: int = Field(default=900, gt=0)
+    agent_background_bash_timeout_seconds: int = Field(default=600, gt=0)
     agent_interactive_sql_read_timeout_seconds: int = Field(default=300, gt=0)
-    agent_background_sql_read_timeout_seconds: int = Field(default=900, gt=0)
+    agent_background_sql_read_timeout_seconds: int = Field(default=300, gt=0)
     agent_sql_write_timeout_seconds: int = Field(default=60, gt=0)
     # Max bytes when buffering a single CLI stdout JSON message before decoding.
     # The SDK default is 1MB; large NL2SQL tool results / partial messages can
@@ -54,7 +55,6 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_auth_token: str = ""
     anthropic_base_url: str = ""
-    claude_cli_path: str = ""
 
     # ---- MySQL（DataAgent 自身会话存储）----
     mysql_host: str = "localhost"
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     mysql_user: str = "dataagent"
     mysql_password: str = "dataagent123"
     mysql_database: str = "dataagent"
-    session_mysql_database: str = "dataagent"
+    session_mysql_database: str = Field(default="dataagent", validation_alias=AliasChoices("MYSQL_DATABASE", "SESSION_MYSQL_DATABASE", "DATAAGENT_SESSION_MYSQL_DATABASE"))
 
     # ---- Redis（task 协调）----
     redis_host: str = "127.0.0.1"
@@ -75,24 +75,15 @@ class Settings(BaseSettings):
     skills_output_dir: str = "../.claude/skills/chart-visualization"
     dataagent_upload_max_bytes: int = 20 * 1024 * 1024
     # ---- Agent 交互能力 ----
-    # AskUserQuestion 让 agent 通过选择卡片向用户提问。开启时会为每次运行安装
-    # can_use_tool 回调，并以流式输入形态投递 prompt。置 false 后：AskUserQuestion 不再
-    # 加入 allowed_tools，且在无写工具门控的会话中 can_use_tool 回到 None、prompt 回到
-    # 纯字符串形态（更接近 v1.3.0 的调用形态）。写工具确认门控不受本开关影响。
+    # Expose AskUserQuestion cards; write approval gates remain independent.
     dataagent_ask_user_question_enabled: bool = True
     # A question or plan card left unanswered this long is settled by policy:
     # questions take their recommended option (or are skipped), a plan follows
     # the agent's plan_timeout_action. 0 waits for the user indefinitely.
     dataagent_interaction_timeout_seconds: int = Field(default=600, ge=0)
 
-    # ---- Agent runtime kind (data plane engine) ----
-    # Which execution engine runs one NL2SQL turn. This is orthogonal to
-    # dataagent_sandbox_mode: that one picks the isolation topology (in-process
-    # vs. child container), this one picks the engine inside whichever topology
-    # was selected. Deployment-level only; never resolved per request.
-    #   pi_agent_core -> Node Pi Cell over stdio (default, dataagent-runtime-pi)
-    #   claude_code   -> claude-agent-sdk
-    dataagent_runtime_kind: str = "pi_agent_core"
+    # Pi is the sole engine; tools execute in a separate sandbox.
+    dataagent_runtime_kind: Literal["pi_agent_core"] = "pi_agent_core"
     # Node binary and built Pi Cell entrypoint used when runtime kind is
     # pi_agent_core. Empty values fall back to `node` on PATH and the in-repo
     # dataagent-runtime-pi build output.
@@ -124,35 +115,8 @@ class Settings(BaseSettings):
     # host Docker/Podman daemon to bind-mount topic subdirectories into child
     # containers.
     dataagent_host_root: str = "/dataagent_runtime"
-    dataagent_sandbox_mode: str = ""
-    dataagent_sandbox_runner_url: str = ""
-    dataagent_sandbox_image: str = ""
-    dataagent_sandbox_backend: str = "docker"
-    dataagent_sandbox_network: str = ""
-    # Per-task sandbox logs are written under <runtime_root>/<topic>/logs so they
-    # sit next to the topic's workspace/ and home/ subdirs; no separate root.
-    # Runtime isolation hardening for the child task container. The workspace
-    # bind-mount is always the only writable host path; these tighten the rest.
-    # read_only_rootfs locks the container root filesystem read-only so the
-    # agent's Bash/Python cannot persist anything outside the bind-mounted
-    # workspace; a writable tmpfs is mounted at /tmp for transient scratch.
-    dataagent_sandbox_read_only_rootfs: bool = False
-    dataagent_sandbox_tmpfs_size: str = "512m"
-    # Directories the runtime boundary hook allows on top of the topic workspace
-    # and the enabled Skill roots. Comma-separated absolute paths. Default "/tmp"
-    # matches the writable tmpfs the sandbox mounts into the child container, so
-    # transient scratch files stop being denied as "outside workspace". Read and
-    # write share this one list; final deliverables still belong in the workspace
-    # `output/` dir. Set to "" to restore workspace-only file access.
-    dataagent_workspace_scratch_dirs: str = "/tmp"
-    # Warm child container reuse. When the container backend is active, keep a
-    # finished child alive for an idle window so same-conversation follow-ups
-    # reuse it instead of paying full container/SDK cold-start each turn.
-    # Set reuse_enabled to false to restore one-shot-per-task containers.
-    dataagent_sandbox_reuse_enabled: bool = True
-    dataagent_sandbox_idle_ttl_seconds: int = 600
-    dataagent_sandbox_max_warm_containers: int = 32
-    dataagent_sandbox_reaper_interval_seconds: int = 30
+    dataagent_sandbox_image: str = "oda-sandbox:latest"
+    dataagent_sandbox_backend: Literal["docker", "podman"] = "docker"
 
     # ---- 运行策略 ----
     max_few_shot_examples: int = 5
@@ -167,9 +131,9 @@ class Settings(BaseSettings):
             bash = getattr(self, f"{prefix}_bash_timeout_seconds")
             total = getattr(self, f"{prefix}_timeout_seconds")
             sql_read = getattr(self, f"{prefix}_sql_read_timeout_seconds")
-            if max(sql_read, self.agent_sql_write_timeout_seconds) > bash or bash >= total:
+            if min(sql_read, self.agent_sql_write_timeout_seconds, bash) <= 0 or bash >= total:
                 raise ValueError(
-                    f"{prefix}: SQL timeouts must be <= bash_timeout_seconds < timeout_seconds"
+                    f"{prefix}: SQL timeouts must be positive; bash_timeout_seconds < timeout_seconds"
                 )
         return self
 
@@ -177,6 +141,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
+        populate_by_name = True
 
 
 _settings = Settings()
@@ -242,47 +207,9 @@ def resolve_sql_read_timeout_seconds(cfg: Settings, execution_mode) -> int:
     return int(getattr(cfg, name, Settings.model_fields[name].default))
 
 
-SUPPORTED_RUNTIME_KINDS = ("claude_code", "pi_agent_core")
-# Pi is what production runs, in the child-container topology. The default used
-# to be claude_code, which meant a deployment that set nothing ran the engine
-# nobody was using — and a local smoke that forgot the variable silently
-# verified the wrong path.
+SUPPORTED_RUNTIME_KINDS = ("pi_agent_core",)
 DEFAULT_RUNTIME_KIND = "pi_agent_core"
 
 
 def resolve_runtime_kind(cfg: Settings) -> str:
-    """解析当前部署激活的执行引擎（数据面）。
-
-    唯一解析入口。与 ``dataagent_sandbox_mode`` 正交：后者决定隔离拓扑（进程内 /
-    子容器），本函数只决定在选定拓扑内部由哪个引擎执行一轮问答。部署级配置，
-    不接受请求级切换。无法识别的取值回落到默认引擎而不是抛错，保证一个写错的
-    环境变量不会让整个后端拒绝服务。
-    """
-    raw = str(getattr(cfg, "dataagent_runtime_kind", "") or "").strip().lower()
-    if raw in SUPPORTED_RUNTIME_KINDS:
-        return raw
-    return DEFAULT_RUNTIME_KIND
-
-
-def resolve_workspace_scratch_dirs(cfg: Settings) -> list[str]:
-    """解析工作区边界之外仍允许读写的目录白名单。
-
-    唯一解析入口，供边界钩子装配和系统提示词共用，避免两处对同一份配置给出不同结论。
-    只接受绝对路径，拒绝根目录 ``/`` 和含 ``..`` 的路径，去掉尾部 ``/`` 后按顺序去重。
-    非法项直接丢弃：配置写错只会收紧白名单，不会意外放开更多目录。
-    """
-    raw = str(getattr(cfg, "dataagent_workspace_scratch_dirs", "") or "")
-    resolved: list[str] = []
-    seen: set[str] = set()
-    for item in raw.split(","):
-        text = item.strip()
-        if not text.startswith("/"):
-            continue
-        if any(part == ".." for part in text.split("/")):
-            continue
-        normalized = text.rstrip("/")
-        if not normalized or normalized in seen:
-            continue
-        resolved.append(normalized)
-        seen.add(normalized)
-    return resolved
+    return cfg.dataagent_runtime_kind

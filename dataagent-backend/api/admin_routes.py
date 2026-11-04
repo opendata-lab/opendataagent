@@ -52,7 +52,6 @@ from core.mcp_admin_service import (
     update_mcp_server,
 )
 from core.skill_discovery import resolve_skills_root_dir
-from core.slash_command_cache import get_agent_slash_commands
 from core.topic_task_store import get_topic_task_store
 from models.schemas import (
     WidgetAccessKeyResponse,
@@ -600,15 +599,9 @@ def get_agent_slash_commands_endpoint(agent_id: str, request: Request):
     profile = get_agent_profile(agent_id)
     if not profile or not agent_visible_to(profile, _catalog_identity(request)):
         raise HTTPException(status_code=404, detail="agent not found")
-    # Prefer the authoritative list captured from a real run's system/init message.
-    cached = get_agent_slash_commands(agent_id)
-    if cached is not None:
-        return AgentSlashCommandsResponse(slash_commands=cached, source="sdk")
-    # Cold start (no run has reported yet): fall back to the agent's enabled skill
-    # folders, which the SDK also exposes as /<folder> commands.
     raw = profile.get("skill_folders")
     folders = [str(item).strip() for item in raw if str(item or "").strip()] if isinstance(raw, list) else []
-    return AgentSlashCommandsResponse(slash_commands=folders, source="fallback")
+    return AgentSlashCommandsResponse(slash_commands=folders, source="skills")
 
 
 @skills_router.put("/agents/{agent_id}")

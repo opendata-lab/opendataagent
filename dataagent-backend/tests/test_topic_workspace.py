@@ -88,151 +88,28 @@ def test_resolve_topic_workspace_falls_back_to_host_root_for_local_execution(tmp
     assert workspace == host_root / "topic_1" / "workspace"
 
 
-def test_prepare_topic_workspace_copies_enabled_skills(monkeypatch, tmp_path: Path):
-    original_skills = get_settings().skills_output_dir
-    original_skills_root = getattr(get_settings(), "skills_root_dir", "")
-    project = tmp_path / "project"
-    skills_root = project / ".claude" / "skills"
-    _write_skill(skills_root, "example-business-knowledge")
-    _write_skill(skills_root, "example-platform-tools")
-    update_settings(
-        {
-            "skills_root_dir": str(skills_root),
-        }
-    )
-    try:
-        workspace = prepare_topic_workspace(
-            "topic_1",
-            ["example-business-knowledge", "example-platform-tools"],
-            runtime_root=tmp_path / "topics",
-        )
-    finally:
-        update_settings(
-            {
-                "skills_output_dir": original_skills,
-                "skills_root_dir": original_skills_root,
-            }
-        )
-
-    skill_copy = workspace / ".claude" / "skills" / "example-business-knowledge"
-    platform_copy = workspace / ".claude" / "skills" / "example-platform-tools"
-    assert workspace == tmp_path / "topics" / "topic_1" / "workspace"
-    # Real directory copies, not symlinks, so SDK skill discovery sees real files.
-    assert skill_copy.is_dir() and not skill_copy.is_symlink()
-    assert platform_copy.is_dir() and not platform_copy.is_symlink()
-    assert (workspace / ".claude" / "plans").is_dir()
-    assert (skill_copy / "SKILL.md").read_text(encoding="utf-8") == "# example-business-knowledge\n"
-    assert (platform_copy / "SKILL.md").read_text(encoding="utf-8") == "# example-platform-tools\n"
+def test_prepare_workspace_removes_reserved_skill_copies_and_preserves_user_files(monkeypatch,tmp_path):
+    skills=tmp_path/".claude"/"skills"; _write_skill(skills,"sample")
+    monkeypatch.setattr(get_settings(),"skills_root_dir",str(skills))
+    root=tmp_path/"topics"; workspace=resolve_topic_workspace("topic-1",runtime_root=root)
+    _write_skill(workspace/".claude"/"skills","old-copy")
+    (workspace/"output").mkdir(); (workspace/"output"/"report.txt").write_text("keep")
+    result=prepare_topic_workspace("topic-1",["sample"],runtime_root=root)
+    assert result==workspace
+    assert not (workspace/".claude"/"skills").exists()
+    assert (workspace/"output"/"report.txt").read_text()=="keep"
+    assert (skills/"sample"/"SKILL.md").exists()
+    assert not (workspace.parent/"home").exists()
 
 
-def test_prepare_topic_workspace_keeps_skills_mounted_inside_workspace(monkeypatch, tmp_path: Path):
-    original_skills = get_settings().skills_output_dir
-    original_skills_root = getattr(get_settings(), "skills_root_dir", "")
-    workspace = tmp_path / "topic-workspace"
-    skills_root = workspace / ".claude" / "skills"
-    _write_skill(skills_root, "platform-imported-skill")
-    stale = skills_root / "stale-skill"
-    stale.mkdir(parents=True)
-    (stale / "SKILL.md").write_text("# stale\n", encoding="utf-8")
-    update_settings(
-        {
-            "skills_root_dir": str(skills_root),
-        }
-    )
-    try:
-        prepared = prepare_topic_workspace(
-            "topic_2",
-            ["platform-imported-skill"],
-            workspace_dir=workspace,
-        )
-    finally:
-        update_settings(
-            {
-                "skills_output_dir": original_skills,
-                "skills_root_dir": original_skills_root,
-            }
-        )
-
-    skill_dir = prepared / ".claude" / "skills" / "platform-imported-skill"
-    assert prepared == workspace.resolve()
-    assert skill_dir.is_dir()
-    assert not skill_dir.is_symlink()
-    assert not (prepared / ".claude" / "skills" / "stale-skill").exists()
-
-
-def test_prepare_topic_workspace_can_use_pre_mounted_workspace(monkeypatch, tmp_path: Path):
-    original_skills = get_settings().skills_output_dir
-    original_skills_root = getattr(get_settings(), "skills_root_dir", "")
-    project = tmp_path / "project"
-    skills_root = project / ".claude" / "skills"
-    mounted_workspace = tmp_path / "mounted-workspace"
-    _write_skill(skills_root, "example-business-knowledge")
-    update_settings(
-        {
-            "skills_root_dir": str(skills_root),
-        }
-    )
-    try:
-        workspace = prepare_topic_workspace(
-            "topic_1",
-            ["example-business-knowledge"],
-            workspace_dir=mounted_workspace,
-        )
-    finally:
-        update_settings(
-            {
-                "skills_output_dir": original_skills,
-                "skills_root_dir": original_skills_root,
-            }
-        )
-
-    assert workspace == mounted_workspace.resolve()
-    assert workspace != tmp_path / "topics" / "topic_1"
-    skill_copy = workspace / ".claude" / "skills" / "example-business-knowledge"
-    assert skill_copy.is_dir() and not skill_copy.is_symlink()
-    assert (skill_copy / "SKILL.md").read_text(encoding="utf-8") == "# example-business-knowledge\n"
-
-
-def test_prepare_topic_workspace_copies_once_and_refreshes_on_source_change(monkeypatch, tmp_path: Path):
-    original_skills_root = getattr(get_settings(), "skills_root_dir", "")
-    project = tmp_path / "project"
-    skills_root = project / ".claude" / "skills"
-    _write_skill(skills_root, "imported-skill")
-    update_settings(
-        {
-            "skills_root_dir": str(skills_root),
-        }
-    )
-    try:
-        workspace = prepare_topic_workspace("topic_1", ["imported-skill"], runtime_root=tmp_path / "topics")
-        skill_dir = workspace / ".claude" / "skills" / "imported-skill"
-        copied = skill_dir / "SKILL.md"
-        assert copied.read_text(encoding="utf-8") == "# imported-skill\n"
-
-        # Unchanged source: a second prepare (e.g. second message in the same
-        # topic) must NOT re-copy. Prove it by dropping a sentinel that a re-copy
-        # would wipe.
-        sentinel = skill_dir / "sentinel.txt"
-        sentinel.write_text("keep", encoding="utf-8")
-        prepare_topic_workspace("topic_1", ["imported-skill"], runtime_root=tmp_path / "topics")
-        assert sentinel.exists()
-        assert copied.read_text(encoding="utf-8") == "# imported-skill\n"
-
-        # Same-name re-import rewrites the source and bumps mtimes; the next
-        # prepare must refresh the copy (sentinel wiped, new content).
-        src_md = skills_root / "imported-skill" / "SKILL.md"
-        src_md.write_text("# reimported\n", encoding="utf-8")
-        future = time.time() + 1000
-        os.utime(src_md, (future, future))
-        prepare_topic_workspace("topic_1", ["imported-skill"], runtime_root=tmp_path / "topics")
-        assert copied.read_text(encoding="utf-8") == "# reimported\n"
-        assert not sentinel.exists()
-    finally:
-        update_settings(
-            {
-                "skills_root_dir": original_skills_root,
-            }
-        )
+def test_prepare_workspace_rejects_a_skill_source_inside_the_workspace(monkeypatch,tmp_path):
+    import pytest
+    from core.skill_discovery import SkillDiscoveryError
+    workspace=tmp_path/"workspace"; skills=workspace/".claude"/"skills"; _write_skill(skills,"sample")
+    monkeypatch.setattr(get_settings(),"skills_root_dir",str(skills))
+    with pytest.raises(SkillDiscoveryError,match="cannot be inside"):
+        prepare_topic_workspace("topic-1",["sample"],workspace_dir=workspace)
+    assert (skills/"sample"/"SKILL.md").exists()
 
 
 def test_delete_topic_workspace_removes_topic_root_including_logs(tmp_path: Path):

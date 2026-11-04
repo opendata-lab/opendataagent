@@ -9,13 +9,13 @@
 dataagent-backend（FastAPI :8900）
     ├── API 层            会话、任务、消息、管理接口
     ├── Task Coordinator  异步任务调度，内嵌在 main.py，不需要单独的 worker
-    ├── 运行时            Pi（默认 pi_agent_core）或 Claude Agent SDK
+    ├── 运行时            Pi SDK（pi-coding-agent 1.4.0），每个执行段一个 Node 子进程
     ├── Skill / MCP       通用内置 Skill + 管理员导入的 Skill；智能体显式绑定的 MCP
     └── 存储              MySQL（dataagent schema）、Redis（任务协调）
-    │
-    ▼  DATAAGENT_SANDBOX_MODE=container 时
-dataagent-sandbox-runner（:8910，内部）
-    └── 每个 task 一个一次性 child 容器，只挂当前 topic 的工作区
+    └── Pi Cell 按需通过 Docker CLI 启动 oda-sandbox
+        ├── bash/read/write/edit/ls/find/grep（固定启用）
+        ├── 当前 topic workspace 读写、results 与启用 skills 只读
+        └── 无网络、无凭据、无 Docker socket；本段结束即销毁
 ```
 
 DataAgent 不内置任何数据平台。访问外部系统只通过智能体显式绑定的 MCP；对每个 HTTP MCP，后端都附加
@@ -26,9 +26,9 @@ DataAgent 不内置任何数据平台。访问外部系统只通过智能体显�
 
 1. 前端创建会话：`POST /api/v1/nl2sql/topics`。
 2. 用户发送消息：`POST /api/v1/nl2sql/tasks/deliver-message`，返回 `task_id`，任务进入 `waiting`。
-3. Task Coordinator 拾取任务（`running`），按智能体配置启动运行时；容器模式下交给 runner 在 child 容器中执行。
+3. Task Coordinator 拾取任务（`running`），按智能体配置启动 Pi Cell；编排和 MCP 留在控制面，基础工具全部在沙箱中执行。
 4. 运行时事件写入 `da_agent_sdk_record`，前端通过 `GET /api/v1/nl2sql/tasks/{task_id}/sdk-events/stream` 实时读取。
-5. 结束后任务进入 `success` / `failed` / `suspended`（等待用户审批或回答问题），助手消息写入会话。
+5. 结束后任务进入 `finished` / `error` / `suspended`，助手消息写入会话。卡片等待使用 `waiting_input` / `waiting_permission`，会话快照与卡片在同一事务提交后释放进程、容器及槽位；回答后同一 task_id 转回 waiting，以新执行段续聊。
 
 ## 运行预算
 
@@ -44,6 +44,7 @@ DataAgent 不内置任何数据平台。访问外部系统只通过智能体显�
 | --- | --- |
 | `da_agent_topic` | 会话（来源 `web` / widget、所属用户、绑定智能体） |
 | `da_agent_message` | 会话消息 |
+| `da_agent_session_checkpoint` | SDK 会话条目、叶节点、交互批准及累计预算 |
 | `da_agent_task` | 任务状态与执行快照 |
 | `da_agent_sdk_record` | 运行时事件流（`engine_kind` 标明实际运行的引擎） |
 | `da_agent_profile` / `da_agent_draft` | 智能体及其草稿 |
@@ -53,7 +54,7 @@ DataAgent 不内置任何数据平台。访问外部系统只通过智能体显�
 | `da_agent_message_queue` / `da_agent_message_schedule` | 排队消息与定时消息 |
 | `da_agent_settings` | 全局设置（含 widget 站点白名单） |
 
-topic 工作区不在数据库里，位于宿主机 `DATAAGENT_HOST_ROOT/<topic_id>/`。
+topic 文件位于宿主机 `DATAAGENT_HOST_ROOT/<topic_id>/`；workspace 供上传和产物使用，results 保存未经预览截断的原始 JSON/文本，沙箱只读路径为 `/mnt/results`。具体 MCP 写操作批准绑定服务、工具和原参数，只领取一次；结果未知时中止并等待核查，不自动重放。
 
 ## 相关文档
 

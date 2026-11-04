@@ -95,12 +95,8 @@ scripts/load-package-and-start.sh --package .
     │  HTTP + SSE
     ▼
 dataagent-backend（FastAPI）── MySQL / Redis
-    │  任务调度 · 运行时 · Skill · MCP
-    ▼
-dataagent-sandbox-runner ── 每个任务一个 child 容器
-    │
-    ▼  HTTP MCP（带执行身份头）
-外部系统（如 OpenDataWorks）
+    ├── Pi SDK 子进程 ── 按执行段懒启动 oda-sandbox（7 个基础工具）
+    └── HTTP MCP（带执行身份头）── 外部系统（如 OpenDataWorks）
 ```
 
 详见 [架构文档](docs/handbook/architecture.md)。
@@ -123,13 +119,22 @@ dataagent-sandbox-runner ── 每个任务一个 child 容器
 
 ```bash
 # 后端
-python3.13 -m venv dataagent-backend/.venv-py313
+pyenv install -s 3.13.18
+pyenv local 3.13.18
+python -m venv dataagent-backend/.venv-py313
 dataagent-backend/.venv-py313/bin/pip install -r dataagent-backend/requirements.txt
 
 # Node（版本见 .nvmrc）
+. "$HOME/.nvm/nvm.sh"
 nvm use
 npm --prefix dataagent-runtime-pi ci && npm --prefix dataagent-runtime-pi run build
 npm --prefix dataagent-frontend ci
+```
+
+工具执行需要可用的 Docker（缺少 Docker CLI 时可用 Podman）及预先构建的工具镜像：
+
+```bash
+docker build -f dataagent-backend/Dockerfile.sandbox -t oda-sandbox:latest .
 ```
 
 准备 MySQL 会话库与 Redis，设置 `SKILLS_ROOT_DIR`（仓库 `.claude/skills` 的绝对路径）和 `DATAAGENT_HOST_ROOT`，然后：
@@ -138,11 +143,12 @@ npm --prefix dataagent-frontend ci
 cd dataagent-backend
 .venv-py313/bin/alembic upgrade head
 .venv-py313/bin/uvicorn main:app --port 8900
-# 另开终端
+# 另开终端，在仓库根目录
+. "$HOME/.nvm/nvm.sh" && nvm use
 npm --prefix dataagent-frontend run dev
 ```
 
-测试：仓库根运行 `dataagent-backend/.venv-py313/bin/python -m pytest`；前端与 Pi 运行时分别运行 `npm test`。
+测试：仓库根运行 `dataagent-backend/.venv-py313/bin/python -m pytest`；前端与 Pi 运行时分别运行 `npm test`；Pi 沙箱集成测试设置 `DATAAGENT_SANDBOX_TEST_IMAGE=oda-sandbox:latest`。无凭据的真实 HTTP 冒烟见 [验证报告](docs/reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
 
 ## 贡献
 

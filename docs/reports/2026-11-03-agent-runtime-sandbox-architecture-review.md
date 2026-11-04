@@ -1,79 +1,65 @@
-# 运行时整合与 Docker 沙箱架构评审
+# 运行时整合与 Docker 沙箱架构评审及验证
 
 日期：2026-11-03
 
-评审对象：[设计](../design/2026-11-03-agent-runtime-sandbox-architecture-design.md)、[计划](../plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)。
+关联：[设计](../design/2026-11-03-agent-runtime-sandbox-architecture-design.md)、[计划](../plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)。
 
-原始评审结论：支持编排留在沙箱外、工具在容器内执行、移除独立 Runner、只保留 Pi、按轮懒启动并销毁容器的方向，需补齐下列问题。
+## 交付结果
 
-修订状态（2026-11-03）：已按用户讨论同步设计和计划，采用卡片结束本段后续聊、大输出落盘返回只读沙箱路径、7 个基础工具固定启用。以下保留原问题证据；修订说明以当前设计为准，尚未完成 SDK 验证或业务实现。
+已将实际执行链路改为 backend → Pi SDK Cell → 工具专用 Docker 沙箱，移除 Runner、Claude SDK、宿主工具和正则路径边界。Pi SDK 1.4.0 使用内存配置、凭据、会话与显式资源加载器；SDK 默认宿主实现由同名沙箱工具替换。固定七个基础工具，智能体只配置 Skills/MCP。
 
-本次为静态评审：对照当前后端、Pi 运行时、技能、Compose 配置，并读取发布包 `@earendil-works/pi-coding-agent@1.4.0` 的 SDK 与 SessionManager 实现；未安装新 SDK、未修改业务代码、未运行单测或端到端验证。SDK 发布包用于确认默认工具和导入接口，不等同于完成 Step 0。
+问题/计划/权限卡片结束执行段，事务保存会话、卡片及等待状态；用户回答在同一 task_id 下重新调度。累计时间、轮次和工具预算保留，等待不计时。具体 MCP 写批准绑定服务配置身份、工具及原参数；操作结果先落库再确认，未知外部结果不自动重放。
 
-## R1 · P1：会话条目恢复不等于等待中的工具调用恢复
+原始大 JSON/文本保存至 topic results，只读挂载 `/mnt/results`；UI 结构化结果和模型预览分离。部署入口初始化卷、同步内置技能、配置 socket 附加组，再以配置 UID/GID 降权。新增结果迁移与回退准备脚本。
 
-- 定位：设计 3.3、4.1；计划 Step 0 第 4 点、Step 3 的会话恢复任务。
-- 当前 `InteractionBroker` 把等待者保存在内存 Promise 中。导入 SessionManager 条目只会恢复对话数据，不会复活 Promise、待执行的同批工具、计划批准状态或原调用栈。现有 `task_coordinator.py::_recover_parked_tasks` 在回答已提交而原运行器消失时仍会写入 `run_lost`。
-- 影响：即使会话导入测试通过，卡片回答后仍可能无法继续；若重跑整轮，还可能重复执行已完成的写入。
-- 用户讨论后的修订：明确区分对话继续与精确执行恢复。问题/计划卡结束当前执行段，保存合法会话和卡片记录；回答后在同一 Topic/任务下启动新段，用正常 prompt 继续。未执行工具留真实未执行结果，后续由模型重新决定；不保存延迟队列、不改写历史结果、不补跑原批次。具体写操作审批绑定工具及参数，未知结果不自动重放。见设计 3.4、计划 Step 0/2/3。
-- 验收：卡片后资源释放，重启后回答自动续聊，重复回答不重复追加输入或调度；已完成结果在上下文中，预算不重置。外部写副作用的 exactly-once 不能由会话快照或本地标记保证，需要目标幂等能力或实际状态核对。
+## 原始评审问题与处理
 
-## R2 · P1：沙箱工具清单遗漏 SDK 默认的 edit/write
+| 问题 | 结果与证据 |
+| --- | --- |
+| R1：会话条目不能恢复等待中的 Promise/批次 | 删除 broker；卡片完成本段，回答作为新输入。SDK 导入、MySQL 事务和 HTTP 重启续聊通过；未执行工具不补跑。 |
+| R2：SDK 默认 write/edit 泄漏到宿主 | `tools: []` 经探针证实也会禁用 customTools，因此采用显式工具名清单及同名覆盖。逐一实际执行七工具，工作区可写，宿主文件不可见，只读挂载拒写。 |
+| R3：本地 realpath 无法隔离任意 Bash | 本地开发同样使用 Docker；仅在确认缺 Docker CLI 时选择 Podman，不回退宿主执行。 |
+| R4：完整结果缺少报表输入通道 | 20,001 字节输出、1,000 行 MCP 原始 JSON 直接由沙箱 Python 读取，核对完整数量及周边元数据。 |
+| R5：取消初始化服务后的权限/socket | 实际 backend 镜像在新卷、复用卷运行，PID 1 UID/GID 1000，socket 可用，daemon mount 映射及工具写入通过。显式 `gosu user:group` 会丢附加组，已改为配置主组后 `gosu user`。 |
+| R6：迁移/回退不能仅看新增表 | 旧 JSONL 幂等转换、原文件保留、不覆盖；真实旧镜像需要识别 Alembic revision，因此先运行新版回退准备脚本将戳恢复为 31。旧镜像历史、输出及文本追问通过。再次升级丢弃过期 SDK 快照，从文本重建。 |
+| R7：parallel 会改变业务顺序 | 保留 sequential，卡片后阻止同批后续工具；计划拒绝仍禁止写，MCP 批准只领取一次。 |
+| R8：杀 docker exec 不能停止后代 | 命令超时销毁整段容器，Cell finally 与 backend 清理兜底；真实后代、取消和 idle 测试通过，无遗留沙箱。 |
 
-- 定位：设计 3.2；计划 Step 0、Step 2。
-- `pi-coding-agent@1.4.0` 默认工具为 `read/bash/edit/write`。配置 resourceLoader 和替换五个环境工具，并不会自动关闭其余默认工具；设计只枚举 Bash/Read/LS/Grep/Find，未明确禁用宿主 edit/write。
-- 影响：若按默认工厂创建会话，模型仍可能通过内置 edit/write 在后端进程可访问的文件系统中写文件，绕开新沙箱边界。
-- 需要补齐（2026-11-03 用户修订）：关闭默认宿主执行实现，再注册 `bash/read/write/edit/ls/find/grep` 沙箱工具。`edit/write` 是需要保留的能力，不能按名称禁止；检查执行入口与实际边界，而非依赖大小写区分。
-- 验收：`write/edit` 在沙箱工作区正常创建、修改文件，只读技能挂载拒写，宿主文件未被读取或修改；基础工具固定启用，删除智能体配置页中与实际 Pi 注册列表不一致的旧勾选，保留 Skills/MCP 选择。设计 3.2.1、3.2.4 和计划 Step 0–3 已更新，业务代码尚未实施。
-- 参考：[官方 SDK 配置边界说明](https://pi.dev/docs/latest/sdk)、[1.4.0 默认工具定义](https://unpkg.com/@earendil-works/pi-coding-agent@1.4.0/dist/core/settings-manager.js)。
+## 实际环境
 
-## R3 · P1：local 模式仅校验 realpath 无法约束任意 Bash
+- macOS arm64；nvm 0.40.3，Node 22.22.0（仓库）/22.19.0（Pi 子目录）。本轮最终测试使用 22.22.0；两版本均完成过构建。
+- pyenv 2.8.14，Python 3.13.18，虚拟环境 `dataagent-backend/.venv-py313`；requirements 已安装。OpenSSL 3.6.5、xz/lzma、TLS 导入及请求校验通过。
+- Docker Desktop 4.98.0 / Engine 29.9.2；构建 `oda-sandbox:test`、`oda-backend:test` 及基于改造前 HEAD 的 `oda-backend:rollback-test`。
+- MySQL 容器 `dataagent-mysql`：`127.0.0.1:3326/dataagent`；Redis `odw-local-redis`：`127.0.0.1:6379`，以 Docker bootstrap。容器部署演练使用专用临时 schema、network、skills volume、workspace 和 Redis DB 14。
+- **没有调用真实模型或使用真实 provider 凭据**。HTTP 使用本地 OpenAI 格式 SSE fixture 和真实 HTTP MCP fixture，生产入口、协调器、Pi SDK、Docker、MySQL、Redis、事件流和消息持久化均实际执行。用户自行配置真实 provider，未修改其设置。
+- 官方 PyPI CDN 大包下载中断且极慢，本次本机安装与镜像构建显式使用清华 PyPI 镜像；仓库默认源仍为官方 PyPI。
 
-- 定位：计划第 38 行；与设计 SA-04 的全部工具进容器不一致。
-- 校验 cwd 或文件工具参数归属，不能限制 Bash 程序内部的绝对路径访问、子进程和网络。删除旧边界后，本地 Bash 仍可直接读取开发机器上的配置和凭据。
-- 需要补齐：优先让本地开发也使用同一 Docker 执行路径，删除这条未经必要性验证的回退。若确有必须保留的开发模式，应明确它是无隔离执行而非 realpath 沙箱，且不能被容器启动失败自动触发。
-- 验收：默认本地开发与部署使用相同的工具边界；Docker 不可用时明确失败，不转为宿主 Bash。
+## 验证记录
 
-## R4 · P1：大结果到沙箱报表脚本的数据通道缺失
+| 检查 | 结果 |
+| --- | --- |
+| Pi 全量 `DATAAGENT_SANDBOX_TEST_IMAGE=oda-sandbox:test npm test` | 92 项通过，无跳过；含 SDK 配置、卡片会话、真实 Docker 七工具、输出消费、取消、预算与持久化失败。 |
+| Python 全量（含 MySQL opt-in 与部署脚本） | 690 项通过，无跳过；已包含真实 MySQL 事务、报告 JSON 文件输入和 xz 离线打包测试。 |
+| 前端 CI 选择集 | 743 项通过（排除既有 ToolOutputRenderer spec，与 CI 一致）。 |
+| 前端完整测试 | 复现既有 ToolOutputRenderer 的 10 项失败；本轮 demo tools 断言已更新，未更改这组既有组件行为。 |
+| 前端构建 | `build`、`build:widget`、`build:sdk`、`test:sdk-types` 均通过，React 18/19 类型检查通过。 |
+| 真实 HTTP 全链路 | liveness、七工具、大 MCP 结果、完整 1,000 行 Excel、完整 chart_spec、问题卡重启/重复回答、计划允许/拒绝、写批准允许/拒绝/重复、未知外部写、取消、命令与 idle 超时通过。 |
+| 实际容器镜像 | fresh/reused volumes、非 root 服务/socket、技能、daemon mount 映射、迁移、旧镜像回退及历史文本追问通过；再次升级重建 SDK 状态并保留结果通过。 |
+| 本地真实浏览器 | 新建智能体、Skills 选择、保存后刷新、发布；无基础工具选择。真实任务的问题卡从历史恢复，UI 回答后收到 `resumed-ok`，原工具批次不重放。 |
+| 部署资产 | 离线打包/加载/升级脚本测试 5 项通过，Compose 实际解析；代理 SSE 1860s > 后台 1800s。 |
 
-- 定位：设计 3.2 的 ResultStore、3.3 的挂载；计划 Step 2、Step 5。
-- 设计把完整结果放在 workspace 同级的 results，沙箱只挂 workspace 和 skills。现有 `fetch_tool_result` 仅返回分页文本，单页最多 100 行；报表技能需要完整输入文件，且禁止抽样导出。当前结果目录使用 JSONL 行式存储，报表的 JSON/CSV 输入也不能直接假定可读。
-- 影响：查询成功、分页成功，不代表大结果能进入 Python 生成完整 Excel/报告。让模型反复分页再拼回文件会增加轮次、令牌消耗及遗漏风险。
-- 用户讨论后的修订：大输出按原始 JSON/文本自动落盘，当前 Topic 的 results 只读挂载为 `/mnt/results`，工具返回真实沙箱路径、格式、大小和预览。Agent 使用普通 read/grep/bash 或 Python 消费文件；不增加导出工具，移除原分页/搜索专用工具。旧 JSONL 在切换时一次性转换，新运行时只保留一条文件读取路径。见设计 3.3、计划 Step 1/2/4。
-- 验收：真实 MCP → 超阈值自动落盘 → 沙箱直接读取文件生成报表，核对实际返回数据及行数，跨轮和重启后可读且其它 Topic 不可见；上游截断和原始元数据保留。
+HTTP 冒烟：`dataagent-backend/tests/runtime_http_smoke.py`。先构建 Pi 与 `oda-sandbox:test`，启动本地 MySQL/Redis，释放 8900/8919/8920 端口，再以 `.venv-py313/bin/python` 运行。脚本仅创建并清理自己的 provider/MCP/agent/topics，退出时停止自身进程。
 
-## R5 · P1：移除初始化容器后缺少可执行的权限方案
+容器演练：`dataagent-backend/tests/runtime_container_smoke.py`，需要上述三个测试镜像及本地 MySQL/Redis 容器；8902/8919 空闲。验证使用真实 `docker run` 的 backend 部署拓扑，Compose 配置另行解析验证；未启动整套 Compose 前端服务。
 
-- 定位：计划 Step 4；当前 `deploy/docker-compose.yml` 第 50–77 行。
-- 现有后端以 UID/GID 1000 运行，由 root 初始化容器为运行目录和 skills 卷调整权限；Runner 则默认 root，访问 Docker socket。计划删除初始化容器，并只写了后端入口创建目录、挂 socket，未说明以什么身份完成权限初始化及访问 socket。
-- 影响：Linux 新部署上，非 root 后端可能无法写命名 skills 卷、无法调整已有目录属主，或对 Docker socket 执行 inspect/run 报 permission denied；固定沙箱 UID 1000 与现有可配置 UID/GID 也可能不一致。
-- 需要补齐：选择明确的后端启动身份、目录初始化与降权顺序、socket 访问方式以及后端/沙箱文件 UID/GID 契约；旧卷和新卷都要覆盖。区分后端可见路径与 Docker daemon 宿主路径，本地非容器后端不能依赖 inspect 自身容器来发现目录。
-- 验收：实际 Compose 拓扑在全新卷和复用卷下启动，验证 topic 创建、技能导入、docker inspect/run/exec、文件写入；不能只测宿主进程启动的 backend。
+本地日志保存在 `/tmp/dataagent-runtime-tests.log`、`/tmp/dataagent-backend-tests.log`、`/tmp/dataagent-frontend-tests.log`、`/tmp/dataagent-http-smoke.log`、`/tmp/dataagent-container-smoke.log`。UI 截图 `/tmp/dataagent-agent-ui.png`、`/tmp/dataagent-card-ui.png`。临时会话、配置、进程和容器均清理；MySQL/Redis 保留供重复验证。
 
-## R6 · P2：数据迁移和回退不能仅以新表兼容为依据
+## 验证边界与后续
 
-- 定位：设计 3.3、4.2；计划发布与回退策略。
-- 当前完整结果在 `workspace/.dataagent/results`，新版本改到同级 `results`；现有 topic 没有新的会话条目；配置还会删除 SESSION_MYSQL_DATABASE、调整运行目录发现方式。计划只新增表，没有定义旧结果句柄、旧会话历史和部署配置的迁移。
-- 影响：已有 result_ref 可能失效；旧会话可能丢失历史上下文；回切旧镜像后，新版本产生的缓存/会话未必能继续读取。新增表向后兼容不能证明整体可回退。
-- 需要补齐：一次性数据迁移及旧会话历史初始化规则、旧 home 的删除时点、切换前停止接单和在途任务处理、配置及 Compose 的回退步骤。明确回退能够保留哪些新会话数据，不能承诺不可实现的完整工具上下文恢复。
-- 验收：带旧会话、旧结果和已有技能卷的升级/回退演练，验证历史仍可查看、旧结果句柄可用。
+真实 provider 的 liveness、真实业务 MCP 问数“最近 30 天工作流发布次数趋势”、完整图表/报告业务结果验收待用户配置后运行。完整 1,000 行 Excel 与图表契约已经真实 MCP→文件→沙箱技能→事件持久化覆盖，另有前端契约测试，本次浏览器实际验收问题卡及配置，不宣称已完成真实模型 NL2SQL 验证。
 
-## R7 · P2：parallel 是独立的行为变更，不能只验证事件归集
+全新无外网机器上的完整离线包启动、远程 amd64/arm64 镜像发布、Podman 实机验证未运行。依赖审计、既有 ToolOutputRenderer 失败和 UI 旧图标路径缺失均已记录在 [TODO](../TODO.md)。
 
-- 定位：计划第 24 行、Step 2。
-- 当前 `cell.ts` 显式使用 sequential，原因是工具会修改共享 workspace 并执行 SQL。Step 0 改成 parallel，却只验证 tool_call_id 归集。容器启动的 startPromise 只解决重复创建容器，无法解决同文件写入、写 MCP、卡片与同批其它调用之间的先后关系。
-- 同时，现有 `beforeToolCall` 还承担 plan 模式写入阻断、MCP annotations 的高风险确认及调用预算；这些属于业务门控，不能随着删除 boundary_policy 一起消失。计划尚未逐项映射到新扩展。
-- 需要补齐：本次迁移默认保留 sequential；明确迁移现有权限、计划及预算语义。若要并行，需提供具体安全调度规则以及冲突和交互测试，而非仅测试事件归集。
-- 验收：计划未批准、普通写确认、高风险写确认和拒绝路径与当前契约一致；发生卡片等待时，不越过门控继续执行副作用调用。
+## 最终核对
 
-## R8 · P2：单命令超时的终止机制及验收尚未定义
-
-- 定位：设计 3.3、4.2；计划 Step 1、Step 5。
-- `sleep <run_timeout>` 约束容器总寿命，finally 负责整轮退出清理；两者没有定义某个 docker exec 超时但本轮继续时如何终止容器内命令及后代。不能把终止本地 Docker CLI 当成容器内工作已经停止的证据。
-- 已在文档选择单一路径：命令超时即结束当前执行段并销毁整个沙箱，backend 在 Pi Cell 被强杀时也负责按本段标识清理。不使用环境变量匹配 pkill 的进程清理方案；SQL/MCP 超时独立受剩余任务预算约束，代理/SSE 和 idle 一并验收。见设计 3.5、计划 Step 1/3/5。
-- Step 5 还需补齐：真实 HTTP accepted/task_id、任务拾取与终态、SDK SSE、最终消息落库、取消、超时后无残留进程、图表/报表实际前端渲染，以及 R5 的部署容器拓扑。四个业务场景不能替代这些跨层断言。
-- 参考：[Docker exec 生命周期说明](https://docs.docker.com/reference/cli/docker/container/exec/)。
-
-## 修订建议
-
-主架构保留；设计与计划已按以上修订同步，下一步从 SDK 最小验证开始。会话继续、文件读取、工具执行各采用一条主路径，不增加过渡架构、容器暖池、手动批次恢复执行器或新的长期服务。本次仅完成文档检查，不能视为新架构已经验证。
+Python 690/690、Pi 92/92、前端 CI 选择集 743/743 通过；HTTP 及容器回退/再升级演练最终重跑通过。报告技能 `--input-file` 与文档不一致、JSON 路径误按 CSV 读取已在技能本地修正，11 项技能回归通过；未增加共享运行时包装。大结构化 Bash 输出单独回归保证 UI 得到完整 payload，模型只得到有界预览和路径。

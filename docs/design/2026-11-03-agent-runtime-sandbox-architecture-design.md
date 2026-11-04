@@ -2,7 +2,7 @@
 
 日期：2026-11-03
 
-状态：**已按用户讨论简化（设计与计划已同步，待 SDK 验证和实施）**
+状态：**已实施；凭据无关验证完成，真实模型验收待用户配置 provider**
 
 实施计划：[2026-11-03-agent-runtime-sandbox-architecture-plan.md](../plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)
 
@@ -10,8 +10,8 @@
 
 ## 1. 背景与现状问题
 
-### 1.1 现状：5 层跨进程调用链
-当前在容器沙箱模式（`DATAAGENT_SANDBOX_MODE=container`）下，一次用户问答经过以下 5 层进程跳转：
+### 1.1 改造前：5 层跨进程调用链
+改造前在容器沙箱模式（`DATAAGENT_SANDBOX_MODE=container`）下，一次用户问答经过以下 5 层进程跳转：
 
 ```text
 [1] dataagent-backend (Python FastAPI + 内嵌 TaskCoordinator)
@@ -78,7 +78,7 @@
 
 #### 3.2.1 保留基础工具能力，替换宿主执行实现（解决 R2）
 `pi-coding-agent@1.4.0` 默认开启宿主侧内置工具 `["read", "bash", "edit", "write"]`。需要替换的是直接访问 backend 文件系统的执行实现，不能因为隔离要求禁止 `edit/write` 能力。
-- **固定启用一套沙箱基础工具**：调用 `createAgentSession` 时显式设置 `tools: []`，关闭默认宿主实现；通过 `customTools` 与扩展注册以下工具：
+- **固定启用一套沙箱基础工具**：调用 `createAgentSession` 时传入本段全部允许工具名称的显式 `tools` 清单，并通过 `customTools` 用同名沙箱实现覆盖全部 7 个基础工具；SDK 1.4.0 的 `tools: []` 会同时禁用自定义工具，不能用于启用沙箱工具。启动时逐个验证实际执行入口，不允许缺失实现回落到内置工具。注册以下工具：
   1. **沙箱环境工具（7 个，容器内执行）**：`bash`、`read`、`write`、`edit`、`ls`、`find`、`grep`。沿用 Pi 的小写工具名；`find` 承担按文件名模式查找能力，不再另注册同义 `Glob` 工具。`write/edit` 可以修改当前工作区文件，不能修改只读技能目录。
   2. **交互工具**：`AskUserQuestion`；Plan 模式另启用 `ExitPlanMode`。
   3. **MCP 工具**：当前智能体绑定的 MCP 服务工具。
@@ -217,13 +217,21 @@
 1. **存量会话历史初始化**：升级后首次在旧 Topic 中发消息时，若 `da_agent_session_checkpoint` 无记录，自动从 `da_agent_message` 读取历史 User/Assistant 文本消息构建初始 `SessionEntry` 列表；本轮结束后写入 `da_agent_session_checkpoint`。
 2. **旧结果一次性迁移**：停止接单后执行幂等迁移，将 `workspace/.dataagent/results/` 的旧 JSONL 行数据转换为标准 JSON，按原文件名写入 `results/`；旧文本/JSON 保持内容。旧格式已丢失的非行元数据不能重建，迁移说明必须标明。原文件保留用于回退，新运行时仅使用 `/mnt/results` 一条读取路径；旧会话首次续聊时补充旧缓存路径到新路径的说明，不要求模型猜测。
 3. **旧目录清理时点**：在会话运行准备阶段自动清理 `<topic_id>/workspace/.claude/skills` 下的旧拷贝副本；`<topic_id>/home` 不再创建或用于运行；原目录保留为回退数据，显式删除 Topic 时与 Topic 根目录一并清理，不设置稳定期或过渡运行分支。
-4. **配置向后兼容**：`config.py` 中 `mysql_database` 通过 `validation_alias=AliasChoices("MYSQL_DATABASE", "SESSION_MYSQL_DATABASE", "DATAAGENT_SESSION_MYSQL_DATABASE")` 兼容旧环境变量名，避免旧 `.env` 文件在升级或回退时报错。
+4. **配置向后兼容**：`config.py` 中实际会话存储字段 `session_mysql_database` 通过 `validation_alias=AliasChoices("MYSQL_DATABASE", "SESSION_MYSQL_DATABASE", "DATAAGENT_SESSION_MYSQL_DATABASE")` 兼容旧环境变量名，避免旧 `.env` 文件在升级或回退时报错。
 
 ### 4.2 切换步骤与回退数据边界
 - **升级切换前**：停止入口流量，等待 `running` 任务完成；对处于 `waiting_input` / `waiting_permission` 的旧版内存态挂起任务，迁移脚本将其状态置为 `suspended`（提示“系统已升级，请重新发送或确认”）。
-- **回退步骤**：若需回退至旧版镜像（`oda-backend` + `oda-runner`），还原旧版 `docker-compose.yml` 并执行 `docker compose up -d`。
+- **回退步骤**：若需回退至旧版镜像（`oda-backend` + `oda-runner`），先用新版镜像运行 `scripts/prepare_runtime_rollback.py` 关闭等待卡片并恢复 Alembic 版本戳，随后还原旧版 `docker-compose.yml` 并执行 `docker compose up -d`。
 - **回退数据边界说明**：
   - 新版运行期间写入的 `da_agent_message`（问答消息）与 `da_agent_sdk_record`（中立事件流）与旧版表结构完全一致，回退后历史消息、图表、SQL 块均可正常查看，后续追问可按旧版文本历史继续；
   - 新版特有的 `da_agent_session_checkpoint` 表在回退后会被旧版忽略（旧版退化为纯文本历史拼接，不再保留跨轮工具调用内部状态）；回退时刻处于等待中的卡片任务需由用户重新发起。
 
 - **结果文件回退边界**：旧版仅能使用其原有缓存目录中的文件；新版 `/mnt/results` 对应的新结果不会自动被旧版分页工具识别。回退保留文件和用户产物，但不承诺旧版工具能继续读取新版文件路径。
+
+### 回退版本戳（2026-11-03 容器演练修订）
+
+旧镜像的启动迁移不能识别新增 revision。停止入口与运行中任务后，使用新版镜像的 `scripts/prepare_runtime_rollback.py` 关闭等待卡片并将 Alembic 版本戳恢复为 `20261027_000031`，保留新增会话表及文件。新增迁移使用 `CREATE TABLE IF NOT EXISTS`，再次升级可重复应用，并清空回退前的 SDK 快照，从包含旧镜像期间消息的文本历史重建，避免使用过期上下文。此脚本只支持本次明确的 31→32 回退，不推测其它版本。验证须启动真实旧镜像并继续历史文本会话。
+
+### 报告技能文件输入修正
+
+完整结果 smoke 发现报告技能文档声明 `--input-file`，但 generate_report.py 未实现，且 JSON 路径按 CSV 读取。本轮在技能本地实现互斥的 `--input`/`--input-file`，JSON 文件直接读取 rows；保留已有 CSV/内联 JSON 调用，更新技能文档及回归测试。共享运行时不增加报告专用调用层。

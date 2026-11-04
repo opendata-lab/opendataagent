@@ -25,9 +25,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.pi_runtime import (  # noqa: E402
     PiRunContext,
     PiRuntimeUnavailable,
-    execute_pi_run,
+    execute_pi_run as _execute_pi_run,
     resolve_cell_command,
 )
+
+
+async def execute_pi_run(*args, **kwargs):
+    async def commit(*_): pass
+    kwargs.setdefault("segment_handler",commit)
+    return await _execute_pi_run(*args,**kwargs)
 
 
 class _RecordingWriter:
@@ -48,7 +54,6 @@ def _context(tmp_path: Path, **overrides: Any) -> PiRunContext:
         system_prompt="sys",
         messages=[{"role": "user", "content": "hi"}],
         project_cwd=tmp_path,
-        boundary_policy={"policy_version": 1, "allowed_roots": [str(tmp_path)]},
         total_timeout_seconds=10,
         idle_timeout_seconds=5,
         max_turns=24,
@@ -67,11 +72,13 @@ def _stub_cell(body: str) -> list[str]:
 
         def send(frame_type, payload=None):
             sys.stdout.write(json.dumps(
-                {"protocol_version": 1, "type": frame_type, "payload": payload or {}}
+                {"protocol_version": 2, "type": frame_type, "payload": payload or {}}
             ) + "\\n")
             sys.stdout.flush()
 
         def event(sequence, event_type, payload=None):
+            if event_type == "run.completed":
+                send("session.entries", {"header":{},"entries":[],"leaf_id":None,"tool_calls":0,"turns":1})
             send("run.event", {
                 "event_id": "ev-%s" % sequence,
                 "run_id": "task-1",
@@ -322,8 +329,8 @@ async def test_runtime_env_reaches_the_child(tmp_path: Path):
     cell = _stub_cell(
         """
         import os
-        read()
-        assert os.environ.get("DATAAGENT_PYTHON_BIN") == "/usr/bin/python3"
+        read_init = read()
+        assert read_init["payload"]["runtime_env"]["DATAAGENT_PYTHON_BIN"] == "/usr/bin/python3"
         event(1, "run.completed", {"terminal_status": "success"})
         """
     )
@@ -412,88 +419,14 @@ send("interaction.request", {"request_id": "q-1", "kind": "question", "payload":
 """
 
 
-@pytest.mark.asyncio
-async def test_interaction_round_trip_pauses_the_timers(tmp_path: Path):
-    writer = _RecordingWriter()
-    cell = _stub_cell(
-        _INTERACTION_REQUEST
-        + textwrap.dedent(
-            """
-        frame = read()
-        assert frame["type"] == "interaction.resolved", frame
-        event(2, "run.completed", {"answer": json.dumps(frame["payload"])})
-        """
-        )
-    )
-
-    async def handler(kind: str, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        # Longer than the idle timeout: a person deciding is not a stalled run.
-        await asyncio.sleep(1.5)
-        return {"answers": [{"selected": ["按天"]}], "kind": kind, "request_id": request_id}
-
-    outcome = await execute_pi_run(
-        _context(tmp_path, idle_timeout_seconds=1),
-        writer=writer,
-        cell_command=cell,
-        interaction_handler=handler,
-    )
-
-    assert outcome.terminal_status == "success", outcome
-    resolved = json.loads(writer.events[-1]["payload"]["answer"])
-    assert resolved == {
-        "request_id": "q-1",
-        "result": {"answers": [{"selected": ["按天"]}], "kind": "question", "request_id": "q-1"},
-    }
-
-
-@pytest.mark.asyncio
-async def test_cancel_while_waiting_sends_run_cancel_not_an_answer(tmp_path: Path):
-    writer = _RecordingWriter()
-    cell = _stub_cell(
-        _INTERACTION_REQUEST
-        + textwrap.dedent(
-            """
-        frame = read()
-        assert frame["type"] == "run.cancel", frame
-        event(2, "run.cancelled", {"reason": frame["payload"].get("reason")})
-        """
-        )
-    )
-    cancelled = {"value": ""}
-
-    async def handler(kind: str, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        cancelled["value"] = "user_cancel"
-        await asyncio.sleep(30)
-        return {}
-
-    async def cancel_reason() -> str:
-        return cancelled["value"]
-
-    outcome = await execute_pi_run(
-        _context(tmp_path),
-        writer=writer,
-        cell_command=cell,
-        cancel_reason=cancel_reason,
-        interaction_handler=handler,
-    )
-
-    assert outcome.terminal_status == "cancelled"
-    assert writer.events[-1]["type"] == "run.cancelled"
-
-
-@pytest.mark.asyncio
-async def test_cell_exit_while_waiting_is_cell_loss(tmp_path: Path):
-    writer = _RecordingWriter()
-    cell = _stub_cell(_INTERACTION_REQUEST + "\nsys.exit(0)\n")
-
-    async def handler(kind: str, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        await asyncio.sleep(30)
-        return {}
-
-    outcome = await asyncio.wait_for(
-        execute_pi_run(_context(tmp_path), writer=writer, cell_command=cell, interaction_handler=handler),
-        timeout=8,
-    )
-
-    assert outcome.terminal_status == "failed"
-    assert outcome.error_code == "CELL_LOSS"
+def test_cell_command_reads_dotenv_backed_settings(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    import core.pi_runtime as runtime
+    entry = tmp_path / "dist/src/main.js"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// fixture")
+    monkeypatch.delenv("DATAAGENT_NODE_BIN", raising=False)
+    monkeypatch.delenv("DATAAGENT_RUNTIME_PI_DIR", raising=False)
+    monkeypatch.setattr(runtime, "get_settings", lambda: SimpleNamespace(
+        dataagent_node_bin="/configured/node", dataagent_runtime_pi_dir=str(tmp_path)))
+    assert runtime.resolve_cell_command() == ["/configured/node", str(entry)]

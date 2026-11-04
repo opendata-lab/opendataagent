@@ -485,9 +485,6 @@ def test_agent_profile_routes_contract(monkeypatch):
 
 
 def test_agent_slash_commands_route_contract(monkeypatch):
-    from core import slash_command_cache
-
-    slash_command_cache._AGENT_SLASH_COMMANDS.clear()
     profile = {"agent_id": "agent_1", "name": "x", "skill_folders": ["marketing-insights", "platform-tools"]}
     monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
 
@@ -496,12 +493,7 @@ def test_agent_slash_commands_route_contract(monkeypatch):
     # Cold start: no run reported yet, fall back to the agent's enabled skill folders.
     fallback = client.get("/api/v1/dataagent/agents/agent_1/slash-commands")
     assert fallback.status_code == 200
-    assert fallback.json() == {"slash_commands": ["marketing-insights", "platform-tools"], "source": "fallback"}
-
-    # Once a run reports the authoritative list, it wins.
-    slash_command_cache.record_agent_slash_commands("agent_1", ["clear", "compact", "marketing-insights"])
-    authoritative = client.get("/api/v1/dataagent/agents/agent_1/slash-commands")
-    assert authoritative.json() == {"slash_commands": ["clear", "compact", "marketing-insights"], "source": "sdk"}
+    assert fallback.json() == {"slash_commands": ["marketing-insights", "platform-tools"], "source": "skills"}
 
     missing = client.get("/api/v1/dataagent/agents/unknown/slash-commands")
     assert missing.status_code == 404
@@ -722,7 +714,7 @@ def test_agents_capabilities_not_shadowed_by_public_dynamic_route(monkeypatch, t
         # admin：正常返回 capabilities 契约。
         response = client.get("/api/v1/dataagent/agents/capabilities", headers=_bearer(auth, role="admin"))
         assert response.status_code == 200
-        assert "tools" in response.json()
+        assert "tools" not in response.json()
     finally:
         auth.reset_auth_for_tests()
 
