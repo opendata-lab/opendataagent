@@ -24,6 +24,7 @@ jobs:
         run: |
           pip install -r dataagent-backend/requirements.txt
           npm --prefix dataagent-runtime-pi ci
+          npm --prefix dataagent-runtime-pi run build
       - name: Test
         run: python -m pytest -q
 

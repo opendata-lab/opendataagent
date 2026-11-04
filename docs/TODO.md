@@ -41,7 +41,8 @@
 
 ### 生产运行拓扑回归
 
-- **现状**（2026-10-27）：真实模型账号已恢复，本地主进程 Pi 问数、MCP 和系统提示落库通过；生产 child-container 沙箱跳转尚未跑。后续在部署环境补测同一身份头、CLI 通道、撤权及任务持久化，不能用本地进程冒烟代替容器跳转。见[主体映射报告](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/reports/2026-10-26-dataagent-datasource-identity-verification.md)。
+- **现状（2026-11-03 更新）**：原 child/Runner 拓扑已由本轮 PR 移除。新版 backend + 工具专用 sandbox 在本机真实 Docker 下完成新卷/复用卷、socket、挂载、回退和再升级；模型/MCP 为本地 fixture。
+- **要做**：真实 provider 与目标 MCP 配置后，在生产环境核对身份头、撤权和业务任务持久化，不能把 fixture 冒烟视为真实集成验收。来源：2026-10-27 原待办及[主体映射报告](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/reports/2026-10-26-dataagent-datasource-identity-verification.md)；本轮证据见[运行时报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)，与上方真实 provider 验收合并执行。
 
 - **前端测试与组件对齐**（来源：2026-10-27 本轮验证）：ToolOutputRenderer 的 10 项断言与当前折叠/结果展示不一致，已在未修改 HEAD 副本复现相同 10 项失败；先确认是组件回归（运行中工具不再自动展开、展开后缺命令行）还是测试过时，再对齐。疑由 opendataworks `d8d434a1`（消息 UI 抽入 SDK 包）引入。CI（`.github/workflows/ci.yml`）暂时排除该 spec，对齐后删掉排除项。其余 743 项通过；见[主体映射报告](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/reports/2026-10-26-dataagent-datasource-identity-verification.md)。
 
@@ -67,15 +68,15 @@
 ## 测试与工程卫生（迁自来源仓库，2026-10-27）
 
 - **Pi 现有依赖审计告警**（来源：2026-11-03 构建审查）：未改动的 Pi lockfile 在 npm audit --omit=dev 下报告 9 项（5 moderate、3 high、1 critical），涉及直接依赖 @modelcontextprotocol/sdk 及传递依赖 body-parser、proxy-addr、zod。后续单独评估兼容升级并回归 MCP 协议、身份和工具执行；不在本轮构建优化中自动 npm audit fix。见[验证报告](reports/2026-11-03-ci-build-optimization-verification.md)。
-- **构建优化的最终双架构验收**（来源：2026-11-03 本地验证边界）：本机 pi-cell 的 Linux arm64 构建通过，但完整 amd64/arm64 后端与 runner 最终镜像、远程缓存和发布尚待本次远程工作流确认。通过后将结果移至已完成；见[设计](design/2026-11-03-ci-build-optimization-design.md)、[计划](plans/2026-11-03-ci-build-optimization-plan.md)与[验证报告](reports/2026-11-03-ci-build-optimization-verification.md)。
+- **构建优化的最终双架构验收**（来源：2026-11-03 本地验证边界）：本机 pi-cell 的 Linux arm64 构建通过，但完整 amd64/arm64 后端与 sandbox 最终镜像、远程缓存和发布尚待本次远程工作流确认。通过后将结果移至已完成；见[设计](design/2026-11-03-ci-build-optimization-design.md)、[计划](plans/2026-11-03-ci-build-optimization-plan.md)与[验证报告](reports/2026-11-03-ci-build-optimization-verification.md)。
 
 - `da_agent_draft` 表的排序规则是 `utf8mb4_0900_ai_ci`，与其他 `da_*` 表的 `utf8mb4_unicode_ci` 不一致，以后与其他表做字符串关联时会报错。
 - README 还没有界面截图；前端图标文件仍沿用 `opendataworks-icon-*` 命名。来源：2026-10-28 README 整理。
 
 ## 本轮验证补充（2026-10-27）
 
-- 2026-11-03 再验仍为相同两项：全量 182/184，通过定向重跑 channel_flush，Bash 2 秒仍失败，详见[构建验证报告](reports/2026-11-03-ci-build-optimization-verification.md)。Pi 的 Bash 2 秒时序用例在本机全量与单独运行均超时；来源仓库未修改的 HEAD 副本同样失败，保留后续稳定性治理。另一次并发全量中 channel_flush 的负向控制用例未发生预期截断，重跑通过；需使该测试不依赖机器调度时序。来源：opendataworks `docs/reports/2026-10-27-dataagent-opendataworks-decoupling-verification.md`。
-- 生产 child-container 及命名 Skill 卷初始化/升级尚未实跑，需在部署环境补齐；本轮覆盖本地主进程 Pi、MCP、Java 与真实 MySQL。沿用上方生产拓扑待办。
+- 2026-11-03 改造前再验仍为相同两项：全量 182/184，通过定向重跑 channel_flush，Bash 2 秒仍失败，详见[构建验证报告](reports/2026-11-03-ci-build-optimization-verification.md)。Pi 的 Bash 2 秒时序用例在本机全量与单独运行均超时；来源仓库未修改的 HEAD 副本同样失败，保留后续稳定性治理。另一次并发全量中 channel_flush 的负向控制用例未发生预期截断，重跑通过；需使该测试不依赖机器调度时序。来源：opendataworks `docs/reports/2026-10-27-dataagent-opendataworks-decoupling-verification.md`。
+- 历史缺口（2026-10-27）：当时未测 child-container/技能卷。2026-11-03 新版拓扑已完成本地真实 backend 镜像、技能卷及工具 sandbox 演练；真实生产 provider/MCP 验收仍由上方生产拓扑待办跟踪。
 
 ### 实施验证发现（2026-11-03）
 
@@ -89,6 +90,10 @@
 - **前端依赖审计**：2026-11-03 全新 npm ci 报告 29 项漏洞（10 moderate、17 high、2 critical）；需单独核对并升级传递依赖，本次未执行强制修复。来源：本次本地工具链安装；关联[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)，前端生产构建通过。
 
 ## 已完成
+
+- **HTTP fixture 的 MCP major 约束（2026-11-03）**：CI 解析到 Python mcp 2.x，FastMCP 已改名导致 fixture 无法启动；requirements 限定已验证的 v1 API 范围 `>=1.23.0,<2`，不保留兼容分支。来源：[首次实现 CI](https://github.com/opendata-lab/opendataagent/actions/runs/41769122504)，见[报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
+
+- **OAuth 测试 helper 重复 Cookie（2026-11-03）**：远程 Python CI 发现传输配置用例曾先 authorize 再人工发 state，helper 未删除域 Cookie，同时发送两份不同 nonce。已仅修正测试构造，先清理同名 Cookie 再设置，并断言仅一份；生产 CSRF 校验保持原样。来源：[首次实现 CI](https://github.com/opendata-lab/opendataagent/actions/runs/41769122504)，结果见[运行时报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
 
 - **Pi SDK / Docker 沙箱整合与卡片释放（2026-11-03）**：原运行时迁移及“等待用户时释放资源”两项已实现。七工具仅在沙箱执行，Runner/Claude/正则边界删除；同任务卡片会话持久化、重启后续聊、累计预算、写批准与未知结果停止重放、大结果只读消费、权限入口、迁移/回退及 CI/离线资产已接通。来源：本轮 PR #5；结果见[设计](design/2026-11-03-agent-runtime-sandbox-architecture-design.md)、[计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)、[报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。真实模型最终验收单列上方。
 - **旧 Pi 验证及 POC 清理（2026-11-03）**：旧 Bash 超时/后代进程测试由真实 Docker 生命周期测试替代；无凭据协议测试显式隔离 provider；不再维护的 `pi-kernel-spike` 删除。92 项新运行时测试通过，结果见同一[报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。

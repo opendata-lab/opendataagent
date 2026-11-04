@@ -63,3 +63,7 @@ HTTP 冒烟：`dataagent-backend/tests/runtime_http_smoke.py`。先构建 Pi 与
 ## 最终核对
 
 Python 690/690、Pi 92/92、前端 CI 选择集 743/743 通过；HTTP 及容器回退/再升级演练最终重跑通过。报告技能 `--input-file` 与文档不一致、JSON 路径误按 CSV 读取已在技能本地修正，11 项技能回归通过；未增加共享运行时包装。大结构化 Bash 输出单独回归保证 UI 得到完整 payload，模型只得到有界预览和路径。
+
+远程首次实现 CI 中 frontend 与 runtime-pi 通过；Python OAuth helper 因域/无域同名 nonce Cookie 并存失败，已修正测试 helper，断言只发送一份 nonce，不改生产认证逻辑。Python CI 显式预构建 Pi，避免三项真实子进程协议用例因构建顺序被跳过。远程任务记录：[首次实现检查](https://github.com/opendata-lab/opendataagent/actions/runs/41769122504)。
+
+同次远程 HTTP job 发现未设上限的 Python mcp 解析到 2.x，移除了 fixture 使用的 FastMCP API；已将 requirements 明确约束为已验证的 `mcp>=1.23.0,<2`，不引入双版本兼容分支。本机为 mcp 1.30.0；实际模型/MCP 执行 bridge 仍使用 Node SDK。两个 CI 环境差异均修复后重新提交验证。
