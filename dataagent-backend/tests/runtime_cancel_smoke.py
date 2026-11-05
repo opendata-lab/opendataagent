@@ -92,7 +92,7 @@ def main():
         topic = request('POST', API+'/topics', json={'title': NAME+scenario, 'agent_id': agent})['topic_id']
         topics.append(topic)
         task = request('POST', API+'/tasks', json={'topic_id': topic, 'message_type': 'text',
-            'message_content': 'SMOKE:'+scenario, 'execution_mode': 'auto', 'provider_id': NAME, 'model': 'smoke'})['task_id']
+            'message_content': 'SMOKE:'+scenario, 'provider_id': NAME, 'model': 'smoke'})['task_id']
         until(lambda: any(x['scenario'] == scenario and x['state'] in {'running', 'finished'} for x in provider_state()))
         pids = until(lambda: cell_pids(topic))
         containers = until(lambda: sandbox_ids(topic)) if scenario != 'CANCEL' else []

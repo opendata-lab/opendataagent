@@ -34,12 +34,11 @@ POST /tasks/deliver-message
 {
   "topic_id": "<topic_id>",
   "content": "最近 30 天工作流发布次数趋势",
-  "agent_id": "<可选，默认用会话绑定的智能体>",
-  "execution_mode": "auto"
+  "agent_id": "<可选，默认用会话绑定的智能体>"
 }
 ```
 
-`execution_mode` 省略时按交互档（360 秒）执行；页面发送 `auto`，走后台档（1800 秒）。
+所有任务使用同一档预算（总超时默认 1800 秒）。旧字段 `execution_mode` 已删除，旧客户端继续发送会被忽略。
 
 另有通用入口 `POST /tasks`，请求体用 `message_type` 与 `message_content`（不是 `question`）。
 

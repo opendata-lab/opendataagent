@@ -22,18 +22,14 @@ class Settings(BaseSettings):
     llm_provider: str = ""  # anthropic | openrouter | anyrouter | anthropic_compatible
     claude_model: str = ""
     claude_max_tokens: int = 4096
-    # Global defaults; an agent's positive max_turns overrides only the turn budget.
-    agent_interactive_max_turns: int = Field(default=24, gt=0)
-    agent_background_max_turns: int = Field(default=40, gt=0)
-    agent_interactive_max_tool_calls: int = Field(default=100, gt=0)
-    agent_background_max_tool_calls: int = Field(default=200, gt=0)
+    # One budget tier for every task; an agent's positive max_turns overrides
+    # only the turn budget. Card waits are not counted (design 3.5).
+    agent_max_turns: int = Field(default=40, gt=0)
+    agent_max_tool_calls: int = Field(default=200, gt=0)
     agent_wait_timeout_seconds: int = 20
-    agent_interactive_timeout_seconds: int = Field(default=360, gt=0)
-    agent_background_timeout_seconds: int = Field(default=1800, gt=0)
-    agent_interactive_bash_timeout_seconds: int = Field(default=300, gt=0)
-    agent_background_bash_timeout_seconds: int = Field(default=600, gt=0)
-    agent_interactive_sql_read_timeout_seconds: int = Field(default=300, gt=0)
-    agent_background_sql_read_timeout_seconds: int = Field(default=300, gt=0)
+    agent_timeout_seconds: int = Field(default=1800, gt=0)
+    agent_bash_timeout_seconds: int = Field(default=600, gt=0)
+    agent_sql_read_timeout_seconds: int = Field(default=300, gt=0)
     agent_sql_write_timeout_seconds: int = Field(default=60, gt=0)
     # Max bytes when buffering a single CLI stdout JSON message before decoding.
     # The SDK default is 1MB; large NL2SQL tool results / partial messages can
@@ -129,15 +125,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_execution_timeouts(self):
-        for mode in ("interactive", "background"):
-            prefix = f"agent_{mode}"
-            bash = getattr(self, f"{prefix}_bash_timeout_seconds")
-            total = getattr(self, f"{prefix}_timeout_seconds")
-            sql_read = getattr(self, f"{prefix}_sql_read_timeout_seconds")
-            if min(sql_read, self.agent_sql_write_timeout_seconds, bash) <= 0 or bash >= total:
-                raise ValueError(
-                    f"{prefix}: SQL timeouts must be positive; bash_timeout_seconds < timeout_seconds"
-                )
+        # Positivity is enforced per field; one command must fit inside the run.
+        if self.agent_bash_timeout_seconds >= self.agent_timeout_seconds:
+            raise ValueError("agent_bash_timeout_seconds must be less than agent_timeout_seconds")
         return self
 
     class Config:
@@ -165,17 +155,8 @@ def update_settings(patch: dict) -> Settings:
     return _settings
 
 
-def is_background_execution_mode(execution_mode) -> bool:
-    """统一判定执行模式是否走后台（长）超时档位。
-
-    ``auto`` 归入后台档，与 ``resolve_task_timeouts`` 的历史语义保持一致。
-    """
-    return str(execution_mode or "").strip().lower() in {"background", "auto"}
-
-
 def resolve_run_limits(
     cfg: Settings,
-    execution_mode: str | None,
     *,
     agent_max_turns: int = 0,
     total_timeout_seconds: int | None = None,
@@ -185,29 +166,13 @@ def resolve_run_limits(
     Only max_turns has an agent override; 0 means inherit, never unlimited.
     A persisted task's total budget wins over a later deployment default.
     """
-    mode = "background" if is_background_execution_mode(execution_mode) else "interactive"
-
-    def value(name: str) -> int:
-        return int(getattr(cfg, name, Settings.model_fields[name].default))
-
     return {
-        "total_timeout_seconds": int(total_timeout_seconds or value(f"agent_{mode}_timeout_seconds")),
-        "idle_timeout_seconds": value("dataagent_run_idle_timeout_seconds"),
-        "max_turns": int(agent_max_turns or value(f"agent_{mode}_max_turns")),
-        "max_tool_calls": value(f"agent_{mode}_max_tool_calls"),
-        "bash_timeout_seconds": value(f"agent_{mode}_bash_timeout_seconds"),
+        "total_timeout_seconds": int(total_timeout_seconds or cfg.agent_timeout_seconds),
+        "idle_timeout_seconds": int(cfg.dataagent_run_idle_timeout_seconds),
+        "max_turns": int(agent_max_turns or cfg.agent_max_turns),
+        "max_tool_calls": int(cfg.agent_max_tool_calls),
+        "bash_timeout_seconds": int(cfg.agent_bash_timeout_seconds),
     }
-
-
-def resolve_sql_read_timeout_seconds(cfg: Settings, execution_mode) -> int:
-    """按执行模式解析 SQL 只读查询超时（秒）。
-
-    单一来源，供任务提交期的 ``resolve_task_timeouts`` 与运行期 env 装配共用，
-    避免不同路径各自回落到不一致的短默认值。
-    """
-    mode = "background" if is_background_execution_mode(execution_mode) else "interactive"
-    name = f"agent_{mode}_sql_read_timeout_seconds"
-    return int(getattr(cfg, name, Settings.model_fields[name].default))
 
 
 SUPPORTED_RUNTIME_KINDS = ("pi_agent_core",)

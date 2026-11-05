@@ -103,7 +103,6 @@ export function createNl2SqlTransport(api, topicId, context = {}) {
         agent_id: getAgentId() || undefined,
         permission_mode: settings.permission_mode || undefined,
         debug: false,
-        execution_mode: 'auto',
       })
       return toRunRef({ ...submitted, task_status: submitted?.task_status || 'waiting' }, metadata)
     },

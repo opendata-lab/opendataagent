@@ -310,7 +310,6 @@ class _FakeStore:
         model: str,
         database_hint: str | None,
         debug: bool,
-        execution_mode: str | None = None,
         source_queue_id: str | None = None,
         source_schedule_id: str | None = None,
         source_schedule_log_id: str | None = None,
@@ -662,7 +661,6 @@ def _submit_message_task_factory(store: _FakeStore, calls: list[dict]):
             model=str(kwargs.get("model") or "anthropic/claude-sonnet-4.5"),
             database_hint=kwargs.get("database_hint"),
             debug=bool(kwargs.get("debug")),
-            execution_mode=kwargs.get("execution_mode"),
             source_queue_id=kwargs.get("source_queue_id"),
             source_schedule_id=kwargs.get("source_schedule_id"),
             source_schedule_log_id=kwargs.get("source_schedule_log_id"),
@@ -730,6 +728,7 @@ def test_topics_tasks_and_v2_routes(monkeypatch):
                 "content": "最近 30 天工作流发布次数趋势",
                 "provider_id": "openrouter",
                 "model": "anthropic/claude-sonnet-4.5",
+                # Retired field: older clients still send it and must keep working.
                 "execution_mode": "auto",
             },
         )
@@ -790,11 +789,11 @@ def test_topics_tasks_and_v2_routes(monkeypatch):
                 "message_content": "第二个问题",
                 "provider_id": "openrouter",
                 "model": "anthropic/claude-sonnet-4.5",
-                "execution_mode": "background",
             },
         )
         assert created_task.status_code == 200
         assert len(submit_calls) == 2
+        assert all("execution_mode" not in call for call in submit_calls)
         assert submit_calls[0]["message_content"] == "最近 30 天工作流发布次数趋势"
         assert submit_calls[1]["message_content"] == "第二个问题"
 

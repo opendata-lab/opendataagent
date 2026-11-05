@@ -66,7 +66,6 @@ class DeliverMessageRequest(BaseModel):
     model: Optional[str] = None
     debug: bool = False
     database: Optional[str] = None
-    execution_mode: Optional[str] = None
     permission_mode: Optional[str] = None
 
 
@@ -102,7 +101,6 @@ class CreateTaskRequest(BaseModel):
     model: Optional[str] = None
     debug: bool = False
     database: Optional[str] = None
-    execution_mode: Optional[str] = None
     source_queue_id: Optional[str] = None
 
 

@@ -226,7 +226,6 @@ def _run_via_topic_task(base_url: str, scenario: Scenario, provider_id: str, mod
             "content": scenario.question,
             "provider_id": provider_id,
             "model": model,
-            "execution_mode": "auto",
         },
         timeout_seconds=timeout_seconds,
     )

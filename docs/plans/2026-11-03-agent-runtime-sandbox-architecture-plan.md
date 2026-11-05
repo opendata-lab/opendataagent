@@ -94,7 +94,7 @@
 
 环境遵循 AGENTS.md：Python 3.13 `.venv-py313`、nvm 指定 Node、本地 MySQL `127.0.0.1:3326/dataagent`、Redis 优先 `127.0.0.1:6379`；启用真实 Pi 构建和模型配置，启动 frontend、backend 与按需沙箱，coordinator 内嵌于 backend，不另起 worker。
 
-1. 通过真实 HTTP 创建 Topic、提交带 `message_type/message_content/execution_mode="auto"` 的任务，确认 accepted/task_id、拾取和终态；卡片任务覆盖 `waiting → running → waiting_input/waiting_permission → waiting → running`，之后按既有状态契约结束。不能只验证 health。
+1. 通过真实 HTTP 创建 Topic、提交带 `message_type/message_content` 的任务（`execution_mode` 已在单一预算档中删除），确认 accepted/task_id、拾取和终态；卡片任务覆盖 `waiting → running → waiting_input/waiting_permission → waiting → running`，之后按既有状态契约结束。不能只验证 health。
 2. 消费 `/api/v1/nl2sql/tasks/{task_id}/sdk-events/stream`，检查事件和最终助手消息落库、engine_kind 为 pi_agent_core，以及前端实际渲染。
 3. 纯 LLM/MCP 且不调用沙箱基础工具时不创建容器。真实 NL2SQL 覆盖“最近 30 天工作流发布次数趋势”。
 4. 大结果超过 16KB 和 100 行后自动落盘，工具消息包含可读的 `/mnt/results` 路径；沙箱脚本直接读取该文件生成完整报表/图表，核对文件内容、行数和 UI；上游截断必须如实标明，不把预览当完整数据。跨轮和重启后文件仍可读，无法读其它 Topic 的结果。
@@ -145,3 +145,14 @@
 5. routes 用一段同步持久化 helper 加一次 to_thread，保持鉴权、409、幂等和立即入队；删除逐条调用 AST 检查，改用并发健康请求验证。
 6. 删除 reserveNextTurn 与 writer.usage；内部 segment commit 显式接收 supervisor 汇总用量。更新批准工具所属轮次与失败/传输中断回归。
 7. nvm 编译/Pi 测试、Python 定向及全量、隔离 MySQL/Redis/HTTP/Stop、真实 backend 容器 mount smoke，均使用本地 fixture。更新报告和 TODO，提交并推送同一 PR；不花费用户模型额度。
+
+### 2026-11-04 单一执行预算档
+
+见设计 3.5“单一预算档”。影响栈：backend（config、提交服务、executor、routes、schemas）、frontend（请求体）、部署示例与 AGENTS.md。
+
+1. `config.py`：用 `agent_timeout_seconds`、`agent_max_turns`、`agent_max_tool_calls`、`agent_bash_timeout_seconds`、`agent_sql_read_timeout_seconds` 替换 interactive/background 七对配置，默认取原 background 值；删除 `is_background_execution_mode`，`resolve_run_limits` 与 `resolve_sql_read_timeout_seconds` 去掉模式参数。
+2. 删除 `DeliverMessageRequest`/`SubmitTaskRequest` 的 `execution_mode`、`submit_message_task` 与 `TaskExecutionInput` 的同名参数，以及 routes、admin 试运行、定时/队列重投中的传参。
+3. 前端 `nl2sqlTransport.js`、`useNl2SqlChat.js` 不再发送该字段，更新对应 spec。
+4. 更新 smoke 脚本、live 校验脚本和后端测试；部署示例配置与 AGENTS.md 中的模式说明同步改为单档。
+5. 验证：后端全量 pytest、前端定向 spec 与构建、本地 HTTP 与取消 smoke（fixture，无模型额度）。
+6. 回退：恢复本次提交即可；无数据迁移。若部署在 `DATAAGENT_SETTINGS` 中改了新配置名，回退时需改回旧名。

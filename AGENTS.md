@@ -75,8 +75,8 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
 - Prefer a two-level timeout model for intelligent-query:
   - total run timeout for one request
   - idle or progress timeout for detecting stalled runs with no new stream or tool output
-- For interactive NL2SQL, prefer a longer bounded run timeout over the current short default. As a rule of thumb, `300-420s` total is more appropriate than `180s` once the execution path is already simplified.
-- For queries that may exceed interactive limits, prefer asynchronous or background execution instead of endlessly extending the synchronous request timeout.
+- Keep one bounded run budget for every task (`agent_timeout_seconds`); card waits do not count against it. Do not reintroduce a separate short interactive tier.
+- For queries that may exceed the run budget, prefer asynchronous or background execution instead of endlessly extending the synchronous request timeout.
 
 ### Intelligent Query verification rules
 
@@ -149,7 +149,7 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
 - Confirm `da_agent_sdk_record.engine_kind` is `pi_agent_core`. Every execution segment has its own Pi process and at most one on-demand sandbox; parked cards release both and resume from MySQL session entries.
 - The SSE route is `GET /api/v1/nl2sql/tasks/{task_id}/sdk-events/stream`. `/events/stream` returns 404.
 - The task submission body uses `message_type` and `message_content`, not `question`.
-- It also takes `execution_mode`, and omitting it is not neutral: the field defaults to `None`, which resolves to the **interactive** tier (`agent_interactive_timeout_seconds`, 360s). The real frontend sends `"auto"`, which resolves to the background tier (1800s). A probe that leaves it out runs every turn against a budget production never uses, and heavy analytical turns then fail at ~361s for a reason that has nothing to do with what is being tested.
+- Every task runs under one budget tier (`agent_timeout_seconds`, 1800s by default). The old `execution_mode` field was removed; older clients may still send it and it is ignored.
 
 ### Intelligent Query environment defaults
 

@@ -414,7 +414,6 @@ export function useNl2SqlChat(options) {
         agent_id: getAgentId() || undefined,
         permission_mode: getPermissionMode() || undefined,
         debug: false,
-        execution_mode: 'auto',
       })
       const taskId = String(response?.task_id || '')
       // Detached while the request was in flight: leave the backend task running.

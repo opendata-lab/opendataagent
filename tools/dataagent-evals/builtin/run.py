@@ -1212,7 +1212,6 @@ def _submit_task(base_url: str, topic_id: str, case: dict[str, Any], args: argpa
         "topic_id": topic_id,
         "content": str(content if content is not None else _case_question(case)),
         "agent_id": str(args.agent_id or "").strip(),
-        "execution_mode": "background",
     }
     if args.provider_id:
         payload["provider_id"] = args.provider_id

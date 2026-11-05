@@ -559,7 +559,6 @@ class TaskCoordinator:
                 topic_id=str(schedule.get("topic_id") or ""),
                 message_type=str(schedule.get("message_type") or "text"),
                 message_content=schedule.get("message_content"),
-                execution_mode="background",
                 source_queue_id=str(queue.get("queue_id") or ""),
                 source_schedule_id=schedule_id,
                 source_schedule_log_id=str(schedule_log.get("schedule_log_id") or ""),

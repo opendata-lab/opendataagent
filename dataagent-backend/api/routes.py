@@ -516,7 +516,6 @@ async def api_deliver_message(payload: DeliverMessageRequest, request: Request):
             model=payload.model,
             database_hint=payload.database,
             debug=bool(payload.debug),
-            execution_mode=payload.execution_mode,
             agent_id=payload.agent_id,
         )
     except ValueError as exc:
@@ -540,7 +539,6 @@ async def api_create_task(payload: CreateTaskRequest, request: Request):
             model=payload.model,
             database_hint=payload.database,
             debug=bool(payload.debug),
-            execution_mode=payload.execution_mode,
             agent_id=payload.agent_id,
             source_queue_id=payload.source_queue_id,
         )
@@ -867,7 +865,6 @@ async def api_consume_message_queue(queue_id: str, request: Request):
             topic_id=str(queue.get("topic_id") or ""),
             message_type=str(queue.get("message_type") or "text"),
             message_content=queue.get("message_content"),
-            execution_mode="background",
             source_queue_id=str(queue.get("queue_id") or ""),
             source_schedule_id=str(queue.get("source_schedule_id") or "") or None,
             source_schedule_log_id=str(queue.get("source_schedule_log_id") or "") or None,

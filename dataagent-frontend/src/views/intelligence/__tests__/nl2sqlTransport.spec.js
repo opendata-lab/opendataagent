@@ -128,8 +128,7 @@ describe('status translation', () => {
       model: 'gpt-4o',
       agent_id: 'agent_example',
       permission_mode: 'acceptEdits',
-      debug: false,
-      execution_mode: 'auto'
+      debug: false
     })
   })
 
