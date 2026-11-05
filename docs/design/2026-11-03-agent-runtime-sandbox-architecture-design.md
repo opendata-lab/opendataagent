@@ -178,7 +178,7 @@
 
 ### 3.5 单命令超时与运行预算（解决 R8）
 
-- 采用一个明确的终止路径：任何沙箱命令超时或本段取消时，终止本执行段并执行 `docker rm -f`，销毁容器内全部进程，原任务落入既有失败或取消终态；不自动新开执行段重试，不继续复用超时后的容器，不用环境变量匹配 `pkill` 清理进程。不能仅终止宿主 Docker CLI 就声称命令已停止。
+- 采用一个明确的终止路径：任何沙箱命令超时或本段取消时，终止本执行段并执行 `docker rm -f`，销毁容器内全部进程，原任务落入既有失败或取消终态；不自动新开执行段重试，不继续复用超时后的容器，不用环境变量匹配 `pkill` 清理进程。不能仅终止宿主 Docker CLI 就声称命令已停止。单命令超时从容器就绪后开始计时：容器启动另有 Docker CLI 超时，取消信号仍覆盖启动阶段，避免守护进程较慢时把命令预算耗在启动上（2026-11-04 CI 发现）。
 - backend 的超时/取消清理也应能按本段容器标识删除容器，覆盖 Pi Cell 被强杀、未执行 finally 的情况；`--rm` 和 `sleep <run_timeout>` 作为进程异常退出后的有界寿命保障，不设置暖池或后台回收器。
 - 容器资源上限（2026-11-04 评审补充）：每个执行段容器带 `--memory`/`--memory-swap`（同值，不用 swap）、`--cpus`、`--pids-limit`，默认 `2g`/`2`/`512`，由 `DATAAGENT_SANDBOX_MEMORY`、`DATAAGENT_SANDBOX_CPUS`、`DATAAGENT_SANDBOX_PIDS_LIMIT` 配置；Pi 侧在调用 Docker 前校验格式。超限由内核 OOM/fork 失败体现为命令非零退出，不另设恢复路径。
 - 统一任务预算：`agent_timeout_seconds=1800`、`agent_idle_timeout_seconds=300`、`agent_bash_timeout_seconds=600`、`agent_max_turns=40`、`agent_max_tool_calls=200`。MCP SQL 读/写预算分别保留 300s/60s。

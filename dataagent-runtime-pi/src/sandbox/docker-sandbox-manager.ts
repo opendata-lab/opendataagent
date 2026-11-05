@@ -104,6 +104,8 @@ export class DockerSandboxManager {
     if (options.signal?.aborted) throw new Error("SANDBOX_CANCELLED");
     // Cancellation covers container startup as well as exec. close() waits for
     // an in-flight start, then removes it, so a late run cannot leak a container.
+    // The command timeout starts only once the container is up: startup has its
+    // own CLI timeout, and a slow daemon must not spend the command's budget.
     let timer: NodeJS.Timeout | undefined;
     let reason: string | undefined;
     let rejectStopped: (error: Error) => void = () => {};
@@ -115,10 +117,10 @@ export class DockerSandboxManager {
     };
     const cancel = () => stop("SANDBOX_CANCELLED");
     options.signal?.addEventListener("abort", cancel, { once: true });
-    timer = setTimeout(() => stop("SANDBOX_COMMAND_TIMEOUT"), options.timeoutMs);
     const run = async () => {
       try { await this.start(); } catch (error) { if (reason) return stopped; throw error; }
       if (reason) return stopped;
+      timer = setTimeout(() => stop("SANDBOX_COMMAND_TIMEOUT"), options.timeoutMs);
       const code = await this.command(["exec", ...(options.input === undefined ? [] : ["-i"]), "--workdir", "/mnt/workspace", this.containerName, ...argv], options.onData, 0, options.input);
       if (reason) return stopped;
       return code;
