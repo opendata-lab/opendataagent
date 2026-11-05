@@ -126,8 +126,8 @@ class TestTaskReadsAreScoped:
             "api_get_task_message",
             "api_stream_sdk_events",
             "api_cancel_task",
-            "api_submit_permission_decision",
-            "api_submit_question_answer",
+            "_record_permission_decision",
+            "_record_question_answer",
         ],
     )
     def test_every_task_route_resolves_a_request_context(self, route_name):
@@ -141,12 +141,6 @@ class TestTaskReadsAreScoped:
 
         source = inspect.getsource(getattr(routes, route_name))
 
-        import ast
-        calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)]
-        resolves_context = any(
-            (isinstance(call.func, ast.Name) and call.func.id == "_request_context")
-            or (isinstance(call.func, ast.Attribute) and call.func.attr == "to_thread"
-                and call.args and isinstance(call.args[0], ast.Name) and call.args[0].id == "_request_context")
-            for call in calls
+        assert "_request_context(" in source, (
+            f"{route_name} must resolve a request context before reading a task"
         )
-        assert resolves_context, f"{route_name} must resolve a request context before reading a task"

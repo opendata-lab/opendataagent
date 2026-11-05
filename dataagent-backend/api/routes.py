@@ -706,9 +706,17 @@ async def api_cancel_task(task_id: str, request: Request):
 
 @task_router.post("/{task_id}/permission-decision", response_model=PermissionDecisionResponse)
 async def api_submit_permission_decision(task_id: str, payload: PermissionDecisionRequest, request: Request):
-    store = await asyncio.to_thread(_get_store)
-    context = await asyncio.to_thread(_request_context, request)
-    task = await asyncio.to_thread(store.get_task, task_id, context=context)
+    response, appended = await asyncio.to_thread(_record_permission_decision, task_id, payload, request)
+    if appended:
+        await get_task_coordinator().submit_task(task_id)
+    return response
+
+
+def _record_permission_decision(task_id: str, payload: PermissionDecisionRequest, request: Request):
+    appended = False
+    store = _get_store()
+    context = _request_context(request)
+    task = store.get_task(task_id, context=context)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     request_id = str(payload.request_id or "").strip()
@@ -717,11 +725,11 @@ async def api_submit_permission_decision(task_id: str, payload: PermissionDecisi
     decision = str(payload.decision or "").strip().lower()
     if decision not in {"allow", "deny"}:
         raise HTTPException(status_code=400, detail="decision must be allow or deny")
-    current = await asyncio.to_thread(store.get_current_permission_interaction, task_id=task_id, request_id=request_id)
+    current = store.get_current_permission_interaction(task_id=task_id, request_id=request_id)
     if current and str(current.get("status") or "") == "resolved":
         effective = str(current.get("decision") or decision)
     else:
-        append_result = await asyncio.to_thread(store.append_permission_decision_if_waiting,
+        append_result = store.append_permission_decision_if_waiting(
             task_id=task_id,
             request_id=request_id,
             decision=decision,
@@ -734,30 +742,38 @@ async def api_submit_permission_decision(task_id: str, payload: PermissionDecisi
                 else "failed to record permission decision"
             )
             raise HTTPException(status_code=409, detail=detail)
-        if append_result == "appended":
-            await get_task_coordinator().submit_task(task_id)
-        resolved = await asyncio.to_thread(store.get_current_permission_interaction, task_id=task_id, request_id=request_id)
+        appended = append_result == "appended"
+        resolved = store.get_current_permission_interaction(task_id=task_id, request_id=request_id)
         effective = str((resolved or {}).get("decision") or decision)
 
-    return PermissionDecisionResponse.model_validate(
+    response = PermissionDecisionResponse.model_validate(
         {"task_id": task_id, "request_id": request_id, "decision": normalize_permission_decision(effective)}
     )
+    return response, appended
 
 
 @task_router.post("/{task_id}/question-answer", response_model=QuestionAnswerResponse)
 async def api_submit_question_answer(task_id: str, payload: QuestionAnswerRequest, request: Request):
-    store = await asyncio.to_thread(_get_store)
-    context = await asyncio.to_thread(_request_context, request)
-    task = await asyncio.to_thread(store.get_task, task_id, context=context)
+    response, appended = await asyncio.to_thread(_record_question_answer, task_id, payload, request)
+    if appended:
+        await get_task_coordinator().submit_task(task_id)
+    return response
+
+
+def _record_question_answer(task_id: str, payload: QuestionAnswerRequest, request: Request):
+    appended = False
+    store = _get_store()
+    context = _request_context(request)
+    task = store.get_task(task_id, context=context)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     request_id = str(payload.request_id or "").strip()
     if not request_id:
         raise HTTPException(status_code=400, detail="request_id is required")
     answers = [a for a in (payload.answers or []) if isinstance(a, dict)]
-    current = await asyncio.to_thread(store.get_current_question_interaction, task_id=task_id, request_id=request_id)
+    current = store.get_current_question_interaction(task_id=task_id, request_id=request_id)
     if not current or str(current.get("status") or "") != "resolved":
-        append_result = await asyncio.to_thread(store.append_question_answer_if_waiting,
+        append_result = store.append_question_answer_if_waiting(
             task_id=task_id,
             request_id=request_id,
             answers=answers,
@@ -769,11 +785,11 @@ async def api_submit_question_answer(task_id: str, payload: QuestionAnswerReques
                 else "failed to record user answer"
             )
             raise HTTPException(status_code=409, detail=detail)
-        if append_result == "appended":
-            await get_task_coordinator().submit_task(task_id)
-    return QuestionAnswerResponse.model_validate(
+        appended = append_result == "appended"
+    response = QuestionAnswerResponse.model_validate(
         {"task_id": task_id, "request_id": request_id, "accepted": True}
     )
+    return response, appended
 
 
 @queue_router.post("/queries", response_model=MessageQueuePageResponse)

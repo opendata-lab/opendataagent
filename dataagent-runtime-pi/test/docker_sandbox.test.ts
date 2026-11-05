@@ -92,7 +92,7 @@ test("seven sandbox tools edit files and consume a complete saved result", { ski
   } finally { await manager.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("read pages through compact JSON without creating result copies or saving small errors", {skip:!image}, async () => {
+test("read keeps small files clean and references long JSON without copying it", {skip:!image}, async () => {
   const {root,dirs,manager}=fixture();
   const tools=createSandboxTools(manager,{resultsDir:dirs[1],timeoutMs:15000,inlineBytes:1024});
   const call=async (name:string,args:Record<string,unknown>)=>tools.find(t=>t.name===name)!.execute("read-test",args,new AbortController().signal,undefined,{} as never);
@@ -100,21 +100,14 @@ test("read pages through compact JSON without creating result copies or saving s
   fs.writeFileSync(path.join(dirs[1],"compact.json"),raw);
   const files=fs.readdirSync(dirs[1]).sort();
   try {
-    let offset=0;let restored="";
-    // Page far beyond 16 KiB through UTF-8 data on one line.
-    while(offset<Buffer.byteLength(raw)) {
-      const result=await call("read",{path:"/mnt/results/compact.json",byteOffset:offset,byteLimit:1024});
-      assert.equal(result.isError,false);
-      assert.equal((result.details as any).storage_path,"/mnt/results/compact.json");
-      const text=(result.content[0] as any).text as string;
-      const marker=text.match(/\n\[Next byteOffset: (\d+)\]/);
-      restored+=text.split(/\n\[Next byteOffset:|\nSource file:/)[0];
-      if(!marker) break;
-      assert.ok(Number(marker[1])>offset);offset=Number(marker[1]);
-    }
-    assert.equal(restored,raw);
-    const lines=JSON.stringify(await call("read",{path:"/mnt/results/compact.json",offset:1,limit:1}));
-    assert.match(lines,/Next byteOffset/);
+    const small=await call("read",{path:"/mnt/results/result.json"});
+    assert.equal((small.content[0] as any).text,'{"rows":[1,2,3]}');
+    assert.equal((small.details as any).storage_path,undefined);
+    const large=await call("read",{path:"/mnt/results/compact.json",offset:1,limit:1});
+    assert.equal((large.details as any).storage_path,"/mnt/results/compact.json");
+    assert.match((large.content[0] as any).text,/Read preview truncated/);
+    const tail=await call("bash",{command:`python -c 'import json; print(json.load(open("/mnt/results/compact.json"))["rows"][-1]["id"])'`});
+    assert.equal((tail.content[0] as any).text,'999\n');
     assert.equal((await call("read",{path:"missing.txt"})).isError,true);
     assert.equal((await call("bash",{command:"echo small-error >&2; exit 2"})).isError,true);
     assert.deepEqual(fs.readdirSync(dirs[1]).sort(),files);

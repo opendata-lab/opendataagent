@@ -159,7 +159,7 @@ export class Cell {
         init.model.context_window
       );
       if (!init.sandbox || !init.results_dir) throw new Error("Protocol v2 requires sandbox and results_dir");
-      sandbox = new DockerSandboxManager({ ...init.sandbox, env: { ...init.sandbox.env, DATAAGENT_PLAN_STATE: planApproved || !planMode ? "approved" : "pending" } }, state => heartbeat({ sandbox_state: state }));
+      sandbox = new DockerSandboxManager({ ...init.sandbox, env: { ...init.sandbox.env, DATAAGENT_PLAN_STATE: planApproved || !planMode ? "approved" : "pending" } });
       const baseTools = createSandboxTools(sandbox, { resultsDir: init.results_dir,
         timeoutMs: init.limits.bash_timeout_seconds * 1000,
         inlineBytes: init.governance_settings?.max_inline_result_bytes ?? DEFAULT_FOLD_THRESHOLD_BYTES,
@@ -401,7 +401,6 @@ export class Cell {
             tool.mcpServerName === operation.payload.server_name && tool.mcpServerIdentity === operation.payload.server_identity);
           if (!tool) throw new Error("Approved MCP tool is no longer available");
           toolCalls += 1;
-          for (const event of normalizer.reserveNextTurn()) emit(event);
           const turn_id = normalizer.turnId;
           emit(sm.createEvent("tool.started", { turn_id, tool_call_id: operation.request_id,
             tool_name: tool.name, input: operation.payload.arguments }));

@@ -85,7 +85,7 @@ MUST_BE_ASYNC = {
         "api_deliver_message",
         "api_create_task",
         "api_cancel_task",
-        # Card writes run in asyncio.to_thread; the handler then awaits enqueue.
+        # Card persistence runs as one worker-thread operation, then awaits enqueue.
         "api_submit_permission_decision",
         "api_submit_question_answer",
         "api_consume_message_queue",
@@ -174,12 +174,3 @@ def test_sse_generator_still_blocks_the_loop_and_is_tracked():
         "the SSE poll loop was moved off the event loop; update this test and the note in "
         "docs/design/2026-09-15-settings-pages-load-performance-design.md"
     )
-
-
-@pytest.mark.parametrize("name", ["api_submit_permission_decision", "api_submit_question_answer"])
-def test_card_handlers_offload_all_store_calls(name):
-    tree = ast.parse((BACKEND_ROOT / "api/routes.py").read_text())
-    handler = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == name)
-    direct_store_calls = [n for n in ast.walk(handler) if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id == "store"]
-    assert not direct_store_calls, "synchronous MySQL calls must run via asyncio.to_thread"

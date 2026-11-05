@@ -112,11 +112,11 @@ class Settings(BaseSettings):
     # leaves this empty and falls back to dataagent_host_root.
     dataagent_runtime_root: str = ""
     # Host-visible persistent root used by the sandbox runner when asking the
-    # host Docker/Podman daemon to bind-mount topic subdirectories into child
+    # host Docker daemon to bind-mount topic subdirectories into child
     # containers.
     dataagent_host_root: str = "/dataagent_runtime"
     dataagent_sandbox_image: str = "oda-sandbox:latest"
-    dataagent_sandbox_backend: Literal["docker", "podman"] = "docker"
+    dataagent_sandbox_backend: Literal["docker"] = "docker"
 
     # ---- 运行策略 ----
     max_few_shot_examples: int = 5

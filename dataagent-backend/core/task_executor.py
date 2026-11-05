@@ -70,6 +70,7 @@ class TaskExecutionInput:
     permission_mode: str | None = None
     # Internal control-plane -> child contract, not a public request override.
     runtime_limits: dict[str, int] | None = None
+    workspace_before: dict[str, tuple[int, str]] | None = None
 
 
 @dataclass
@@ -132,7 +133,7 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         "DATAAGENT_SQL_WRITE_TIMEOUT_SECONDS":str(min(params.sql_write_timeout_seconds or 60,limits["total_timeout_seconds"]))}
     runtime_env.update((snapshot or {}).get("env_vars") or {})
     run_id = uuid.uuid4().hex
-    sandbox,results = await asyncio.to_thread(build_sandbox_config,cfg,run_id=run_id,workspace=workspace,
+    sandbox,results = build_sandbox_config(cfg,run_id=run_id,workspace=workspace,
         enabled_roots=roots,lifetime=limits["total_timeout_seconds"],env=runtime_env)
     provider_env = _build_provider_env(api_format,api_key=str(target.get("api_key") or ""),
         auth_token=str(target.get("auth_token") or ""),base_url=str(target.get("base_url") or ""))
@@ -158,12 +159,13 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         governance_settings=build_governance_settings(cfg,provider_env),**limits)
     writer = PiEventWriter(store,params.task_id,params.topic_id,initial_turn_index=int(previous_usage.get("turns",0)))
 
-    async def commit(checkpoint,request,elapsed):
+    async def commit(checkpoint,request,elapsed,token_usage):
         next_state = {"plan_approved":plan_approved,"usage":{
             "elapsed_seconds":previous_usage.get("elapsed_seconds",0)+elapsed,
             "turns":previous_usage.get("turns",0)+int(checkpoint.get("turns") or 0),
             "tool_calls":previous_usage.get("tool_calls",0)+int(checkpoint.get("tool_calls") or 0),
-            "tokens":accumulate_usage(previous_usage.get("tokens"),writer.usage)}}
+            "tokens":accumulate_usage(previous_usage.get("tokens"),token_usage)},
+            "workspace_before":params.workspace_before}
         card = None
         if request:
             kind = request["kind"]; data=request["payload"]; request_id=request["request_id"]

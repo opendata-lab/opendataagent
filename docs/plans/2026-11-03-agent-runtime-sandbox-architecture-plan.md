@@ -13,7 +13,7 @@
 - **DataAgent Pi 运行时（`dataagent-runtime-pi/`）**：升级 `pi-coding-agent@1.4.0`；固定注册 7 个沙箱基础工具；大输出自动落盘并返回文件路径；卡片结束本段，回答后从同一会话继续推理；保留事件、结构化结果与业务门控。
 - **Python 后端（`dataagent-backend/`）**：删除 Runner/Claude SDK 路径；持久化会话和交互；回答后调度新的执行段；移除 `allowed_tools` 业务契约；整合权限初始化、配置和旧结果迁移。
 - **前端（`dataagent-frontend/`）**：移除基础工具勾选及其数量展示，保留 Skills/MCP 选择；验证卡片续聊、SSE、图表和附件。现有问题/计划/权限卡片载荷及中立事件保持兼容。
-- **基础设施（`deploy/`、Dockerfile、CI、离线包）**：仅保留 backend 编排服务与按需启动的 `oda-sandbox` 工具镜像；本地开发也通过 Docker/Podman 执行工具。
+- **基础设施（`deploy/`、Dockerfile、CI、离线包）**：仅保留 backend 编排服务与按需启动的 `oda-sandbox` 工具镜像；本地开发也通过 Docker 执行工具。
 
 ## Step 0：验证目标 SDK 的隔离与会话边界
 
@@ -33,7 +33,7 @@
 
 - **新增** `dataagent-backend/Dockerfile.sandbox`、`requirements-sandbox.txt`，预装 `jq/rg/fd/sqlite3`、Python 和设计需要的数据包；无需后端代码、Node、Docker CLI 或任何服务凭据。
 - **新增** `dataagent-runtime-pi/src/sandbox/docker-sandbox-manager.ts` 及 `test/docker_sandbox.test.ts`：
-  - 明确选择可用的 Docker/Podman CLI；不可用或镜像缺失时返回 `SANDBOX_UNAVAILABLE`，不降级到宿主执行。
+  - 明确选择可用的 Docker CLI；不可用或镜像缺失时返回 `SANDBOX_UNAVAILABLE`，不降级到宿主执行。
   - 首次调用沙箱工具时，通过本执行段的启动 Promise 拉起一个容器，后续调用复用；容器名包含执行段标识，避免同一逻辑任务的前后执行段误删彼此容器。
   - 挂载 `/mnt/workspace` 读写、当前 Topic 的 `/mnt/results` 只读，以及启用技能 `/opt/skills/<folder>` 只读；启动前创建目录，使用只读根分区、可写 `/tmp`、无网络、相同 UID:GID 和 no-new-privileges。
   - 提供 `bash/read/write/edit/ls/find/grep` 的容器内实现；模型路径不在 backend/Node 宿主解析。容器内配置 `DATAAGENT_PYTHON_BIN` 与 `SKILLS_ROOT_DIR`，验证完整技能脚本调用契约。
@@ -129,8 +129,19 @@
 ### 2026-11-04 PR review correction plan
 
 1. Fix explicit approved MCP failures, turn attribution and durable result reuse in `cell.ts`/`mcp-client.ts`; add successful/error/transport regressions.
-2. Preserve attachments and numeric token totals across parked segments in coordinator/executor/runtime; reject checkpoint conflicts transactionally and enqueue accepted answers from routes.
-3. Add resumable byte reads without copying existing result files; retain exact JSON. Cover pagination, small errors and output persistence with real sandbox tests.
-4. Cache mount discovery off-loop, recognize Podman environments, and track sandbox creation/close using existing heartbeat frames. Verify cleanup on abnormal termination and zero daemon calls for pure-model segments.
+2. Preserve the initial task workspace baseline and numeric token totals across parked segments in coordinator/executor/runtime; reject checkpoint conflicts transactionally and enqueue accepted answers from routes.
+3. Keep line reads without copying existing result files; retain exact JSON and use bash for single-line processing. Cover small errors and output persistence with real sandbox tests.
+4. Warm and cache Docker mount discovery at startup. Use the existing terminal/parked completion ordering to skip redundant cleanup and verify abnormal termination cleanup.
 5. Remove dead interaction modules/event sinks and obsolete tests; repair folding tests and fixture cleanup. Update AGENTS.md and final verification report.
 6. Build Pi with nvm Node, run focused then full relevant Python/runtime suites and local HTTP smoke (MySQL 127.0.0.1:3326/dataagent, Redis 127.0.0.1:6379, Python .venv-py313, Docker). Use only local fixtures; preserve user configuration/history. Commit and push corrections to PR #5 after validation. Rollback is the previous PR commit; no schema change is required.
+
+
+### 2026-11-04 实现收敛计划
+
+1. coordinator 将任务起始文件快照传入 executor，并通过现有 checkpoint state 跨段保存；parked 直接返回，终态统一收集附件和更新助手消息。
+2. main 接单前同步预热 sandbox mount cache，executor 同步构造配置；config/schema/README/活动设计计划统一 Docker-only sandbox。
+3. 删除 TypeScript 生命周期 callback 和 Python sandbox_pending；仅在缺少 Cell 完成帧时兜底清理，覆盖 parked、所有正常终态、EOF、超时、强制取消。
+4. read 删除字节模式/常驻提示，保留原路径和仅超限提示；用 bash 读取完整单行 JSON 验证数据仍可消费。
+5. routes 用一段同步持久化 helper 加一次 to_thread，保持鉴权、409、幂等和立即入队；删除逐条调用 AST 检查，改用并发健康请求验证。
+6. 删除 reserveNextTurn 与 writer.usage；内部 segment commit 显式接收 supervisor 汇总用量。更新批准工具所属轮次与失败/传输中断回归。
+7. nvm 编译/Pi 测试、Python 定向及全量、隔离 MySQL/Redis/HTTP/Stop、真实 backend 容器 mount smoke，均使用本地 fixture。更新报告和 TODO，提交并推送同一 PR；不花费用户模型额度。

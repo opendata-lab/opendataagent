@@ -80,8 +80,10 @@
 
 ### 实施验证发现（2026-11-03）
 
+- **计划模式的 Bash 文件写入边界（2026-11-04 核实）**：当前 beforeToolCall 拦截 write/edit 与 MCP 写操作，但普通 Bash 仍可写 workspace；DATAAGENT_PLAN_STATE=pending 不等于文件系统只读。需要单独设计并验证执行层只读策略，或明确计划模式保证范围，不能声称已经按 output 路径全面禁写。本次仅收敛运行时实现，不扩展权限策略。来源：核对用户简化建议；见[收敛报告](reports/2026-11-04-agent-runtime-simplification.md)。
+- **空“深度思考”区块（2026-11-04）**：用户历史消息中存在空的已完成 reasoning 事件，前端仍展示空思考区块。需过滤完成后的空区块并保留流式生成占位，补前端回归和历史会话验证。本次运行时简化未修改前端；来源：用户在 3001 聊天页的反馈，见[收敛报告](reports/2026-11-04-agent-runtime-simplification.md)。
+
 - **现有品牌图标路径缺失**：本地浏览器发现 Chat/智能体侧栏使用不存在的 `example-icon.svg`，public 目录实际为 `opendataworks-icon.svg` 系列。需统一品牌资源与引用；本轮不修改品牌。来源：本轮 UI smoke，关联[验证报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
-- **Podman 实机覆盖**：Docker 路径完整通过，Podman 缺 Docker CLI 时的选择保留，尚无本机 Podman 实例做同样 mount/生命周期验收。后续在 Podman 主机运行工具及 HTTP smoke。来源：本轮环境边界，关联同一[报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
 
 
 - **SDK 升级依赖审计**：安装 pi-coding-agent@1.4.0 后 npm 报告 12 项依赖漏洞（7 moderate、4 high、1 critical）；需核对传递依赖和运行时可达性，再选择兼容修复。来源：本次 npm install；关联[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md) Step 0，尚未执行自动升级。
@@ -90,6 +92,8 @@
 - **前端依赖审计**：2026-11-03 全新 npm ci 报告 29 项漏洞（10 moderate、17 high、2 critical）；需单独核对并升级传递依赖，本次未执行强制修复。来源：本次本地工具链安装；关联[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)，前端生产构建通过。
 
 ## 已完成
+
+- **运行时实现收敛 / Podman 验证范围（2026-11-04）**：移除未验证的 Podman sandbox 分支，正式只提供 Docker，原“Podman 实机覆盖”不再作为当前实现的缺失验收。简化生命周期、读取、轮次和用量；用任务起始快照保留终态附件，用接单前预热消除每段线程调用，卡片数据库操作整体在线程执行。来源：用户后续简化评审；结果见[收敛报告](reports/2026-11-04-agent-runtime-simplification.md)。
 
 - **PR #5 代码评审修正（2026-11-04）**：已修复批准 MCP 的明确失败持久化、跨段附件/用量、回答立即入队及快照冲突、长 JSON 读取与重复文件、挂载发现与清理生命周期，删除旧等待循环和事件 sink，修复真实 folding 回归和测试目录清理，同步 Pi-only 本地指引。来源：用户提供的 PR review；设计/计划先行更新，验证与具体结果见[评审修正报告](reports/2026-11-04-agent-runtime-pr-review-fixes.md)。Podman 实机等既有环境边界仍由原待办跟踪。
 

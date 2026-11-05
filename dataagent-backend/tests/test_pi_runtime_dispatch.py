@@ -49,7 +49,7 @@ async def test_outcomes_and_checkpoint_transaction(setup,monkeypatch,outcome,exp
         calls['ctx']=ctx
         if outcome in {'success','parked'}:
             request={'request_id':'r1','kind':'question','payload':{'questions':[]}} if outcome=='parked' else None
-            await kw['segment_handler']({'header':{},'entries':[],'leaf_id':None,'turns':2,'tool_calls':3,'tokens':{}},request,2.5)
+            await kw['segment_handler']({'header':{},'entries':[],'leaf_id':None,'turns':2,'tool_calls':3,'tokens':{}},request,2.5,{})
         return PiRunOutcome(terminal_status=outcome,answer='answer',error_code='test_error' if outcome=='failed' else '')
     monkeypatch.setattr(executor,'execute_pi_run',execute)
     result=await executor.execute_task_stream(params)
@@ -84,22 +84,17 @@ async def test_resume_subtracts_task_budget_and_does_not_replay_history(setup,mo
 
 
 @pytest.mark.asyncio
-async def test_tokens_persist_across_segments_and_mount_discovery_is_off_loop(setup, monkeypatch):
-    import threading
+async def test_tokens_persist_across_segments_and_task_baseline_is_checkpointed(setup, monkeypatch):
     calls, store, params = setup
-    loop_thread = threading.get_ident()
-    def build(cfg, **kwargs):
-        assert threading.get_ident() != loop_thread
-        return {'runId': kwargs['run_id']}, Path('/tmp/results')
-    monkeypatch.setattr(executor, 'build_sandbox_config', build)
+    params.workspace_before = {'output/existing.txt': (10, 'before')}
     store.saved = {'task_id': params.task_id, 'version': 1, 'header': {}, 'entries': [], 'leaf_id': None,
         'state': {'usage': {'turns': 1, 'tokens': {'input_tokens': 10, 'output_tokens': 2}}}}
     async def execute(ctx, **kwargs):
-        kwargs['writer'].ingest({'sequence': 1, 'type': 'usage.updated', 'payload': {'usage': {'input_tokens': 20, 'output_tokens': 3}}})
-        await kwargs['segment_handler']({'header': {}, 'entries': [], 'leaf_id': None, 'turns': 1}, None, 1)
+        await kwargs['segment_handler']({'header': {}, 'entries': [], 'leaf_id': None, 'turns': 1}, None, 1, {'input_tokens': 20, 'output_tokens': 3})
         return PiRunOutcome(terminal_status='success', answer='done', usage={'input_tokens': 20, 'output_tokens': 3})
     store.append_sdk_record = lambda **kwargs: None
     monkeypatch.setattr(executor, 'execute_pi_run', execute)
     result = await executor.execute_task_stream(params)
     assert result.usage == {'input_tokens': 30, 'output_tokens': 5}
     assert calls['commit']['state']['usage']['tokens'] == result.usage
+    assert calls['commit']['state']['workspace_before'] == params.workspace_before

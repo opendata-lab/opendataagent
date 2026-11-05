@@ -27,8 +27,6 @@ PROTOCOL_VERSION = 2
 # Grace period between asking the Cell to stop and killing it. One turn of the
 # agent loop is far shorter than this; anything still running is wedged.
 CANCEL_GRACE_SECONDS = 2.0
-# The Cell answers cell.init as soon as its module graph is loaded.
-HANDSHAKE_TIMEOUT_SECONDS = 10.0
 # How often the cancel flag is polled while events stream.
 CANCEL_POLL_INTERVAL_SECONDS = 1.0
 
@@ -336,7 +334,7 @@ async def execute_pi_run(
     highest_sequence = 0
     answer_parts: list[str] = []
     usage = None
-    sandbox_pending = False
+    cell_settled = False
     try:
         await channel.send("cell.init", ctx.to_init_payload())
         while True:
@@ -362,10 +360,7 @@ async def execute_pi_run(
             last_activity = time.monotonic()
             ftype = frame.get("type")
             payload = frame.get("payload") or {}
-            if ftype == "run.heartbeat":
-                if payload.get("sandbox_state") == "starting": sandbox_pending = True
-                elif payload.get("sandbox_state") == "closed": sandbox_pending = False
-            elif ftype == "session.entries":
+            if ftype == "session.entries":
                 if snapshot is not None:
                     raise ValueError("Duplicate session snapshot")
                 snapshot = payload
@@ -375,18 +370,21 @@ async def execute_pi_run(
                 await operation_handler(payload)
                 await channel.send("operation.saved", {"request_id": payload["request_id"]})
             elif ftype == "run.parked":
+                cell_settled = True  # Sent only after Cell.run finally has closed the sandbox.
                 if snapshot is None or segment_handler is None:
                     raise ValueError("Parked segment has no persistent snapshot")
-                await segment_handler(snapshot, payload.get("interaction"), time.monotonic() - started)
+                await segment_handler(snapshot, payload.get("interaction"), time.monotonic() - started, usage)
                 return PiRunOutcome(terminal_status="parked", answer="".join(answer_parts), usage=usage, last_sequence=highest_sequence)
             elif ftype == "run.event":
                 event_type = payload.get("type")
                 event_data = payload.get("payload") or {}
                 highest_sequence = max(highest_sequence, int(payload.get("sequence") or 0))
+                if event_type in TERMINAL_EVENT_TYPES:
+                    cell_settled = True
                 if event_type == "run.completed":
                     if snapshot is None or segment_handler is None:
                         raise ValueError("Completed segment has no persistent snapshot")
-                    await segment_handler(snapshot, None, time.monotonic() - started)
+                    await segment_handler(snapshot, None, time.monotonic() - started, usage)
                 writer.ingest(payload)
                 if event_type == "content.delta" and event_data.get("kind") != "reasoning":
                     answer_parts.append(str(event_data.get("delta") or ""))
@@ -415,7 +413,7 @@ async def execute_pi_run(
             await stderr_task
         except (asyncio.CancelledError,Exception):
             pass
-        if ctx.sandbox and sandbox_pending:
+        if ctx.sandbox and not cell_settled:
             from core.sandbox_config import remove_segment_sandbox
             await remove_segment_sandbox(ctx.sandbox)
 

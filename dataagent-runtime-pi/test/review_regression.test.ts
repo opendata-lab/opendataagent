@@ -59,14 +59,15 @@ for(const outcome of ["success","error","transport"] as const) {
     if(outcome==="transport") {
       assert.equal(result.terminal_status,"failed");assert.equal(saved,undefined);assert.match(result.error!,/MCP_TRANSPORT_ERROR/);
       assert.equal(events.filter(e=>e.type==="tool.completed").length,0);
+      assert.equal(events.filter(e=>e.type==="turn.started").length,0,"no synthetic orphan turn on transport loss");
     } else {
       assert.equal(result.terminal_status,"success",result.error);assert.equal(Boolean(saved.isError),outcome==="error");
       assert.match(context,outcome==="error"?/Validation rejected/:/operation-ok/);
       const started=events.findIndex(e=>e.type==="tool.started");
-      assert.equal(events[started-1].type,"turn.started");
+      assert.equal(events[started-1].type,"run.started");
       const completed=events.find(e=>e.type==="tool.completed")!;
-      assert.equal(completed.payload.is_error,outcome==="error");assert.equal(completed.payload.turn_id,"turn-5");
-      assert.equal(events[started].payload.turn_id,"turn-5");
+      assert.equal(completed.payload.is_error,outcome==="error");assert.equal(completed.payload.turn_id,"turn-4");
+      assert.equal(events[started].payload.turn_id,"turn-4");
       assert.equal(events.filter(e=>e.type==="turn.started").length,1);
       assert.equal(events.find(e=>e.type==="turn.completed")?.payload.turn_id,"turn-5");
       assert.equal(result.turns,1,"approved call must not consume an extra model turn");

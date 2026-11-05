@@ -433,20 +433,22 @@ def test_cell_command_reads_dotenv_backed_settings(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('lifecycle,expected_cleanups', [([], 0), (['starting','closed'], 0), (['starting'], 1)])
-async def test_backend_cleanup_only_for_outstanding_sandbox_intent(tmp_path, monkeypatch, lifecycle, expected_cleanups):
+@pytest.mark.parametrize('terminal', ['run.completed','run.failed','run.cancelled','run.suspended','run.parked',None])
+async def test_backend_cleanup_only_when_cell_did_not_settle(tmp_path, monkeypatch, terminal):
     from core import sandbox_config
     calls = []
     async def cleanup(config): calls.append(config)
     monkeypatch.setattr(sandbox_config, 'remove_segment_sandbox', cleanup)
     script = 'read()\n'
-    for state in lifecycle:
-        script += f'send("run.heartbeat", {{"sandbox_state": {state!r}}})\n'
-    script += 'event(1, "run.completed")\n'
+    if terminal == 'run.parked':
+        script += 'send("session.entries", {"header":{},"entries":[],"leaf_id":None})\nsend("run.parked", {})\n'
+    elif terminal:
+        script += f'event(1, {terminal!r})\n'
     ctx = _context(tmp_path, sandbox={'cli': 'unavailable-daemon', 'runId': 'test'})
     result = await execute_pi_run(ctx, writer=_RecordingWriter(), cell_command=_stub_cell(script))
-    assert result.terminal_status == 'success'
-    assert len(calls) == expected_cleanups
+    assert len(calls) == (0 if terminal else 1)
+    if terminal == 'run.completed': assert result.terminal_status == 'success'
+    if terminal == 'run.parked': assert result.terminal_status == 'parked'
 
 
 @pytest.mark.asyncio

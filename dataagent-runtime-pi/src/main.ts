@@ -35,7 +35,7 @@ function bootstrap(): void {
           const result = await cell.run(
             init,
             (event) => {
-              if (["run.completed", "run.failed", "run.cancelled"].includes(event.type)) terminalEvent = event as unknown as Record<string, unknown>;
+              if (["run.completed", "run.failed", "run.cancelled", "run.suspended"].includes(event.type)) terminalEvent = event as unknown as Record<string, unknown>;
               else channel.send("run.event", event as unknown as Record<string, unknown>);
             },
             (detail) => {

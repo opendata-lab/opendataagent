@@ -6,7 +6,6 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from core.pi_runtime import accumulate_usage
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,6 @@ class PiEventWriter:
         self._topic_id = topic_id
         self._turn_index = initial_turn_index
         self._highest_sequence = 0
-        self.usage: dict[str, Any] = {}
 
     @property
     def turn_index(self) -> int:
@@ -95,8 +93,6 @@ class PiEventWriter:
         # handling need, so coerce rather than drop.
         raw_payload = event.get("payload")
         payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
-        if event_type == "usage.updated":
-            self.usage = accumulate_usage(self.usage, payload.get("usage"))
         # The envelope was previously discarded, so a stored record could not be
         # deduplicated, ordered against its producer, or attributed to an engine
         # — everything history replay needs once it stops going through a second

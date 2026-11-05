@@ -95,6 +95,10 @@ def wait_task(task_id,statuses={'finished','error','suspended'},seconds=30):
 def submit(scenario,mode='default'):
     topic=request('POST',API+'/topics',json={'title':'SMOKE:'+scenario,'agent_id':agent_id,'permission_mode':mode})
     topics.append(topic['topic_id'])
+    if scenario=='QUESTION':
+        existing=ROOT/topic['topic_id']/'workspace/output/pre-existing.txt'
+        existing.parent.mkdir(parents=True,exist_ok=True)
+        existing.write_text('from an earlier task')
     accepted=request('POST',API+'/tasks',json={'topic_id':topic['topic_id'],'message_type':'text','message_content':'SMOKE:'+scenario,
         'execution_mode':'auto','provider_id':PROVIDER,'model':'smoke','agent_id':agent_id})
     assert accepted['accepted'] and accepted['task_id']
@@ -150,6 +154,8 @@ def main():
     raw=[json.loads(p.read_text()) for p in (ROOT/topic/'results').glob('*.json')]
     assert any(isinstance(d,dict) and d.get('warning')=='metadata-preserved' and len(d.get('rows',[]))==1000 for d in raw)
     topic,task=submit('QUESTION');waiting,_=wait_task(task,{'waiting_input'})
+    parked_message=request('GET',API+f'/tasks/{task}/message')
+    assert parked_message['status']=='running' and not parked_message['content'] and not parked_message['attachments'],parked_message
     question=card(task,'question_request');assert not (ROOT/topic/'workspace/after.txt').exists()
     _,other=submit('LIVENESS');assert_finished(other,'smoke-ok')
     stop(backend);start_backend()
@@ -160,6 +166,7 @@ def main():
     assistant=request('GET',API+f'/tasks/{task}/message')
     attached={a['rel_path'] for a in assistant['attachments']}
     assert {'output/before-card.txt','output/after-card.txt'} <= attached, attached
+    assert 'output/pre-existing.txt' not in attached, attached
     usage_events=[r['data']['usage'] for r in records(task) if r['event_type']=='usage.updated']
     for field in ('input_tokens','output_tokens'):
         assert assistant['usage'][field] == sum(u[field] for u in usage_events), (assistant['usage'],usage_events)

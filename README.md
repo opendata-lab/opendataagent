@@ -49,7 +49,7 @@ OpenDataAgent（DataAgent）是一个独立的智能体平台：管理员配置�
 
 ## 快速开始
 
-需要 Docker（或 Podman）与 Compose。
+需要 Docker 与 Compose。
 
 ```bash
 git clone https://github.com/opendata-lab/opendataagent.git
@@ -131,7 +131,7 @@ npm --prefix dataagent-runtime-pi ci && npm --prefix dataagent-runtime-pi run bu
 npm --prefix dataagent-frontend ci
 ```
 
-工具执行需要可用的 Docker（缺少 Docker CLI 时可用 Podman）及预先构建的工具镜像：
+工具执行需要可用的 Docker及预先构建的工具镜像：
 
 ```bash
 docker build -f dataagent-backend/Dockerfile.sandbox -t oda-sandbox:latest .

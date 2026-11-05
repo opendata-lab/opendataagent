@@ -60,7 +60,7 @@ async def complete(request:Request):
             if scenario=='MCP_ERROR': call('smoke_write_rejected')
             else: call('smoke_write_record',value=scenario,hold=scenario=='MCP_UNKNOWN')
         else: answer='write-error-reported' if scenario=='MCP_ERROR' and 'MCP_TOOL_ERROR' in transcript else 'write-resumed-ok'
-    elif scenario in {'BASH_TIMEOUT','CANCEL_BASH'}:
+    elif scenario in {'BASH_TIMEOUT','CANCEL_BASH','CRASH_BASH'}:
         if not tools: call('bash',command='sleep 20 & wait')
     async def stream():
         entry={'scenario':scenario,'state':'running'}

@@ -17,7 +17,7 @@ def test_mount_inspection_is_cached_by_container_identity(monkeypatch):
     try:
         assert sandbox._discover_mount_root('docker', 'backend') == sandbox._discover_mount_root('docker', 'backend')
         assert len(calls) == 1
-        sandbox._discover_mount_root('podman', 'other')
+        sandbox._discover_mount_root('docker', 'other')
         assert len(calls) == 2
     finally:
         sandbox._discover_mount_root.cache_clear()
@@ -33,14 +33,15 @@ def test_inspection_errors_have_actionable_code(monkeypatch, error):
     assert sandbox._discover_mount_root.cache_info().currsize == 0
 
 
-def test_podman_container_environment_is_recognized(monkeypatch):
-    monkeypatch.delenv('DATAAGENT_CONTAINER_ID', raising=False)
-    monkeypatch.setattr(sandbox.Path, 'exists', lambda p: str(p) == '/run/.containerenv')
-    assert sandbox._running_in_container()
+def test_host_mount_discovery_never_inspects_a_container(monkeypatch):
+    monkeypatch.setattr(sandbox, '_running_in_container', lambda: False)
+    def unexpected(*args, **kwargs): raise AssertionError('host mode must not inspect')
+    monkeypatch.setattr(sandbox.subprocess, 'run', unexpected)
+    assert sandbox.backend_mounts() == []
 
 
 @pytest.mark.asyncio
-async def test_cleanup_accepts_absent_container_for_both_name_formats(monkeypatch):
+async def test_cleanup_accepts_an_absent_docker_container(monkeypatch):
     import re
     commands = []
     class Process:
@@ -51,10 +52,9 @@ async def test_cleanup_accepts_absent_container_for_both_name_formats(monkeypatc
         return Process(1 if args[1] == 'rm' else 0)
     import asyncio
     monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
-    await sandbox.remove_segment_sandbox({'cli': 'podman', 'runId': 'review'})
+    await sandbox.remove_segment_sandbox({'cli': 'docker', 'runId': 'review'})
     pattern = commands[1][-1].removeprefix('name=')
     name = commands[0][-1]
-    assert re.fullmatch(pattern, name)
     assert re.fullmatch(pattern, '/' + name)
     assert not re.fullmatch(pattern, name + '-other')
 

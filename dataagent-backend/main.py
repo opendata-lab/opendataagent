@@ -18,6 +18,7 @@ from core.skill_admin_service import bootstrap_admin_settings, reindex_documents
 from core.skill_admin_store import get_skill_admin_store
 from core.runtime_registry_store import get_runtime_registry_store
 from core.skill_discovery import resolve_agent_project_cwd, resolve_skills_root_dir
+from core.sandbox_config import backend_mounts
 from core.task_coordinator import get_task_coordinator
 from core.topic_task_store import get_topic_task_store
 
@@ -118,6 +119,8 @@ async def startup():
         logger.exception("Agent profile bootstrap failed: %s", e)
         raise
 
+    # Warm the static container mount map once before any task can execute.
+    backend_mounts()
     try:
         await get_task_coordinator().start()
         logger.info(

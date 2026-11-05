@@ -20,26 +20,23 @@ def _discover_mount_root(cli: str, own_id: str) -> list[dict[str, Any]]:
 
 
 def _running_in_container() -> bool:
-    return (Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
-            or bool(os.environ.get("DATAAGENT_CONTAINER_ID")))
+    return Path("/.dockerenv").exists() or bool(os.environ.get("DATAAGENT_CONTAINER_ID"))
+
+
+def backend_mounts() -> list[dict[str, Any]]:
+    if not _running_in_container():
+        return []
+    own_id = os.environ.get("DATAAGENT_CONTAINER_ID") or os.environ.get("HOSTNAME", "")
+    return _discover_mount_root("docker", own_id)
 
 
 def build_sandbox_config(cfg: Any, *, run_id: str, workspace: Path,
                          enabled_roots: dict[str, str], lifetime: int,
                          env: dict[str, str]) -> tuple[dict[str, Any], Path]:
-    cli = str(cfg.dataagent_sandbox_backend or "docker")
-    if cli not in {"docker", "podman"}:
-        raise ValueError("Unsupported container CLI")
+    cli = "docker"
     if not shutil.which(cli):
-        # Only a confirmed missing Docker executable selects Podman.
-        if cli == "docker" and shutil.which("podman"):
-            cli = "podman"
-        else:
-            raise RuntimeError("SANDBOX_UNAVAILABLE: Docker/Podman CLI missing")
-    mounts: list[dict[str, Any]] = []
-    if _running_in_container():
-        own_id = os.environ.get("DATAAGENT_CONTAINER_ID") or os.environ.get("HOSTNAME", "")
-        mounts = _discover_mount_root(cli, own_id)
+        raise RuntimeError("SANDBOX_UNAVAILABLE: Docker CLI missing")
+    mounts = backend_mounts()
 
     def source(local: Path) -> str:
         local = local.resolve()
@@ -83,7 +80,6 @@ async def remove_segment_sandbox(config: dict[str, Any]) -> None:
 
     status, _ = await command("rm", "-f", name)
     if status:
-        # Docker may prefix names with '/', Podman does not.
-        status, output = await command("ps", "-aq", "--filter", f"name=^/?{name}$")
+        status, output = await command("ps", "-aq", "--filter", f"name=^/{name}$")
         if status or output.strip():
             raise RuntimeError("SANDBOX_CLEANUP_FAILED")

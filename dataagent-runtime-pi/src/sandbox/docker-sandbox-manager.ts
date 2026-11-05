@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 export interface SandboxConfig {
   runId: string;
   image: string;
-  cli: "docker" | "podman";
+  cli: "docker";
   uid: number;
   gid: number;
   lifetimeSeconds: number;
@@ -21,7 +21,7 @@ export class DockerSandboxManager {
   private closed = false;
   private closePromise?: Promise<void>;
 
-  constructor(private readonly config: SandboxConfig, private readonly onLifecycle: (state: "starting" | "closed") => void = () => {}) {
+  constructor(private readonly config: SandboxConfig) {
     this.containerName = "oda-sandbox-" + createHash("sha256").update(config.runId).digest("hex").slice(0, 24);
     if (!Number.isInteger(config.uid) || !Number.isInteger(config.gid) || config.uid < 0 || config.gid < 0) {
       throw new Error("Invalid sandbox UID/GID");
@@ -61,7 +61,6 @@ export class DockerSandboxManager {
     if (this.closed) throw new Error("SANDBOX_CLOSED");
     this.startPromise ??= (async () => {
       const c = this.config;
-      this.onLifecycle("starting");
       const args = ["run", "-d", "--rm", "--pull=never", "--name", this.containerName,
         "--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
         "--user", `${c.uid}:${c.gid}`,
@@ -136,9 +135,8 @@ export class DockerSandboxManager {
       // --rm may already have removed an expired container. Verify absence;
       // permission or daemon errors must not masquerade as successful cleanup.
       let output = "";
-      const status = await this.command(["ps", "-aq", "--filter", `name=^/?${this.containerName}$`], b => { output += b; });
+      const status = await this.command(["ps", "-aq", "--filter", `name=^/${this.containerName}$`], b => { output += b; });
       if (status !== 0 || output.trim()) throw new Error("SANDBOX_CLEANUP_FAILED");
     }
-    this.onLifecycle("closed");
   }
 }

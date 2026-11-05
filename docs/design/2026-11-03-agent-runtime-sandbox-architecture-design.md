@@ -42,9 +42,9 @@
 
 | 编号 | 决策项 | 拍板结论 |
 | :--- | :--- | :--- |
-| **SA-01** | 沙箱隔离与生命周期 | 采用 **单轮按需启动的 Docker 沙箱容器（`oda-sandbox`）**；本轮首次调沙箱工具时 `docker run -d`（`sleep <run_timeout>`），同轮多次工具调用通过 `docker exec` 复用，**本轮结束或卡片挂起时在 `finally` 中立即 `docker rm -f` 销毁**，不设跨轮次 `WARM_POOL`；**取消无隔离的宿主 `local` 回退模式**，本地开发与生产统一走 Docker/Podman 容器执行 |
+| **SA-01** | 沙箱隔离与生命周期 | 采用 **单轮按需启动的 Docker 沙箱容器（`oda-sandbox`）**；本轮首次调沙箱工具时 `docker run -d`（`sleep <run_timeout>`），同轮多次工具调用通过 `docker exec` 复用，**本轮结束或卡片挂起时在 `finally` 中立即 `docker rm -f` 销毁**，不设跨轮次 `WARM_POOL`；**取消无隔离的宿主 `local` 回退模式**，本地开发与生产统一走 Docker 容器执行 |
 | **SA-02** | 运行时引擎 | **只保留 Pi 引擎**，升级至 `@earendil-works/pi-coding-agent` SDK；下线并删除 `claude-agent-sdk`（`claude_code`）执行分支及每会话 `home/` 目录 |
-| **SA-03** | Runner 服务去留 | **砍掉独立的 `dataagent-sandbox-runner` 常驻服务与 `sandbox_task_main.py`**；由 `dataagent-backend`（`Pi Cell`）直接通过本地容器 CLI（`docker` / `podman`）管理 `oda-sandbox` 容器 |
+| **SA-03** | Runner 服务去留 | **砍掉独立的 `dataagent-sandbox-runner` 常驻服务与 `sandbox_task_main.py`**；由 `dataagent-backend`（`Pi Cell`）直接通过本地容器 CLI（`docker`）管理 `oda-sandbox` 容器 |
 | **SA-04** | 基础工具固定启用与沙箱执行 | **关闭 SDK 默认宿主执行实现，保留 `read/bash/edit/write` 等能力**；`bash / read / write / edit / ls / find / grep` 100% 路由进 `oda-sandbox` 容器内执行（不在宿主进程调用 `node:fs` 解析模型传入路径）；彻底删除 `boundary_policy` 正则检查 |
 | **SA-05** | 会话持久化与卡片续聊 | 工具串行执行；卡片产生后结束当前执行段、保存会话并释放资源；用户回答后在同一 Topic、同一任务下启动下一执行段，基于历史继续推理。保留计划/权限门控和任务预算，不实现工具批次断点补跑（见 3.4 节） |
 | **SA-06** | 大输出落盘、权限与配置瘦身 | 大输出自动保存到当前 Topic 的 `results/`，只读挂载为 `/mnt/results`，工具结果直接返回该路径。Agent 通过基础工具读取和处理文件；后端通过 `gosu` 初始化权限并降权；清理冗余配置 |
@@ -88,8 +88,8 @@
 #### 3.2.2 统一容器执行与移除无隔离 `local` 回退（解决 R3）
 - 提示词与运行环境变量仅向模型暴露容器内路径：工作目录 `/mnt/workspace`，结果目录 `/mnt/results`，技能根目录 `SKILLS_ROOT_DIR=/opt/skills`；`DATAAGENT_PYTHON_BIN` 指向沙箱镜像内实际 Python 可执行文件。技能脚本统一使用 `"$DATAAGENT_PYTHON_BIN" "${SKILLS_ROOT_DIR}/<skill-folder>/scripts/<name>.py" ...`，不得注入宿主 Python 路径。
 - 保留现有 `DATAAGENT_ENABLED_SKILL_ROOTS` 调用契约，其值仅包含本段启用技能的沙箱路径；同级技能仍从自身目录定位，不使用主技能专属锚点定位其它技能。
-- `bash / read / write / edit / ls / find / grep` 的参数直接通过 `docker exec`（当宿主机无 `docker` 时支持 `podman exec`）送入当前任务的 `oda-sandbox` 容器内执行，**绝不在 `Pi Cell` 宿主进程内调用 `node:fs` 解析模型传入路径**。
-- **不设宿主 `local` Bash 回退模式**：本地开发（macOS/Linux 启动 `uvicorn`）与容器化部署使用完全相同的 `oda-sandbox` 容器隔离路径；若容器运行时（Docker/Podman）不可用或镜像缺失，直接返回 `SANDBOX_UNAVAILABLE` 错误，绝不静默降级为在宿主机直接执行 `Bash`。
+- `bash / read / write / edit / ls / find / grep` 的参数直接通过 `docker exec`送入当前任务的 `oda-sandbox` 容器内执行，**绝不在 `Pi Cell` 宿主进程内调用 `node:fs` 解析模型传入路径**。
+- **不设宿主 `local` Bash 回退模式**：本地开发（macOS/Linux 启动 `uvicorn`）与容器化部署使用完全相同的 `oda-sandbox` 容器隔离路径；若容器运行时（Docker）不可用或镜像缺失，直接返回 `SANDBOX_UNAVAILABLE` 错误，绝不静默降级为在宿主机直接执行 `Bash`。
 
 #### 3.2.3 串行工具执行与业务门控保留（解决 R7）
 - **保持串行执行**：通过目标 SDK 版本验证支持的配置显式设为 `toolExecution = "sequential"`，确保同一轮内多个工具对 `/mnt/workspace` 文件修改、SQL 执行及卡片挂起的先后顺序完全确定。
@@ -198,7 +198,7 @@
    - **UID/GID 一致性**：`backend`（含 `Pi Cell`）与 `oda-sandbox`（`--user ${RUNTIME_UID}:${RUNTIME_GID}`）使用完全相同的 UID:GID 运行，`backend` 创建的工作区文件在沙箱容器内可读写，`results/` 文件通过独立只读挂载供基础工具读取，无需在业务代码中调用 `os.chown`。
 2. **宿主机挂载源路径发现（区分容器内部署与宿主机本地开发）**：
    - **容器内部署模式**（检测到 `/.dockerenv` 或显式容器环境）：`backend` 启动时通过 `docker inspect <hostname>` 读取自身容器 `/dataagent_runtime` 与 `/app/.claude/skills` 的宿主机 `Source` 路径，作为拉起 `oda-sandbox` 时的 bind-mount 源路径。
-   - **宿主机本地开发模式**（直接在宿主机运行 `uvicorn main:app`）：`backend` 与本地 Docker/Podman 守护进程处于同一宿主机文件系统，直接使用 `Path(dataagent_runtime_root).resolve()` 与 `Path(skills_root_dir).resolve()` 作为 bind-mount 源路径，不调用 `docker inspect <self>`。
+   - **宿主机本地开发模式**（直接在宿主机运行 `uvicorn main:app`）：`backend` 与本地 Docker 守护进程处于同一宿主机文件系统，直接使用 `Path(dataagent_runtime_root).resolve()` 与 `Path(skills_root_dir).resolve()` 作为 bind-mount 源路径，不调用 `docker inspect <self>`。
 
 ---
 
@@ -241,11 +241,25 @@
 
 The review identified gaps in segment completion and sandbox lifecycle accounting. The backend, Pi runtime and local infrastructure paths are affected; frontend contracts remain unchanged.
 
-- An explicit MCP `isError` response is a known result: persist it with `isError: true` under the existing `operation_status=done` contract before continuing. Transport failures keep the claimed operation unknown and must never be replayed. Approved calls reserve the first resumed model turn and emit paired tool events; this does not consume an extra model-turn budget.
-- Persist each segment's generated attachments before returning a parked task, merging by `rel_path` across segments. Accumulate numeric token usage across model turns and segments separately from elapsed/tool/turn budgets.
+- An explicit MCP `isError` response is a known result: persist it with `isError: true` under the existing `operation_status=done` contract before continuing. Transport failures keep the claimed operation unknown and must never be replayed. Approved tools belong to the existing approval turn, followed by the next model turn; no synthetic turn is created.
+- Persist the initial task workspace baseline in checkpoint state and collect attachments once at terminal completion. Accumulate numeric token usage across model turns and segments separately from elapsed/tool/turn budgets.
 - Card submission validates the current checkpoint before inserting the answer, returns conflict for missing/mismatched checkpoints, and queues the first accepted response immediately. Recovery polling covers crashes and responses racing the preceding segment's lease release.
-- Reading an existing result references that file rather than saving another copy. Line reads also support byte offsets for long single-line JSON, preserving exact raw payloads and a bounded preview. Small errors stay inline; large/partial Bash output remains durable.
-- Container mount discovery runs off the asyncio loop and caches successful inspection per CLI/container identity, including Podman detection. Inspection errors report SANDBOX_UNAVAILABLE. Lifecycle heartbeats mark sandbox creation intent and successful removal; backend cleanup runs only for outstanding intent, including abrupt Cell loss. Absence checks inspect exact container names for both CLIs.
+- Reading an existing result references that file rather than saving another copy. Line reads keep offset/limit; truncated single-line JSON is processed directly with bash/Python, preserving exact raw payloads. Small errors stay inline; large/partial Bash output remains durable.
+- Docker mount discovery is warmed once at startup before accepting requests, then cached for per-segment use. Inspection errors report SANDBOX_UNAVAILABLE. Backend cleanup runs only when Cell completion was not received; normal terminal and parked frames follow Node cleanup.
 - Delete superseded interaction wait loops and event sinks. Correct regression fixtures to exercise MCP folding directly and remove all temporary fixture directories. Local contributor guidance uses only Pi and documents the sandbox image build.
 
-Verification uses deterministic local provider/MCP fixtures, real MySQL/Redis and Docker, with no additional paid provider calls. Existing production-data/Podman-environment limitations remain explicit in the verification report and backlog.
+Verification uses deterministic local provider/MCP fixtures, real MySQL/Redis and Docker, with no additional paid provider calls. Production-data verification remains tracked in the backlog; sandbox execution now supports Docker only.
+
+
+### 2026-11-04 审阅后的实现收敛
+
+本次范围涉及 backend/Pi 协议、附件持久化与 Docker 部署；前端 API 与消息格式保持现有契约。
+
+1. 附件仅在任务终态更新助手消息。首段开始时的工作区快照写入既有 checkpoint state，后续段复用它，终态只做一次 diff。不在 parked 时保存半截 content、改写助手状态或合并附件。不能假定追问只发生在产物生成之前：通用 AskUserQuestion 可在任何工具之后执行，已有 HTTP fixture 验证先写文件再询问。
+2. 挂载发现保留成功缓存，在 backend 启动阶段、接单前同步预热，再启动 coordinator；每段同步构造配置，仅做缓存读取与路径映射。这样同时避免首次 inspect 阻塞运行中的事件循环和每段线程跳转。sandbox 仅支持已验证的 Docker，移除 Podman 选择、自动回退及容器标记；Redis 本地引导不受影响。
+3. 删除 sandbox_state/onLifecycle 协议状态。main.ts 只在 Cell.run 的 finally（含 sandbox.close）完成后发布终态或 run.parked，因此 backend 收到这些帧即认为 Cell 已完成清理。仅未收到完成帧的崩溃、超时、强制取消路径，在先终止 Cell 后进行兜底清理。
+4. read 仅保留 offset/limit 按行读取，不再提供 byteOffset/byteLimit。普通读取无常驻尾注；超出预览上限才引用源路径并提示按行缩小范围或用 bash/Python 处理单行大文件。read 不生成重复结果文件。
+5. 卡片持久化及鉴权作为一次同步操作整体移入线程，异步 HTTP handler 只负责随后立即入队。不能因已有其它 handler 仍做同步数据库访问，就把这些数据库访问放回事件循环。
+6. 批准后的工具归属发起批准的已有轮次，随后模型自然开启下一轮；删除预留轮次状态。Token 只在 Pi supervisor 中累计，通过内部 segment commit 参数一次传给 checkpoint 持久化；writer 只存事件。
+
+回退为本次修改前的 PR 提交，无表迁移。用无付费凭据的真实 HTTP/Pi/Docker/MySQL/Redis 流程，验证终态附件、跨段用量、异常清理和卡片冲突；保留先产出后追问、首次慢 inspect、卡片并发访问和批准操作传输中断用例。

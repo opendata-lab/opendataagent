@@ -13,6 +13,7 @@ import time
 import uuid
 import httpx
 import redis
+import signal
 
 ROOT = Path(__file__).resolve().parents[2]
 API = '/api/v1/nl2sql'
@@ -87,17 +88,23 @@ def main():
     request('POST', f'{AGENTS}/agents/{agent}/publish', json={'expected_revision': draft['revision']})
     coordination = redis.Redis(host='127.0.0.1', port=6379, db=int(os.environ.get('REDIS_DB', '0')))
     results = []
-    for scenario in ['CANCEL', 'CANCEL_BASH']:
+    for scenario in ['CANCEL', 'CANCEL_BASH', 'CRASH_BASH']:
         topic = request('POST', API+'/topics', json={'title': NAME+scenario, 'agent_id': agent})['topic_id']
         topics.append(topic)
         task = request('POST', API+'/tasks', json={'topic_id': topic, 'message_type': 'text',
             'message_content': 'SMOKE:'+scenario, 'execution_mode': 'auto', 'provider_id': NAME, 'model': 'smoke'})['task_id']
         until(lambda: any(x['scenario'] == scenario and x['state'] in {'running', 'finished'} for x in provider_state()))
         pids = until(lambda: cell_pids(topic))
-        containers = until(lambda: sandbox_ids(topic)) if scenario == 'CANCEL_BASH' else []
+        containers = until(lambda: sandbox_ids(topic)) if scenario != 'CANCEL' else []
         started = time.monotonic()
-        request('POST', f'{API}/tasks/{task}/cancel')
-        until(lambda: request('GET', f'{API}/tasks/{task}')['task_status'] == 'suspended')
+        crashed = scenario == 'CRASH_BASH'
+        if crashed:
+            for pid in pids: os.kill(pid, signal.SIGKILL)
+        else:
+            request('POST', f'{API}/tasks/{task}/cancel')
+        expected_status = 'error' if crashed else 'suspended'
+        terminal_event = 'run.failed' if crashed else 'run.cancelled'
+        until(lambda: request('GET', f'{API}/tasks/{task}')['task_status'] == expected_status)
         until(lambda: not cell_pids(topic))
         until(lambda: not sandbox_ids(topic))
         until(lambda: not coordination.exists('da:task:lease:'+task))
@@ -105,12 +112,12 @@ def main():
             until(lambda: any(x['scenario'] == scenario and x['state'] == 'disconnected' for x in provider_state()))
         elapsed = round(time.monotonic()-started, 2)
         message = request('GET', f'{API}/tasks/{task}/message')
-        assert message['status'] == 'suspended', message
+        assert message['status'] == expected_status, message
         before = records(task)
-        assert any(x['event_type'] == 'run.cancelled' for x in before), before
+        assert any(x['event_type'] == terminal_event for x in before), before
         with client.stream('GET', f'{API}/tasks/{task}/sdk-events/stream', timeout=5) as stream:
             stream.raise_for_status()
-            assert any('run.cancelled' in line for line in stream.iter_lines())
+            assert any(terminal_event in line for line in stream.iter_lines())
         time.sleep(1)
         assert len(records(task)) == len(before), 'Events continued after cancellation'
         assert not cell_pids(topic) and not sandbox_ids(topic)

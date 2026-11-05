@@ -1330,3 +1330,22 @@ def test_require_agent_profile_visibility_matrix_by_context(monkeypatch):
     # widget/门户匿名上下文（无 auth_user_id）→ 不可见。
     with pytest.raises(HTTPException):
         routes._require_agent_profile("agent_selected", context={"source": "widget"})
+
+
+def test_card_persistence_does_not_block_the_event_loop(monkeypatch):
+    import asyncio
+    import threading
+    from models.schemas import QuestionAnswerRequest
+    released = threading.Event()
+    worker_observed_progress = []
+    def persist(*args):
+        # Only the event loop releases this event. Running this function on the
+        # loop itself would stall until the timeout instead.
+        worker_observed_progress.append(released.wait(timeout=2))
+        return 'recorded', False
+    monkeypatch.setattr(routes, '_record_question_answer', persist)
+    async def run():
+        asyncio.get_running_loop().call_later(.05, released.set)
+        return await routes.api_submit_question_answer('task', QuestionAnswerRequest(request_id='q', answers=[]), None)
+    assert asyncio.run(run()) == 'recorded'
+    assert worker_observed_progress == [True]

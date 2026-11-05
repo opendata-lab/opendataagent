@@ -14,7 +14,7 @@ from config import get_settings
 from core.task_control import PARKED_TASK_STATUSES, CancelReason
 from core.task_submission_service import compute_next_run_at, current_utc_naive, submit_message_task
 from core.task_executor import TaskExecutionInput, execute_task_stream
-from core.topic_files import MAX_RUN_ATTACHMENTS, diff_generated_files, snapshot_workspace_state
+from core.topic_files import diff_generated_files, snapshot_workspace_state
 from core.topic_task_store import TopicTaskStore, get_topic_task_store
 
 logger = logging.getLogger(__name__)
@@ -197,13 +197,18 @@ class TaskCoordinator:
                 self.store.ensure_assistant_message(topic_id=topic_id, task_id=task_id, status="running")
 
                 history = self._build_history(topic_id=topic_id, task_id=task_id)
-                workspace_before = self._snapshot_workspace(topic_id)
+                saved = self.store.get_session_checkpoint(topic_id)
+                baseline = (saved["state"].get("workspace_before")
+                    if saved and saved["task_id"] == task_id else None)
+                workspace_before = ({name: tuple(meta) for name, meta in baseline.items()}
+                    if baseline is not None else self._snapshot_workspace(topic_id))
                 result = await execute_task_stream(
                     TaskExecutionInput(
                         task_id=task_id,
                         topic_id=topic_id,
                         question=str(task.get("prompt") or ""),
                         history=history,
+                        workspace_before=workspace_before,
                         resume_session_id=resume_session_id,
                         provider_id=str(task.get("provider_id") or ""),
                         model=str(task.get("model") or ""),
@@ -234,17 +239,7 @@ class TaskCoordinator:
                     bool(result.session_id),
                     bool(result.usage),
                 )
-                previous_message = self.store.get_assistant_message(task_id) or {}
-                attachments_by_path = {item["rel_path"]: item for item in previous_message.get("attachments", [])}
-                attachments_by_path.update({item["rel_path"]: item for item in self._collect_generated_files(topic_id, task_id, workspace_before)})
-                attachments = list(attachments_by_path.values())[-MAX_RUN_ATTACHMENTS:]
-                parked = result.task_status == "parked"
-                self.store.update_assistant_message(
-                    topic_id=topic_id, task_id=task_id,
-                    status=str((self.store.get_task(task_id) or {}).get("task_status")) if parked else result.task_status,
-                    content=result.content, usage=result.usage, error=result.error, attachments=attachments,
-                )
-                if parked:
+                if result.task_status == "parked":
                     logger.info(
                         "task.run.left_parked task_id=%s topic_id=%s result_status=%s error_code=%s",
                         task_id,
@@ -253,6 +248,11 @@ class TaskCoordinator:
                         str((result.error or {}).get("code") or ""),
                     )
                     return
+                attachments = self._collect_generated_files(topic_id, task_id, workspace_before)
+                self.store.update_assistant_message(
+                    topic_id=topic_id, task_id=task_id, status=result.task_status,
+                    content=result.content, usage=result.usage, error=result.error, attachments=attachments,
+                )
                 logger.info(
                     "task.run.message_updated task_id=%s topic_id=%s status=%s content_len=%s attachments=%s error_code=%s",
                     task_id,
