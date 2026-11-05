@@ -39,6 +39,11 @@
 - **现状**（2026-11-04 核实）：智能体只能整体绑定 MCP 服务（`mcp_server_ids`），运行时注册该服务返回的全部工具，配置页看不到具体有哪些工具。`da_agent_profile.allowed_tools_json` 是旧 Claude SDK 时代的工具名列表（Skill/Bash/Read 等），Pi 运行时已不读取。Pi 自带的 MCP 探测入口（`dist/src/mcp/probe-cli.js`，后端 `resolve_mcp_probe_command`）可以列出服务的工具。
 - **要做**：在智能体配置里按服务列出 MCP 工具（名称、说明、只读/写入/破坏性注解），允许只勾选部分工具；保存为智能体快照的一部分，运行时只注册被允许的工具，并对未允许的调用明确拒绝。同时决定旧 `allowed_tools_json` 是复用还是删除，并与上方“MCP 工具名命名空间”一起设计（同名工具需按服务区分）。涉及 schema、后端接口、前端配置页与 Pi 运行时，属中大型变更，先写设计与计划。来源：用户 2026-11-04 提出。
 
+### Skill 导出包含 Python 缓存
+
+- **现状**（2026-11-04 真实导出核实）：`export_skill_as_zip` 打包技能目录下全部文件，包含运行后生成的 `scripts/__pycache__/*.pyc`；导入侧 `_is_ignored_zip_member` 只忽略 `__MACOSX` 和 `.DS_Store`，所以导出再导入会把缓存一并带入。其余文件与磁盘逐字节一致，功能正常，影响只是包里多了无用文件。
+- **要做**：导出与导入统一跳过 `__pycache__/` 和 `*.pyc`，补一条往返测试。来源：PR #8 合并前的导出验证。
+
 ### 系统提示落库的后续
 
 - 管理端查看页面（接口 `GET /api/v1/dataagent/tasks/{task_id}/system-prompt` 已有）。
