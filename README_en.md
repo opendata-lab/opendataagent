@@ -106,7 +106,7 @@ Register the site and its allowed origins under "Widget access" in the admin con
 
 ```bash
 python3.13 -m venv dataagent-backend/.venv-py313
-dataagent-backend/.venv-py313/bin/pip install -r dataagent-backend/requirements.txt
+dataagent-backend/.venv-py313/bin/pip install -r dataagent-backend/requirements.txt -r dataagent-backend/requirements-sandbox.txt
 nvm use
 npm --prefix dataagent-runtime-pi ci && npm --prefix dataagent-runtime-pi run build
 npm --prefix dataagent-frontend ci

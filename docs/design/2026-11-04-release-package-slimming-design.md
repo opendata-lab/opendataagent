@@ -52,13 +52,13 @@
 - 移除 `create-offline-package.sh` 中的 `docker:27.5.1-cli` 打包项。
 - 各服务统一采用 Docker 原生 `json-file` 日志驱动配置（如 `max-size: "50m"`, `max-file: "5"`），零侵入且不占用额外内存与镜像体积。
 
-### 4. 沙箱镜像与后端依赖精简，结合运行时动态 Pip 安装
+### 4. 沙箱镜像与后端依赖精简
 
 - `oda-sandbox` 原先在 `requirements-sandbox.txt` 中预装了大量重型科学计算库：`duckdb` (100MB+)、`matplotlib` (50MB+)、`reportlab`、`pillow`、`pypdf`、`python-docx`。
 - `dataagent-backend/requirements.txt` 中也冗余声明了未被后端直接引用的 `jieba`、`numpy`、`pandas`、`openpyxl`。
-- DataAgent 已原生支持通过 `PIP_INDEX_URL` 在沙箱运行时按需执行 `pip install`，无须将所有偶发依赖打入基础镜像。
+- 更正（2026-11-05）：默认情况下沙箱运行时**不能** `pip install`。`PIP_INDEX_URL` 只是 Dockerfile 的构建参数；执行段容器默认以 `--network=none` 运行，无法联网安装。只有部署方显式开启沙箱网络的环境才可能在运行时安装（见未合并分支 `sandbox-network-option` 的 `DATAAGENT_SANDBOX_NETWORK`，默认仍为 none）。因此内置技能运行所需的库必须写进 `requirements-sandbox.txt` 打入镜像，不能依赖运行时安装；本次移除的 `duckdb`、`matplotlib`、`python-docx`、`pypdf`、`reportlab`、`Pillow`、`jieba` 经核对没有任何技能、脚本或提示词引用，移除本身是安全的。新增技能依赖时同步修改该文件。
 - 精简策略：
-  - 后端 `requirements.txt` 仅保留服务端核心 Web 与调度依赖，剔除 `jieba`、`numpy`、`pandas`、`openpyxl`。
+  - 后端 `requirements.txt` 仅保留服务端核心 Web 与调度依赖，剔除 `jieba`、`numpy`、`pandas`、`openpyxl`。技能脚本的测试用宿主 Python 运行内置技能，因此 CI 的 python 作业与本地开发环境同时安装 `requirements-sandbox.txt`（2026-11-05 修正：只装后端依赖导致 `test_report_generation_scripts.py` 7 项失败）。
   - 沙箱 `requirements-sandbox.txt` 仅保留内置技能 `generate_report.py` 开箱即用的 `pandas` 与 `openpyxl`，移除其余重型库。
   - `Redis:7.2-alpine` 作为异步任务协调的核心依赖持续保留。
 
