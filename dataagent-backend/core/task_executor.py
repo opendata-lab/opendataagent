@@ -35,14 +35,12 @@ class TaskExecutionInput:
     Fields:
         task_id / topic_id: identity of this run and its conversation topic.
         question: the user prompt for this run.
-        history: prior turns passed to the model as context.
-        resume_session_id: SDK session id to resume, or ``None`` for a fresh run.
+        history: prior turns, used only when the topic has no session checkpoint.
         provider_id / model: selected runtime provider and model id.
         database_hint: optional default schema/database for SQL tools.
         debug: enable verbose runtime diagnostics.
-        timeout_seconds: legacy submission-time budget retained for recovery
-            heuristics and compatibility; the SDK message loop is not wrapped in
-            this value while confirmation/input waits are parked.
+        timeout_seconds: submission-time total budget; waits on cards are not
+            counted, and elapsed time accumulates across execution segments.
         sql_read_timeout_seconds: per read-query budget exposed to skill SQL tools.
         sql_write_timeout_seconds: per write-statement budget.
         execution_mode: ``interactive`` or ``background``/``auto`` timeout tier.
@@ -50,13 +48,14 @@ class TaskExecutionInput:
         permission_mode: write/high-risk confirmation policy for this run.
         runtime_limits: effective control-plane budgets carried through the
             internal sandbox protocol; public requests cannot set this field.
+        workspace_before: workspace snapshot taken when the task first started,
+            so attachments are diffed across all of its segments.
     """
 
     task_id: str
     topic_id: str
     question: str
     history: list[dict[str, str]]
-    resume_session_id: str | None
     provider_id: str
     model: str
     database_hint: str | None

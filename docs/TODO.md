@@ -78,6 +78,20 @@
 - 2026-11-03 改造前再验仍为相同两项：全量 182/184，通过定向重跑 channel_flush，Bash 2 秒仍失败，详见[构建验证报告](reports/2026-11-03-ci-build-optimization-verification.md)。Pi 的 Bash 2 秒时序用例在本机全量与单独运行均超时；来源仓库未修改的 HEAD 副本同样失败，保留后续稳定性治理。另一次并发全量中 channel_flush 的负向控制用例未发生预期截断，重跑通过；需使该测试不依赖机器调度时序。来源：opendataworks `docs/reports/2026-10-27-dataagent-opendataworks-decoupling-verification.md`。
 - 历史缺口（2026-10-27）：当时未测 child-container/技能卷。2026-11-03 新版拓扑已完成本地真实 backend 镜像、技能卷及工具 sandbox 演练；真实生产 provider/MCP 验收仍由上方生产拓扑待办跟踪。
 
+### PR #5 二次评审发现（2026-11-04）
+
+- **失败段不保存会话快照**：`execute_pi_run` 只在 `run.completed`／`run.parked` 时调用 `commit_session_segment`。失败、超时或截断的执行段不写快照，下一条消息从更早的快照续聊，并忽略 `history`。界面能看到失败轮的问题和工具结果，模型却看不到。要做：决定失败段是否追加一条只含用户问题和失败摘要的条目，或在下一段的提示里说明上一轮失败；补跨段回归测试。来源：本次 PR 评审，关联[设计](design/2026-11-03-agent-runtime-sandbox-architecture-design.md) 3.4。
+- **协调器在事件循环里同步访问 MySQL**：`task_coordinator._run_task` 中的 `mark_task_running`、`ensure_assistant_message`、`get_session_checkpoint`、`update_assistant_message`、`finish_task` 以及 `_heartbeat_tick` 的 `heartbeat_task` 都直接在事件循环上执行。本次只把每帧都会触发的取消检查改成按间隔轮询并放进线程。要做：把其余调用整体放进 `asyncio.to_thread`，并在并发任务下验证 SSE 不卡顿。来源：本次 PR 评审。
+- **失败码直接使用异常文本**：`pi_runtime.execute_pi_run` 的兜底分支用 `str(exc)` 作为 `error_code`，像 `Stale session checkpoint` 这样的消息也会被当成错误码落库。要做：只保留已知的大写错误码（`CELL_LOSS`、`PI_RUN_TIMEOUT` 等），其余统一为 `PI_EXECUTION_ERROR`，原文放进 `message`；同步检查前端对错误码的展示。来源：本次 PR 评审。
+- **Pi 入口路径有两个配置来源**：`resolve_cell_command` 先读 settings，再读 `os.environ`。pydantic settings 已经读取同名环境变量，第二层兜底多余，还会让开发机 `.env` 覆盖测试中设置的环境变量（本次已把对应测试改为显式传入配置）。要做：只保留 settings 一个来源。来源：本次 PR 评审。
+
+- **沙箱输出把 stderr 合并进 stdout 结果**：`DockerSandboxManager.command` 把 stdout 和 stderr 交给同一个 `onData`。技能脚本输出 JSON 时，stderr 上的一条警告就会让 `isRenderableStructuredOutput` 判定失败，图表无法渲染。要做：分开收集 stderr，结构化判定只看 stdout，同时保持模型看到的错误信息不变。来源：本次 Gemini 评审（已核实）。
+- **结果写入失败时的提示与清理**：`sandbox-tools.ts` 在 `writeError` 时仍计算 `saved=true`，提示“Output saved”后又报 `RESULT_STORAGE_FAILED`；未落盘分支的 `fs.unlink` 没有保护。执行段已经因此失败，影响只是提示混乱。要做：`saved` 以 `!writeError` 为前提，`unlink` 失败只记日志。来源：本次 Gemini 评审。
+- **批准后的 MCP 写操作没有心跳**：`Cell.run` 在进入 SDK 前直接执行 `resume_operation`，不经过工具心跳计时器。默认写超时 60s 小于 idle 300s，目前不会触发；如果调大写超时，会以 `PI_RUN_IDLE_TIMEOUT` 中断并留下 `OPERATION_RESULT_UNKNOWN`。要做：执行期间发心跳。来源：本次 Gemini 评审。
+- **grep 的 limit 按文件计数**：`FILE_TOOL` 把 `limit` 映射为 `rg --max-count`，那是每个文件的上限，不是总条数。要做：在 Python 侧截断总输出行数。来源：本次 Gemini 评审。
+- **容器名在两处计算**：`oda-sandbox-<sha256(runId)[:24]>` 同时写在 `sandbox_config.remove_segment_sandbox` 和 `docker-sandbox-manager.ts` 里，改一边就会让后端兜底清理找不到容器。要做：由后端计算后放进 `SandboxConfig.containerName`，Pi 只校验格式。来源：本次 Gemini 评审。
+- **治理设置里的失效字段**：`protect_tail_turns`、`prune_high_watermark_ratio`、`prune_target_ratio` 仍从 `context_governance` 下发，但旧 context-pruner 删除后 Pi 已不再读取（压缩由 SDK 按模型上下文窗口触发）。本次已让 `max_context_tokens` 在模型未配置窗口时生效。要做：删除这三个字段及其配置项，同步 `frames.ts` 和设置页面。来源：本次评审核实 Gemini 第 8 项时发现。
+
 ### 实施验证发现（2026-11-03）
 
 - **计划模式的 Bash 文件写入边界（2026-11-04 核实）**：当前 beforeToolCall 拦截 write/edit 与 MCP 写操作，但普通 Bash 仍可写 workspace；DATAAGENT_PLAN_STATE=pending 不等于文件系统只读。需要单独设计并验证执行层只读策略，或明确计划模式保证范围，不能声称已经按 output 路径全面禁写。本次仅收敛运行时实现，不扩展权限策略。来源：核对用户简化建议；见[收敛报告](reports/2026-11-04-agent-runtime-simplification.md)。

@@ -69,3 +69,25 @@ async def test_cleanup_reports_an_unavailable_daemon(monkeypatch):
     monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
     with pytest.raises(RuntimeError, match='SANDBOX_CLEANUP_FAILED'):
         await sandbox.remove_segment_sandbox({'cli': 'docker', 'runId': 'review'})
+
+
+def test_sandbox_config_carries_resource_limits(monkeypatch, tmp_path):
+    monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/usr/bin/docker')
+    monkeypatch.setattr(sandbox, 'backend_mounts', lambda: [])
+    cfg = SimpleNamespace(dataagent_sandbox_image='img', dataagent_sandbox_memory='1g',
+                          dataagent_sandbox_cpus='1.5', dataagent_sandbox_pids_limit=256)
+    config, _ = sandbox.build_sandbox_config(cfg, run_id='r', workspace=tmp_path / 'topic' / 'workspace',
+                                             enabled_roots={}, lifetime=60, env={})
+    assert (config['memory'], config['cpus'], config['pidsLimit']) == ('1g', '1.5', 256)
+
+
+def test_in_container_path_without_host_mount_is_refused(monkeypatch, tmp_path):
+    monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/usr/bin/docker')
+    monkeypatch.setattr(sandbox, '_running_in_container', lambda: True)
+    # A tmpfs has no host Source and must never be used as a bind source.
+    monkeypatch.setattr(sandbox, 'backend_mounts', lambda: [{'Source': '', 'Destination': '/'}])
+    cfg = SimpleNamespace(dataagent_sandbox_image='img', dataagent_sandbox_memory='1g',
+                          dataagent_sandbox_cpus='1', dataagent_sandbox_pids_limit=64)
+    with pytest.raises(ValueError, match='No daemon-visible mount source'):
+        sandbox.build_sandbox_config(cfg, run_id='r', workspace=tmp_path / 'workspace',
+                                     enabled_roots={}, lifetime=60, env={})

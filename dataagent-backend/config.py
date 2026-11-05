@@ -111,12 +111,15 @@ class Settings(BaseSettings):
     # processes read the shared volume at /dataagent_runtime; local execution
     # leaves this empty and falls back to dataagent_host_root.
     dataagent_runtime_root: str = ""
-    # Host-visible persistent root used by the sandbox runner when asking the
-    # host Docker daemon to bind-mount topic subdirectories into child
-    # containers.
+    # Host-visible persistent root used when asking the host Docker daemon to
+    # bind-mount topic subdirectories into sandbox containers.
     dataagent_host_root: str = "/dataagent_runtime"
     dataagent_sandbox_image: str = "oda-sandbox:latest"
-    dataagent_sandbox_backend: Literal["docker"] = "docker"
+    # Per-segment container ceilings so one runaway tool command (fork bomb,
+    # huge DataFrame) cannot starve the backend host. Swap equals memory.
+    dataagent_sandbox_memory: str = "2g"
+    dataagent_sandbox_cpus: str = "2"
+    dataagent_sandbox_pids_limit: int = 512
 
     # ---- 运行策略 ----
     max_few_shot_examples: int = 5

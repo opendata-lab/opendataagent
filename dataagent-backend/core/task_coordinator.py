@@ -120,7 +120,7 @@ class TaskCoordinator:
     async def is_cancel_requested(self, task_id: str) -> bool:
         if self._redis is not None and await self._redis.exists(self._cancel_key(task_id)):
             return True
-        return self.store.is_task_cancel_requested(task_id)
+        return await asyncio.to_thread(self.store.is_task_cancel_requested, task_id)
 
     async def _queue_loop(self) -> None:
         while not self._closing:
@@ -180,15 +180,13 @@ class TaskCoordinator:
                     return
 
                 topic_id = str(task.get("topic_id") or "")
-                resume_session_id = self.store.get_resumable_conversation_id(topic_id)
                 logger.info(
-                    "task.run.start task_id=%s topic_id=%s provider=%s model=%s agent_id=%s resume_session=%s timeout=%s sql_read_timeout=%s",
+                    "task.run.start task_id=%s topic_id=%s provider=%s model=%s agent_id=%s timeout=%s sql_read_timeout=%s",
                     task_id,
                     topic_id,
                     str(task.get("provider_id") or ""),
                     str(task.get("model") or ""),
                     str(task.get("agent_id") or ""),
-                    bool(resume_session_id),
                     int(task.get("timeout_seconds") or 0),
                     int(task.get("sql_read_timeout_seconds") or 0),
                 )
@@ -209,7 +207,6 @@ class TaskCoordinator:
                         question=str(task.get("prompt") or ""),
                         history=history,
                         workspace_before=workspace_before,
-                        resume_session_id=resume_session_id,
                         provider_id=str(task.get("provider_id") or ""),
                         model=str(task.get("model") or ""),
                         database_hint=str(task.get("database_hint") or "") or None,

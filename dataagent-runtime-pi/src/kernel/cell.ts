@@ -156,7 +156,9 @@ export class Cell {
         init.model.api_format,
         init.governance_settings?.cache_retention,
         init.model.max_output_tokens,
-        init.model.context_window
+        // frames.ts contract: an unconfigured model window uses governance's
+        // max_context_tokens, so SDK compaction triggers before overflow.
+        init.model.context_window ?? init.governance_settings?.max_context_tokens
       );
       if (!init.sandbox || !init.results_dir) throw new Error("Protocol v2 requires sandbox and results_dir");
       sandbox = new DockerSandboxManager({ ...init.sandbox, env: { ...init.sandbox.env, DATAAGENT_PLAN_STATE: planApproved || !planMode ? "approved" : "pending" } });
@@ -301,6 +303,8 @@ export class Cell {
             return {
               content: [{ type: "text" as const, text: compactText }, ...preservedBlocks],
               details: foldedDetails,
+              // Folding shrinks the text; it must not turn a failed call into a success.
+              ...(toolResult.isError ? { isError: true } : {}),
             };
           } catch (err) {
             segmentError = `RESULT_STORAGE_FAILED: ${String(err)}`;
@@ -314,6 +318,10 @@ export class Cell {
           toolCalls += 1;
           if (toolCalls > init.limits.max_tool_calls) {
             limitDenial = `已达到本次任务工具调用上限 ${init.limits.max_tool_calls}`;
+            // Close the started tool block, as the plan-mode denial below does.
+            emit(sm.createEvent("tool.denied", { turn_id: normalizer.turnId,
+              tool_call_id: String(context.toolCall?.id ?? ""),
+              tool_name: String(context.toolCall?.name ?? ""), reason: limitDenial }));
             return { block: true, reason: limitDenial, terminate: true };
           }
           // Second line of defence. The tools enforce the boundary themselves,
@@ -400,7 +408,7 @@ export class Cell {
           const tool: any = mcpBridge.tools.find((tool: any) => tool.name === operation.payload.tool_name &&
             tool.mcpServerName === operation.payload.server_name && tool.mcpServerIdentity === operation.payload.server_identity);
           if (!tool) throw new Error("Approved MCP tool is no longer available");
-          toolCalls += 1;
+          // Already counted when the call parked for approval in the previous segment.
           const turn_id = normalizer.turnId;
           emit(sm.createEvent("tool.started", { turn_id, tool_call_id: operation.request_id,
             tool_name: tool.name, input: operation.payload.arguments }));
@@ -432,14 +440,14 @@ export class Cell {
       await sdk.session.prompt(prompt, { expandPromptTemplates: false });
       const checkpoint = { header: sdk.manager.getHeader(), entries: sdk.manager.getEntries(), leaf_id: sdk.manager.getLeafId() };
       if (Buffer.byteLength(JSON.stringify(checkpoint)) > 8 * 1024 * 1024) throw new Error("SESSION_SNAPSHOT_TOO_LARGE");
-      if (parked) return { terminal_status: "parked", last_sequence: sm.lastSequence,
-        checkpoint, interaction: parked, tool_calls: toolCalls, turns: turnCount };
-      if (segmentError) throw new Error(segmentError);
-
+      // Cancel wins over a card raised in the same segment: the user stopped the task.
       if (this.cancelled || agent.signal?.aborted) {
         emit(sm.createEvent("run.cancelled", { reason: "cancelled by control plane" }));
         return { terminal_status: "cancelled", last_sequence: sm.lastSequence };
       }
+      if (parked) return { terminal_status: "parked", last_sequence: sm.lastSequence,
+        checkpoint, interaction: parked, tool_calls: toolCalls, turns: turnCount };
+      if (segmentError) throw new Error(segmentError);
       if (limitDenial) {
         emit(sm.createEvent("run.failed", { error_code: "PI_LIMIT_EXCEEDED", message: limitDenial }));
         return { terminal_status: "failed", last_sequence: sm.lastSequence, error: limitDenial };
@@ -486,7 +494,10 @@ export class Cell {
       }
       this.agent = null;
       sdk?.session.dispose();
-      await sandbox?.close();
+      // A failed sandbox cleanup must still propagate (the backend then removes
+      // the container itself), but never strand MCP transports or stdio children.
+      try { await sandbox?.close(); }
+      finally { await mcpBridge?.close(); mcpBridge = null; }
       // Whatever was never consumed goes now, on every exit path — a run that
       // failed or was cancelled mid-tool would otherwise leave results behind.
       if (uiResults.unconsumed > 0) {
@@ -495,9 +506,6 @@ export class Cell {
         logDiagnostic(`ui result registry: ${uiResults.unconsumed} unconsumed copy/copies`);
       }
       uiResults.clear();
-      if (mcpBridge) {
-        await mcpBridge.close();
-      }
     }
   }
 }

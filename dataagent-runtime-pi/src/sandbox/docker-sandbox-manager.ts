@@ -8,6 +8,9 @@ export interface SandboxConfig {
   uid: number;
   gid: number;
   lifetimeSeconds: number;
+  memory: string;
+  cpus: string;
+  pidsLimit: number;
   workspaceSource: string;
   resultsSource: string;
   skills: Array<{ source: string; folder: string }>;
@@ -23,11 +26,16 @@ export class DockerSandboxManager {
 
   constructor(private readonly config: SandboxConfig) {
     this.containerName = "oda-sandbox-" + createHash("sha256").update(config.runId).digest("hex").slice(0, 24);
-    if (!Number.isInteger(config.uid) || !Number.isInteger(config.gid) || config.uid < 0 || config.gid < 0) {
+    // Root in the sandbox would own files on the bind-mounted host workspace.
+    if (!Number.isInteger(config.uid) || !Number.isInteger(config.gid) || config.uid <= 0 || config.gid <= 0) {
       throw new Error("Invalid sandbox UID/GID");
     }
     if (!Number.isFinite(config.lifetimeSeconds) || config.lifetimeSeconds <= 0) {
       throw new Error("Invalid sandbox lifetime");
+    }
+    if (!/^\d+[bkmg]?$/i.test(config.memory) || !/^\d+(\.\d+)?$/.test(config.cpus) ||
+      !Number.isInteger(config.pidsLimit) || config.pidsLimit <= 0) {
+      throw new Error("Invalid sandbox resource limits");
     }
     for (const skill of config.skills) {
       if (!/^[\w-]+$/.test(skill.folder)) throw new Error("Invalid skill folder");
@@ -63,6 +71,7 @@ export class DockerSandboxManager {
       const c = this.config;
       const args = ["run", "-d", "--rm", "--pull=never", "--name", this.containerName,
         "--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+        `--memory=${c.memory}`, `--memory-swap=${c.memory}`, `--cpus=${c.cpus}`, `--pids-limit=${c.pidsLimit}`,
         "--user", `${c.uid}:${c.gid}`,
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777", "--workdir", "/mnt/workspace",
         "--mount", `type=bind,src=${c.workspaceSource},dst=/mnt/workspace`,

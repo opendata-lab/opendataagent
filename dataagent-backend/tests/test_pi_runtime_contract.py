@@ -16,6 +16,7 @@ import json
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -282,6 +283,35 @@ async def test_cancel_flag_sends_run_cancel_frame(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_cancel_check_is_throttled_not_per_frame(tmp_path: Path):
+    """A streaming reply must not trigger one cancel lookup per frame."""
+    writer = _RecordingWriter()
+    cell = _stub_cell(
+        """
+        read()
+        event(1, "run.started")
+        for i in range(500):
+            event(i + 2, "content.delta", {"delta": "x"})
+        event(502, "run.completed")
+        """
+    )
+    calls = 0
+
+    async def _cancelled() -> None:
+        nonlocal calls
+        calls += 1
+        return None
+
+    outcome = await execute_pi_run(
+        _context(tmp_path), writer=writer, cell_command=cell, cancel_reason=_cancelled
+    )
+
+    assert outcome.terminal_status == "success"
+    assert outcome.answer == "x" * 500
+    assert 1 <= calls <= 5, f"cancel polled {calls} times for 502 frames"
+
+
+@pytest.mark.asyncio
 async def test_child_is_always_reaped(tmp_path: Path):
     """Even a Cell that settles but refuses to exit must not survive the run."""
     writer = _RecordingWriter()
@@ -341,12 +371,13 @@ async def test_runtime_env_reaches_the_child(tmp_path: Path):
     assert outcome.terminal_status == "success"
 
 
-def test_missing_cell_entrypoint_reports_actionable_error(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("DATAAGENT_RUNTIME_PI_DIR", str(tmp_path / "nonexistent"))
-    monkeypatch.setenv("DATAAGENT_NODE_BIN", sys.executable)
+def test_missing_cell_entrypoint_reports_actionable_error(tmp_path: Path):
+    # Explicit settings: a developer .env must not mask the missing entrypoint.
+    cfg = SimpleNamespace(dataagent_node_bin=sys.executable,
+                          dataagent_runtime_pi_dir=str(tmp_path / "nonexistent"))
 
     with pytest.raises(PiRuntimeUnavailable, match="Pi Cell 入口不存在"):
-        resolve_cell_command()
+        resolve_cell_command(cfg)
 
 
 @pytest.mark.asyncio
@@ -383,6 +414,7 @@ async def test_cancel_is_bounded_when_the_cell_ignores_it(tmp_path: Path):
 
     assert outcome.terminal_status == "cancelled", "an ignored cancel is still a cancellation"
     assert elapsed < 20, f"cancel took {elapsed:.1f}s; it must be bounded by the grace period"
+    assert writer.events[-1]["type"] == "run.cancelled", "grace expiry must still record a terminal event"
 
 
 @pytest.mark.asyncio
@@ -463,3 +495,54 @@ event(3, "run.completed")
     assert result.usage['input_tokens'] == 30
     assert result.usage['output_tokens'] == 5
     assert result.usage['cost']['total'] == pytest.approx(0.3)
+
+
+@pytest.mark.asyncio
+async def test_cancel_racing_segment_commit_is_reported_as_cancel(tmp_path: Path):
+    """The commit refuses once cancel_requested_at is set; that is the user's cancel."""
+    writer = _RecordingWriter()
+    cell = _stub_cell(
+        """
+        read()
+        event(1, "run.completed")
+        """
+    )
+    polls = 0
+
+    async def _cancelled():
+        nonlocal polls
+        polls += 1
+        return None if polls == 1 else "user_cancel"
+
+    async def refuse(*_):
+        raise ValueError("Session task is no longer running")
+
+    outcome = await execute_pi_run(_context(tmp_path), writer=writer, cell_command=cell,
+                                   cancel_reason=_cancelled, segment_handler=refuse)
+
+    assert outcome.terminal_status == "cancelled"
+    assert writer.events[-1]["type"] == "run.cancelled"
+
+
+@pytest.mark.asyncio
+async def test_killed_cell_is_lost_even_if_a_grandchild_holds_stdout(tmp_path: Path):
+    """Linux CI: an orphaned docker exec kept the stdout socket open, so EOF never came."""
+    writer = _RecordingWriter()
+    cell = _stub_cell(
+        """
+        import os, signal, subprocess
+        read()
+        event(1, "run.started")
+        subprocess.Popen(["sleep", "30"], stdout=sys.stdout, stderr=subprocess.DEVNULL)
+        os.kill(os.getpid(), signal.SIGKILL)
+        """
+    )
+    started = asyncio.get_running_loop().time()
+    outcome = await execute_pi_run(
+        _context(tmp_path, total_timeout_seconds=60, idle_timeout_seconds=0), writer=writer, cell_command=cell
+    )
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert outcome.terminal_status == "failed"
+    assert outcome.error_code == "CELL_LOSS"
+    assert elapsed < 10, f"loss detected after {elapsed:.1f}s"

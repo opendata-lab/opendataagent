@@ -36,7 +36,7 @@ def setup(monkeypatch,tmp_path):
     monkeypatch.setattr(executor,'_build_mcp_servers',servers)
     monkeypatch.setattr(executor,'build_sandbox_config',lambda cfg,**kw:({'runId':kw['run_id']},tmp_path/'results'))
     params=TaskExecutionInput(task_id='task-test',topic_id='topic-test',question='hello',history=[{'role':'user','content':'old'}],
-        resume_session_id=None,provider_id='local-test',model='stub',database_hint=None,execution_mode='auto',
+        provider_id='local-test',model='stub',database_hint=None,execution_mode='auto',
         agent_snapshot={'agent_id':'agent_default','name':'Test','skill_folders':[],'mcp_server_ids':[]},auth_user_id='local:tester')
     return calls,store,params
 

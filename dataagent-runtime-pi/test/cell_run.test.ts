@@ -732,7 +732,11 @@ for (const count of [2, 3]) {
     const successes = events.filter((event) => event.type === "tool.completed" && !event.payload.is_error);
     assert.equal(successes.length, 2);
     assert.equal(result.terminal_status, count === 2 ? "success" : "failed");
-    if (count > 2) assert.equal(events.at(-1)?.payload.error_code, "PI_LIMIT_EXCEEDED");
+    if (count > 2) {
+      assert.equal(events.at(-1)?.payload.error_code, "PI_LIMIT_EXCEEDED");
+      // The over-budget call is closed for the UI instead of left running.
+      assert.equal(events.filter((event) => event.type === "tool.denied").length, 1);
+    }
   });
 }
 
@@ -780,4 +784,18 @@ test("large structured bash output stays whole for UI with bounded model context
   assert.match(modelText, /Output saved:/);
   assert.ok(Buffer.byteLength(modelText) < 17 * 1024);
   assert.equal(modelText.includes('"id": 1999'), false);
+});
+
+test("unconfigured model context window falls back to governance max_context_tokens", async (t) => {
+  const root = workspace(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const windows: unknown[] = [];
+  const base = textStreamFactory("ok");
+  const capture = ((...args: unknown[]) => { windows.push(args[5]); return (base as any)(...args); }) as typeof base;
+  const init = initPayload(root);
+  delete (init.model as { context_window?: number }).context_window;
+  init.governance_settings = { ...init.governance_settings, max_context_tokens: 64_000 };
+  await runCell(init, capture);
+  init.model = { ...init.model, context_window: 128_000 };
+  await runCell(init, capture);
+  assert.deepEqual(windows, [64_000, 128_000]);
 });

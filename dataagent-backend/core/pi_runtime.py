@@ -330,6 +330,7 @@ async def execute_pi_run(
     started = time.monotonic()
     last_activity = started
     cancel_deadline = None
+    next_cancel_check = started
     snapshot = None
     highest_sequence = 0
     answer_parts: list[str] = []
@@ -339,12 +340,18 @@ async def execute_pi_run(
         await channel.send("cell.init", ctx.to_init_payload())
         while True:
             now = time.monotonic()
-            reason = await cancel_reason() if cancel_reason and cancel_deadline is None else None
+            # Poll on the interval, not per frame: a streaming reply sends many
+            # frames per second and each check may reach Redis or MySQL.
+            reason = None
+            if cancel_reason and cancel_deadline is None and now >= next_cancel_check:
+                next_cancel_check = now + CANCEL_POLL_INTERVAL_SECONDS
+                reason = await cancel_reason()
             if reason:
                 cancel_deadline = now + CANCEL_GRACE_SECONDS
                 await channel.send("run.cancel", {"reason": str(reason)})
             if cancel_deadline is not None and now >= cancel_deadline:
-                return PiRunOutcome(terminal_status="cancelled", answer="".join(answer_parts), usage=usage, last_sequence=highest_sequence)
+                # Raise so the handler below records the terminal run.cancelled event.
+                raise TimeoutError("PI_CANCEL_GRACE_EXPIRED")
             if now - started >= ctx.total_timeout_seconds:
                 raise TimeoutError("PI_RUN_TIMEOUT")
             if ctx.idle_timeout_seconds > 0 and now - last_activity >= ctx.idle_timeout_seconds:
@@ -352,6 +359,11 @@ async def execute_pi_run(
             try:
                 frame = await asyncio.wait_for(channel.read_frame(), timeout=CANCEL_POLL_INTERVAL_SECONDS)
             except asyncio.TimeoutError:
+                # EOF alone is not enough: a killed Cell's orphaned `docker exec`
+                # can inherit its stdout and hold the stream open until the
+                # sandboxed command ends. A quiet stream from an exited Cell is loss.
+                if process.returncode is not None:
+                    raise RuntimeError("CELL_LOSS")
                 continue
             if frame is None:
                 raise RuntimeError("CELL_LOSS")
@@ -399,9 +411,14 @@ async def execute_pi_run(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
+        # A cancel that lands between polls makes the segment commit refuse
+        # ("no longer running"); that is still the user's cancel, not a failure.
+        if cancel_deadline is None and cancel_reason and await cancel_reason():
+            cancel_deadline = time.monotonic()
         code = "task_cancelled" if cancel_deadline is not None else str(exc)
-        writer.ingest({"event_id": f"ev-{ctx.run_id}-terminal", "run_id":ctx.run_id,
-            "task_id":ctx.task_id,"task_attempt_id":ctx.run_id,"sequence":highest_sequence+1,
+        run_id = ctx.run_id or ctx.task_id
+        writer.ingest({"event_id": f"ev-{run_id}-terminal", "run_id":run_id,
+            "task_id":ctx.task_id,"task_attempt_id":run_id,"sequence":highest_sequence+1,
             "type":"run.cancelled" if cancel_deadline is not None else "run.failed",
             "payload":{"error_code":code,"message":str(exc)}})
         return PiRunOutcome(terminal_status="cancelled" if cancel_deadline is not None else "failed",

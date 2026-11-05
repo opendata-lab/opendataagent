@@ -16,11 +16,20 @@ function fixture() {
   fs.writeFileSync(path.join(dirs[1], "result.json"), '{"rows":[1,2,3]}');
   const manager = new DockerSandboxManager({
     runId: root, image: image!, cli: "docker", uid: process.getuid!(), gid: process.getgid!(),
-    lifetimeSeconds: 60, workspaceSource: dirs[0], resultsSource: dirs[1],
+    lifetimeSeconds: 60, memory: "512m", cpus: "1", pidsLimit: 128, workspaceSource: dirs[0], resultsSource: dirs[1],
     skills: [{ source: dirs[2], folder: "test-skill" }],
   });
   return { root, dirs, manager };
 }
+
+test("sandbox rejects malformed resource limits before any docker call", () => {
+  const base = { runId: "r", image: "img", cli: "docker" as const, uid: 1000, gid: 1000, lifetimeSeconds: 60,
+    memory: "2g", cpus: "2", pidsLimit: 512, workspaceSource: "/w", resultsSource: "/r", skills: [] };
+  assert.doesNotThrow(() => new DockerSandboxManager(base));
+  for (const bad of [{ memory: "2g --privileged" }, { memory: "" }, { cpus: "two" }, { pidsLimit: 0 }, { pidsLimit: 1.5 }]) {
+    assert.throws(() => new DockerSandboxManager({ ...base, ...bad }), /Invalid sandbox resource limits/);
+  }
+});
 
 test("real sandbox reuses one container and enforces readonly mounts and no network", { skip: !image }, async () => {
   const { root, dirs, manager } = fixture();

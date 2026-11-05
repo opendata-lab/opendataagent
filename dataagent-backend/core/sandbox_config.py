@@ -36,11 +36,13 @@ def build_sandbox_config(cfg: Any, *, run_id: str, workspace: Path,
     cli = "docker"
     if not shutil.which(cli):
         raise RuntimeError("SANDBOX_UNAVAILABLE: Docker CLI missing")
-    mounts = backend_mounts()
+    in_container = _running_in_container()
+    # Only host-backed mounts can be re-mounted by the daemon; tmpfs has no Source.
+    mounts = [m for m in backend_mounts() if str(m.get("Source") or "").startswith("/")]
 
     def source(local: Path) -> str:
         local = local.resolve()
-        if not mounts:
+        if not in_container:
             return str(local)
         # Most-specific mount wins for nested mounts. No host execution fallback.
         for mount in sorted(mounts, key=lambda m: len(m["Destination"]), reverse=True):
@@ -54,6 +56,8 @@ def build_sandbox_config(cfg: Any, *, run_id: str, workspace: Path,
     results.mkdir(parents=True, exist_ok=True)
     return {"runId": run_id, "image": cfg.dataagent_sandbox_image or "oda-sandbox:latest", "cli": cli,
             "uid": os.getuid(), "gid": os.getgid(), "lifetimeSeconds": lifetime,
+            "memory": cfg.dataagent_sandbox_memory, "cpus": cfg.dataagent_sandbox_cpus,
+            "pidsLimit": cfg.dataagent_sandbox_pids_limit,
             "workspaceSource": source(workspace), "resultsSource": source(results),
             "skills": [{"folder": name, "source": source(Path(root))} for name, root in enabled_roots.items()],
             "env": env}, results

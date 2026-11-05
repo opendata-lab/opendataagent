@@ -88,13 +88,6 @@ def _parse_client_ts(value: Any) -> datetime | None:
     return parsed
 
 
-def _is_placeholder_conversation_id(value: str | None) -> bool:
-    text = str(value or "").strip()
-    if not text:
-        return True
-    return text.startswith("chat_conv_") or text.startswith("chat_conversation_")
-
-
 def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Rebuild v2-compatible blocks from da_agent_sdk_record rows.
 
@@ -1046,15 +1039,6 @@ class TopicTaskStore(SessionCheckpointStore):
             bool(value),
         )
         return self.get_topic(topic_id)
-
-    def get_resumable_conversation_id(self, topic_id: str) -> str | None:
-        topic = self.get_topic(topic_id)
-        if not topic:
-            return None
-        conversation_id = str(topic.get("chat_conversation_id") or "").strip()
-        if _is_placeholder_conversation_id(conversation_id):
-            return None
-        return conversation_id or None
 
     def delete_topic(self, topic_id: str, context: dict[str, Any] | None = None):
         self._ensure_ready()
