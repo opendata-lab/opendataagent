@@ -72,7 +72,7 @@ def start_backend():
         SKILLS_ROOT_DIR=str(ROOT/'.claude/skills'),DATAAGENT_HOST_ROOT=str(ROOT),
         DATAAGENT_RUNTIME_PI_DIR=str(ROOT/'dataagent-runtime-pi'),DATAAGENT_SANDBOX_IMAGE='oda-sandbox:test',
         DATAAGENT_NODE_BIN=os.environ.get('DATAAGENT_NODE_BIN',str(Path.home()/'.nvm/versions/node/v22.22.0/bin/node')),
-        AGENT_BACKGROUND_TIMEOUT_SECONDS='60',AGENT_BACKGROUND_BASH_TIMEOUT_SECONDS='2',DATAAGENT_RUN_IDLE_TIMEOUT_SECONDS='5')
+        AGENT_TIMEOUT_SECONDS='60',AGENT_BASH_TIMEOUT_SECONDS='2',DATAAGENT_RUN_IDLE_TIMEOUT_SECONDS='5')
     backend=spawn('backend',[sys.executable,'-m','uvicorn','main:app','--host','127.0.0.1','--port',PORT],env)
     wait_http(BASE+API+'/health')
 
@@ -100,7 +100,7 @@ def submit(scenario,mode='default'):
         existing.parent.mkdir(parents=True,exist_ok=True)
         existing.write_text('from an earlier task')
     accepted=request('POST',API+'/tasks',json={'topic_id':topic['topic_id'],'message_type':'text','message_content':'SMOKE:'+scenario,
-        'execution_mode':'auto','provider_id':PROVIDER,'model':'smoke','agent_id':agent_id})
+        'provider_id':PROVIDER,'model':'smoke','agent_id':agent_id})
     assert accepted['accepted'] and accepted['task_id']
     return topic['topic_id'],accepted['task_id']
 

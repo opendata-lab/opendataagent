@@ -4,23 +4,9 @@ import sys
 BACKEND_ROOT = Path(__file__).parents[1]
 sys.path.insert(0,str(BACKEND_ROOT))
 from core import agent_runtime
-from config import Settings, resolve_sql_read_timeout_seconds
+from config import Settings
 
 _EXAMPLE_MCP = {'web': {'type': 'http', 'url': 'http://example-mcp:8801/mcp/', 'headers': {'X-Web-MCP-Token': 'web-token'}}}
-
-def test_resolve_sql_read_timeout_seconds_selects_mode_specific_value():
-    from config import resolve_sql_read_timeout_seconds
-
-    cfg = SimpleNamespace(
-        agent_interactive_sql_read_timeout_seconds=300,
-        agent_background_sql_read_timeout_seconds=900,
-    )
-    assert resolve_sql_read_timeout_seconds(cfg, "interactive") == 300
-    assert resolve_sql_read_timeout_seconds(cfg, "background") == 900
-    # auto 归入后台档
-    assert resolve_sql_read_timeout_seconds(cfg, "auto") == 900
-    # 未知/空模式按交互档处理
-    assert resolve_sql_read_timeout_seconds(cfg, None) == 300
 
 def test_settings_defaults_query_result_limit_to_backend_max(monkeypatch):
     monkeypatch.delenv("QUERY_RESULT_LIMIT", raising=False)

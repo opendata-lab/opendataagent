@@ -27,10 +27,8 @@ from core.task_status import from_engine_outcome
 class TaskExecutionInput:
     """One NL2SQL run's execution contract, assembled by the coordinator/submission layer.
 
-    Timeout fields are resolved per ``execution_mode`` at submission time (see
-    ``resolve_task_timeouts``); when a recovered/legacy task carries ``0``/``None``
-    the runtime falls back to the mode-specific value (see ``agent_runtime`` and
-    ``config.resolve_sql_read_timeout_seconds``).
+    Timeout fields are persisted at submission time (see ``resolve_task_timeouts``);
+    a task carrying ``0``/``None`` falls back to the deployment defaults.
 
     Fields:
         task_id / topic_id: identity of this run and its conversation topic.
@@ -43,7 +41,6 @@ class TaskExecutionInput:
             counted, and elapsed time accumulates across execution segments.
         sql_read_timeout_seconds: per read-query budget exposed to skill SQL tools.
         sql_write_timeout_seconds: per write-statement budget.
-        execution_mode: ``interactive`` or ``background``/``auto`` timeout tier.
         agent_snapshot: frozen agent profile (skills, data scope, max_turns, ...).
         permission_mode: write/high-risk confirmation policy for this run.
         runtime_limits: effective control-plane budgets carried through the
@@ -63,7 +60,6 @@ class TaskExecutionInput:
     timeout_seconds: int | None = None
     sql_read_timeout_seconds: int | None = None
     sql_write_timeout_seconds: int | None = None
-    execution_mode: str = "background"
     agent_snapshot: dict[str, Any] | None = None
     auth_user_id: str = ""
     permission_mode: str | None = None
@@ -109,7 +105,7 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
             "user_response":interaction["result"]},ensure_ascii=False)
         if interaction["kind"] == "permission" and interaction["result"].get("decision") == "allow":
             operation = store.claim_confirmed_operation(topic_id=params.topic_id,task_id=params.task_id,request_id=interaction["request_id"])
-    limits = params.runtime_limits or resolve_run_limits(cfg, params.execution_mode,
+    limits = params.runtime_limits or resolve_run_limits(cfg,
         agent_max_turns=int((snapshot or {}).get("max_turns") or 0),total_timeout_seconds=params.timeout_seconds)
     limits = dict(limits)
     limits["total_timeout_seconds"] -= math.ceil(previous_usage.get("elapsed_seconds",0))

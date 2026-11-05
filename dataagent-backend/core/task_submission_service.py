@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from croniter import croniter
 
-from config import get_settings, resolve_run_limits, resolve_sql_read_timeout_seconds
+from config import get_settings
 from core.skill_admin_service import resolve_runtime_provider_selection
 from core.topic_task_store import TopicTaskStore, get_topic_task_store
 
@@ -19,12 +19,13 @@ def current_utc_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def resolve_task_timeouts(execution_mode: str | None) -> dict[str, int]:
+def resolve_task_timeouts() -> dict[str, int]:
+    """Budgets persisted on the task so a later config change cannot shrink a queued run."""
     cfg = get_settings()
     return {
-        "timeout_seconds": resolve_run_limits(cfg, execution_mode)["total_timeout_seconds"],
-        "sql_read_timeout_seconds": resolve_sql_read_timeout_seconds(cfg, execution_mode),
-        "sql_write_timeout_seconds": int(cfg.agent_sql_write_timeout_seconds or 60),
+        "timeout_seconds": int(cfg.agent_timeout_seconds),
+        "sql_read_timeout_seconds": int(cfg.agent_sql_read_timeout_seconds),
+        "sql_write_timeout_seconds": int(cfg.agent_sql_write_timeout_seconds),
     }
 
 
@@ -64,7 +65,6 @@ async def submit_message_task(
     model: str | None = None,
     database_hint: str | None = None,
     debug: bool = False,
-    execution_mode: str | None = None,
     source_queue_id: str | None = None,
     source_schedule_id: str | None = None,
     source_schedule_log_id: str | None = None,
@@ -88,7 +88,7 @@ async def submit_message_task(
         raise ValueError("agent_id does not match topic agent")
 
     runtime_target = resolve_runtime_provider_selection(provider_id, model)
-    timeouts = resolve_task_timeouts(execution_mode)
+    timeouts = resolve_task_timeouts()
     task = store.create_task(
         topic_id=topic_id,
         prompt=prompt,
@@ -105,13 +105,12 @@ async def submit_message_task(
     )
     task_id = str(task.get("task_id") or "")
     logger.info(
-        "task.submit.created task_id=%s topic_id=%s agent_id=%s provider=%s model=%s mode=%s prompt_len=%s timeout=%s sql_read_timeout=%s sql_write_timeout=%s",
+        "task.submit.created task_id=%s topic_id=%s agent_id=%s provider=%s model=%s prompt_len=%s timeout=%s sql_read_timeout=%s sql_write_timeout=%s",
         task_id,
         topic_id,
         str(task.get("agent_id") or ""),
         str(runtime_target.get("provider_id") or ""),
         str(runtime_target.get("model") or ""),
-        str(execution_mode or ""),
         len(prompt),
         int(timeouts["timeout_seconds"]),
         int(timeouts["sql_read_timeout_seconds"]),
@@ -123,12 +122,11 @@ async def submit_message_task(
         store.mark_message_queue_submitted(queue_id=source_queue_id, task_id=task_id)
     task = await coordinator.submit_task(task_id) or task
     logger.info(
-        "task.submit.enqueued task_id=%s topic_id=%s provider=%s model=%s mode=%s task_status=%s user_message_id=%s assistant_message_id=%s",
+        "task.submit.enqueued task_id=%s topic_id=%s provider=%s model=%s task_status=%s user_message_id=%s assistant_message_id=%s",
         task_id,
         topic_id,
         str(runtime_target.get("provider_id") or ""),
         str(runtime_target.get("model") or ""),
-        str(execution_mode or ""),
         str(task.get("task_status") or "waiting"),
         str(user_message.get("message_id") or ""),
         str(assistant_message.get("message_id") or ""),

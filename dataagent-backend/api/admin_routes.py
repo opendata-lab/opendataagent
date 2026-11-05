@@ -549,7 +549,7 @@ async def submit_agent_preview(agent_id: str, request: AgentPreviewMessageReques
         token = await anyio.to_thread.run_sync(agent_drafts.reserve_preview, agent_id, request.expected_revision, topic)
         result = await submit_message_task(topic_id=request.topic_id, message_type="text",
             message_content=request.message_content, agent_id=agent_id, provider_id=request.provider_id,
-            model=request.model, debug=True, execution_mode="auto")
+            model=request.model, debug=True)
         await anyio.to_thread.run_sync(agent_drafts.register_preview, agent_id,
                                       request.expected_revision, result["task_id"], token)
         return result

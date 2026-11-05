@@ -334,11 +334,11 @@ def test_shipped_deploy_base_config_is_disabled_by_default(monkeypatch, _clean_o
 def test_dataagent_settings_are_captured_and_validated(monkeypatch, tmp_path):
     path = write_config(
         tmp_path,
-        "AUTH_ENABLED = False\nDATAAGENT_SETTINGS = {\"agent_interactive_timeout_seconds\": 420}\n",
+        "AUTH_ENABLED = False\nDATAAGENT_SETTINGS = {\"agent_timeout_seconds\": 420}\n",
     )
     monkeypatch.setenv(auth.AUTH_CONFIG_ENV, path)
     settings = init_auth()
-    assert settings.runtime_settings == {"agent_interactive_timeout_seconds": 420}
+    assert settings.runtime_settings == {"agent_timeout_seconds": 420}
 
 
 def test_dataagent_settings_unknown_field_fails_startup(monkeypatch, tmp_path):

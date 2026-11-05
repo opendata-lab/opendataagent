@@ -80,7 +80,7 @@ def stop():
 
 def run_liveness(topic):
     accepted=request('POST',API+'/tasks',json={'topic_id':topic,'message_type':'text','message_content':'SMOKE:LIVENESS',
-        'execution_mode':'auto','provider_id':'local-smoke','model':'smoke'})
+        'provider_id':'local-smoke','model':'smoke'})
     task_id=accepted['task_id'];until=time.monotonic()+30
     while time.monotonic()<until:
         result=request('GET',API+'/tasks/'+task_id)
@@ -117,7 +117,7 @@ def main():
     first=run_liveness(topic)
     # Exercise daemon mount discovery through a real sandbox tool.
     accepted=request('POST',API+'/tasks',json={'topic_id':topic,'message_type':'text','message_content':'SMOKE:TOOLS',
-        'execution_mode':'auto','provider_id':'local-smoke','model':'smoke'})
+        'provider_id':'local-smoke','model':'smoke'})
     task_id=accepted['task_id'];until=time.monotonic()+30
     while time.monotonic()<until:
         result=request('GET',API+'/tasks/'+task_id)

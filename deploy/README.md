@@ -60,22 +60,27 @@ scripts/load-package-and-start.sh --package .   # 加载镜像；deploy/.env 不
 - 模型负责 provider/model 和 `max_output_tokens`；Pi 未配置输出上限时使用 8192。
 - 全局负责轮数默认、工具次数、超时、并发、上下文与沙箱。
 
-| 全局默认 | 交互 | auto / 后台 |
-| --- | ---: | ---: |
-| `agent_*_max_turns` | 24 | 40 |
-| `agent_*_max_tool_calls`（Pi） | 100 | 200 |
-| `agent_*_timeout_seconds` | 360 | 1800 |
-| `agent_*_bash_timeout_seconds`（Pi） | 300 | 600 |
-| `agent_*_sql_read_timeout_seconds` | 300 | 300 |
+所有任务使用同一档预算：
 
-`*` 为 `interactive` 或 `background`；页面发送 `auto`，走后台档。Pi 无活动超时
-`dataagent_run_idle_timeout_seconds` 为 300 秒。SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。
-反向代理的读写超时必须大于后台总超时（1800 秒），前端镜像内置 nginx 为 1860 秒。
+| 全局默认 | 值 |
+| --- | ---: |
+| `agent_max_turns` | 40 |
+| `agent_max_tool_calls`（Pi） | 200 |
+| `agent_timeout_seconds` | 1800 |
+| `agent_bash_timeout_seconds`（Pi） | 600 |
+| `agent_sql_read_timeout_seconds` | 300 |
+| `agent_sql_write_timeout_seconds` | 60 |
+
+旧的 `agent_interactive_*`／`agent_background_*` 配置名已删除：写在 `DATAAGENT_SETTINGS` 中会启动失败，写成
+环境变量会被忽略，升级时改成上表名称。Pi 无活动超时 `dataagent_run_idle_timeout_seconds` 为 300 秒。
+SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。反向代理的读写超时必须大于总超时（1800 秒），
+前端镜像内置 nginx 为 1860 秒。
 
 ## 运行时目录与沙箱
 
 - `DATAAGENT_HOST_ROOT`（默认 `/dataagent_runtime`）是宿主机持久化目录，挂到 backend 的 `/dataagent_runtime`。每个 topic 的 `workspace/` 读写挂为 `/mnt/workspace`，`results/` 只读挂为 `/mnt/results`；只有启用的技能目录只读挂到 `/opt/skills/<folder>`。
 - backend 入口以 root 同步内置技能、初始化卷和 socket 附加组，再以 `DATAAGENT_RUNTIME_UID/GID`（默认 1000:1000）运行迁移和服务。沙箱使用相同 UID/GID；不修改宿主 socket 权限。
+- 每个执行段的沙箱容器有资源上限：`DATAAGENT_SANDBOX_MEMORY`（默认 `2g`，同时作为 swap 上限）、`DATAAGENT_SANDBOX_CPUS`（`2`）、`DATAAGENT_SANDBOX_PIDS_LIMIT`（`512`）。
 - `DATAAGENT_DOCKER_SOCKET` 只挂到 backend。Pi/MCP/模型编排在控制面；沙箱没有凭据、网络或 socket。第一次基础工具调用创建容器，同段复用，卡片、结束、取消及命令超时均销毁。不支持宿主工具执行回退。
 - `ODA_SANDBOX_IMAGE` 必须预先拉取/加载，`scripts/start.sh` 不会为按需容器拉取镜像。在线升级除 Compose pull 外须执行 `docker pull <配置的 oda-sandbox 镜像>`。
 - Skill 存放在命名卷 `opendataagent_dataagent-skills`，入口按内置技能内容版本同步通用技能，管理员导入的其它技能保留。新事件存于 MySQL，旧 home/logs 文件保留供回退。
