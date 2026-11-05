@@ -160,7 +160,7 @@ rewrite_offline_env_file() {
 
     # 离线环境没有镜像仓库，compose 改用本地已加载的镜像名。
     local var image
-    for entry in "ODA_FRONTEND_IMAGE|oda-frontend" "ODA_BACKEND_IMAGE|oda-backend" "ODA_RUNNER_IMAGE|oda-runner"; do
+    for entry in "ODA_FRONTEND_IMAGE|oda-frontend" "ODA_BACKEND_IMAGE|oda-backend" "ODA_SANDBOX_IMAGE|oda-sandbox"; do
         IFS='|' read -r var image <<<"$entry"
         sed -e "s|^# *${var}=.*|${var}=${image}:${PARSER_TAG}|" -e "s|^${var}=.*|${var}=${image}:${PARSER_TAG}|" \
             "$env_file" > "${env_file}.tmp" && mv "${env_file}.tmp" "$env_file"
@@ -229,7 +229,7 @@ OP_TAG="$PARSER_TAG"
 MAIN_IMAGES=(
     "oda-frontend.tar|${PARSER_REGISTRY}/${PARSER_NAMESPACE}/oda-frontend:${OP_TAG}|oda-frontend:${OP_TAG}"
     "oda-backend.tar|${PARSER_REGISTRY}/${PARSER_NAMESPACE}/oda-backend:${OP_TAG}|oda-backend:${OP_TAG}"
-    "oda-runner.tar|${PARSER_REGISTRY}/${PARSER_NAMESPACE}/oda-runner:${OP_TAG}|oda-runner:${OP_TAG}"
+    "oda-sandbox.tar|${PARSER_REGISTRY}/${PARSER_NAMESPACE}/oda-sandbox:${OP_TAG}|oda-sandbox:${OP_TAG}"
 )
 
 EXTRA_IMAGES=(

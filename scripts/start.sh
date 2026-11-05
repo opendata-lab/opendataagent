@@ -83,12 +83,8 @@ normalize_path() {
 resolve_dataagent_host_root() {
     # 解析 DataAgent 持久化运行时根目录的宿主机绝对路径。
     #
-    # compose 卷挂载会把相对路径按项目目录（deploy/）解析，但 sandbox runner 是用
-    # 转发进容器的 DATAAGENT_HOST_ROOT 在自己的容器内（/app）重新解析，再让宿主
-    # Docker 守护进程按该路径为每个 task child 绑定挂载 topic 目录。若用户填的是
-    # 相对路径，runner 解析出的就是 /app/<rel> 这种容器内路径，child bind 源会错位。
-    # 因此这里统一把相对路径按 deploy/ 解析成宿主机绝对路径，并在启动 compose 前
-    # export，使卷挂载与 runner 转发的 DATAAGENT_HOST_ROOT 始终指向同一宿主机目录。
+    # 在部署目录解析成绝对路径；backend 从自己的 Docker mount 映射
+    # 找到 daemon 可见的 workspace/results/skills 来源。
     local configured
     configured="$(read_env_value "DATAAGENT_HOST_ROOT" "$ENV_FILE")"
     if [ -z "$configured" ]; then
@@ -160,7 +156,7 @@ echo ""
 # 先建好宿主机目录，避免 Docker 以 root 自动创建后产生属主困惑。
 mkdir -p "$DEPLOY_DIR/logs" 2>/dev/null || true
 
-# 统一 DataAgent 运行时根目录为宿主机绝对路径，保证 backend 卷挂载与 runner 反查的
+# 统一 DataAgent 运行时根目录为宿主机绝对路径，保证 backend 卷挂载与 daemon 使用的
 # child bind 源指向同一目录，支持用户在 .env 中自定义（含相对于 deploy/ 的相对路径）。
 DATAAGENT_HOST_ROOT="$(resolve_dataagent_host_root)"
 export DATAAGENT_HOST_ROOT

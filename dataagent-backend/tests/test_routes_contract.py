@@ -636,12 +636,16 @@ class _FakeStore:
 class _FakeCoordinator:
     def __init__(self):
         self.cancelled: list[str] = []
+        self.submitted: list[str] = []
 
     async def start(self):
         return None
 
     async def stop(self):
         return None
+
+    async def submit_task(self, task_id: str):
+        self.submitted.append(task_id)
 
     async def request_cancel(self, task_id: str):
         self.cancelled.append(task_id)
@@ -1020,6 +1024,7 @@ def test_permission_decision_endpoint(monkeypatch):
         # Different request_id while a request is pending -> 409.
         assert client.post(base, json={"request_id": "req-2", "decision": "allow"}).status_code == 409
 
+        assert coordinator.submitted == []
         # Valid allow.
         ok = client.post(base, json={"request_id": "req-1", "decision": "allow"})
         assert ok.status_code == 200
@@ -1034,6 +1039,7 @@ def test_permission_decision_endpoint(monkeypatch):
         # Idempotent: a later deny for the same request_id returns the first decision.
         again = client.post(base, json={"request_id": "req-1", "decision": "deny"})
         assert again.json()["decision"] == "allow"
+        assert coordinator.submitted == [task_id]
         decisions = [
             rec for rec in store.sdk_records[task_id]
             if rec["record_type"] == "permission_decision"
@@ -1081,6 +1087,7 @@ def test_question_answer_endpoint(monkeypatch):
 
         again = client.post(base, json={"request_id": "q-1", "answers": []})
         assert again.status_code == 200
+        assert _coordinator.submitted == [task_id]
         records = [rec for rec in store.sdk_records[task_id] if rec["record_type"] == "question_answer"]
         assert len(records) == 1
         assert client.post(base, json={"request_id": "q-2", "answers": []}).status_code == 409
@@ -1323,3 +1330,22 @@ def test_require_agent_profile_visibility_matrix_by_context(monkeypatch):
     # widget/门户匿名上下文（无 auth_user_id）→ 不可见。
     with pytest.raises(HTTPException):
         routes._require_agent_profile("agent_selected", context={"source": "widget"})
+
+
+def test_card_persistence_does_not_block_the_event_loop(monkeypatch):
+    import asyncio
+    import threading
+    from models.schemas import QuestionAnswerRequest
+    released = threading.Event()
+    worker_observed_progress = []
+    def persist(*args):
+        # Only the event loop releases this event. Running this function on the
+        # loop itself would stall until the timeout instead.
+        worker_observed_progress.append(released.wait(timeout=2))
+        return 'recorded', False
+    monkeypatch.setattr(routes, '_record_question_answer', persist)
+    async def run():
+        asyncio.get_running_loop().call_later(.05, released.set)
+        return await routes.api_submit_question_answer('task', QuestionAnswerRequest(request_id='q', answers=[]), None)
+    assert asyncio.run(run()) == 'recorded'
+    assert worker_observed_progress == [True]

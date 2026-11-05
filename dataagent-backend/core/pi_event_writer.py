@@ -1,30 +1,11 @@
-"""Pi event writer — records neutral AgentEvents from the Pi Cell into da_agent_sdk_record.
-
-Sibling of :class:`core.sdk_block_writer.SdkBlockWriter`. Both write to the same
-table through the same ``append_sdk_record`` call; they differ only in the shape
-of what arrives.
-
-``SdkBlockWriter`` cannot be reused here: it dispatches on
-``type(msg).__name__`` over ``claude_agent_sdk`` Python objects (``StreamEvent`` /
-``AssistantMessage`` / ``UserMessage``). The Pi Cell is a Node child process that
-speaks neutral JSON over stdio, so its events would fall through every branch.
-
-The table itself is engine neutral (``record_type`` + ``event_type`` +
-``data JSON``), so no schema change or migration is needed:
-
-* ``record_type`` — ``"pi_event"``
-* ``event_type``  — the neutral event type (``content.delta``, ``tool.started``, ...)
-* ``data``        — the event payload
-
-Terminal failures additionally emit the standard ``record_type="error"`` record so
-the existing error surfacing keeps working unchanged across both data planes.
-"""
+"""Persist neutral Pi events and frontend interaction records in MySQL."""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime
 from typing import Any
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +37,11 @@ TERMINAL_EVENT_TYPES = frozenset(
 class PiEventWriter:
     """Writes neutral Pi AgentEvents into ``da_agent_sdk_record``."""
 
-    def __init__(self, store: Any, task_id: str, topic_id: str) -> None:
+    def __init__(self, store: Any, task_id: str, topic_id: str, *, initial_turn_index: int = 0) -> None:
         self._store = store
         self._task_id = task_id
         self._topic_id = topic_id
-        self._turn_index = 0
+        self._turn_index = initial_turn_index
         self._highest_sequence = 0
 
     @property
@@ -102,7 +83,7 @@ class PiEventWriter:
                 return
             self._highest_sequence = sequence
 
-        # A new turn starts a fresh block group, matching SdkBlockWriter's
+        # A new turn starts a fresh block group, matching the frontend's
         # message_start semantics so history projection groups the same way.
         if event_type == "turn.started":
             self._turn_index += 1
@@ -140,50 +121,6 @@ class PiEventWriter:
                 message=str(payload.get("message") or "Pi 运行时执行失败"),
                 detail=str(payload.get("detail") or ""),
             )
-
-    def append_question_request(self, *, request_id: str, questions: Any, deadline_at: str = "") -> None:
-        """Same record as ``SdkBlockWriter.append_question_request``: the card is engine-agnostic."""
-        self._store.append_sdk_record(
-            task_id=self._task_id,
-            topic_id=self._topic_id,
-            turn_index=self._turn_index,
-            record_type="question_request",
-            event_type=None,
-            data={
-                "request_id": str(request_id),
-                "questions": questions if isinstance(questions, list) else [],
-                "deadline_at": str(deadline_at or ""),
-            },
-        )
-
-    def append_permission_request(
-        self,
-        *,
-        request_id: str,
-        tool_name: str,
-        risk_level: str = "high",
-        title: str = "",
-        summary: str = "",
-        payload_preview: Any = None,
-        deadline_at: str = "",
-    ) -> None:
-        """Same record as ``SdkBlockWriter.append_permission_request``."""
-        self._store.append_sdk_record(
-            task_id=self._task_id,
-            topic_id=self._topic_id,
-            turn_index=self._turn_index,
-            record_type="permission_request",
-            event_type=None,
-            data={
-                "request_id": str(request_id),
-                "tool_name": str(tool_name or ""),
-                "risk_level": str(risk_level or "high"),
-                "title": str(title or ""),
-                "summary": str(summary or ""),
-                "payload_preview": payload_preview,
-                "deadline_at": str(deadline_at or ""),
-            },
-        )
 
     def append_error(self, *, code: str = "pi_runtime_error", message: str = "请求失败", detail: str = "") -> None:
         """Emit the shared terminal error record.

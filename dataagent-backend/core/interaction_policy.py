@@ -1,7 +1,7 @@
 """What happens to a question or plan card nobody answers.
 
-Engine-agnostic: the Claude Code and Pi paths both park a run on a durable
-``question_request`` / ``permission_request`` record and wait for the user. Once
+Pi parks a run at a completed session boundary with a durable
+``question_request`` / ``permission_request`` record and releases runtime resources. Once
 the deadline passes the run continues as the card recommended: each question
 takes its recommended option (or is skipped when it has none), and a plan is
 approved only when the agent opted into that (``plan_timeout_action=approve``).

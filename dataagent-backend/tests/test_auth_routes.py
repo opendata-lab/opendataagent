@@ -288,6 +288,11 @@ def _oauth_callback(
         auth.get_auth_settings().oauth_user_info = _oauth_user_info
     nonce = auth.generate_oauth_nonce()
     state = auth.issue_oauth_state(redirect, nonce=nonce, provider=state_provider)
+    # Replace the authorize cookie too: an unscoped cookie with the same name
+    # otherwise coexists with its domain-scoped value and sends two nonces.
+    for cookie in list(client.cookies.jar):
+        if cookie.name == auth.OAUTH_STATE_COOKIE:
+            client.cookies.delete(cookie.name, domain=cookie.domain, path=cookie.path)
     # 正常流程：authorize 会把 nonce 种进发起浏览器的 HttpOnly Cookie。
     if bind_nonce:
         client.cookies.set(auth.OAUTH_STATE_COOKIE, cookie_nonce if cookie_nonce is not None else nonce)
@@ -490,7 +495,8 @@ def test_oauth_transport_reads_response_and_grant_types_from_settings(monkeypatc
         userinfo={"sub": "42"},
         handler_calls=handler_calls,
     )
-    assert callback.status_code == 302
+    assert callback.status_code == 302, callback.text
+    assert callback.request.headers["cookie"].count(auth.OAUTH_STATE_COOKIE + "=") == 1
     token_url, token_request = _FakeAsyncClient.last_post
     assert token_url == "https://sso.example.com/token"
     assert token_request["data"]["grant_type"] == "grant-from-settings"

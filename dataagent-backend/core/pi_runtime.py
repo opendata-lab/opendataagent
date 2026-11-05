@@ -1,33 +1,10 @@
-"""Pi data plane adapter — runs one NL2SQL turn on a Node Pi Cell over stdio.
+"""Protocol-v2 supervisor for one Pi SDK execution segment over stdio.
 
-Sits under ``task_executor._execute_task_stream_local``, alongside the
-claude-agent-sdk path, and reuses everything that path already prepared:
-provider/model selection, system prompt, skill runtime, workspace, runtime env.
-Only the engine differs.
-
-Deliberately *not* a network service. The Cell is a child process reached over
-stdin/stdout, so there is no port to expose, no shared secret to distribute, and
-no second copy of the event log to keep durable — events land in
-``da_agent_sdk_record`` through :class:`core.pi_event_writer.PiEventWriter`, the
-same table the SDK path writes to.
-
-Protocol (newline-delimited JSON, one frame per line):
-
-  Gateway -> Cell   ``cell.init`` (once)   ``run.cancel``   ``cell.shutdown``
-                    ``interaction.resolved``
-  Cell -> Gateway   ``cell.ready``   ``run.event``   ``run.settled``   ``protocol.error``
-                    ``interaction.request``
-
-``interaction.request`` ({request_id, kind: question|plan, payload}) parks the
-run on the user: the gateway records the card, waits on MySQL and answers with
-``interaction.resolved`` ({request_id, result}). The run's total and idle
-timers stand still while it waits — a person deciding is not a stalled run —
-but the loop keeps reading frames and polling cancel, so a dead Cell or a
-cancel is still noticed.
-
-Every frame is ``{"protocol_version": 1, "type": ..., "payload": {...}}``. The
-payload of ``run.event`` *is* the neutral AgentEvent — not a wrapper around it.
-Both sides must agree on that; a cross-process contract test pins it.
+The backend owns provider configuration, events, checkpoints and scheduling.
+A card commits session.entries atomically with its waiting state, then releases
+this process; a reply starts another segment from that checkpoint. Approved
+MCP operation results are acknowledged only after durable storage. Each segment
+owns one lazily started tools-only sandbox, cleaned here if the Cell is killed.
 """
 
 from __future__ import annotations
@@ -45,20 +22,15 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # Grace period between asking the Cell to stop and killing it. One turn of the
 # agent loop is far shorter than this; anything still running is wedged.
 CANCEL_GRACE_SECONDS = 2.0
-# The Cell answers cell.init as soon as its module graph is loaded.
-HANDSHAKE_TIMEOUT_SECONDS = 10.0
 # How often the cancel flag is polled while events stream.
 CANCEL_POLL_INTERVAL_SECONDS = 1.0
 
 TERMINAL_EVENT_TYPES = frozenset({"run.completed", "run.failed", "run.cancelled", "run.suspended"})
-
-
-InteractionHandler = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 class PiRuntimeUnavailable(RuntimeError):
@@ -77,7 +49,6 @@ class PiRunContext:
     system_prompt: str
     messages: list[dict[str, str]]
     project_cwd: Path
-    boundary_policy: dict[str, Any]
     # Effective budgets are required; config.py owns defaults and inheritance.
     total_timeout_seconds: int
     idle_timeout_seconds: int
@@ -94,14 +65,21 @@ class PiRunContext:
     max_output_tokens: int | None = None
     # The model's context window; None lets governance_settings.max_context_tokens decide.
     context_window: int | None = None
-    # "plan" exposes ExitPlanMode and holds plan_denied_tools until the plan is approved.
+    # "plan" exposes ExitPlanMode and gates writes until approval.
     permission_mode: str = "default"
-    plan_denied_tools: list[str] = field(default_factory=list)
     # Context governance, assembled by core.context_governance so the wire
     # contract has one producer. Field names mirror ``governance_settings`` in
     # ``src/protocol/frames.ts``; a rename on either side has to move in
     # lockstep or the Cell silently falls back to its own defaults.
     governance_settings: dict[str, Any] = field(default_factory=dict)
+    run_id: str = ""
+    sandbox: dict[str, Any] = field(default_factory=dict)
+    results_dir: str = ""
+    session_checkpoint: dict[str, Any] | None = None
+    plan_approved: bool = False
+    turn_offset: int = 0
+    allow_questions: bool = True
+    resume_operation: dict[str, Any] | None = None
 
     def to_init_payload(self) -> dict[str, Any]:
         """Serialize for the ``cell.init`` frame.
@@ -118,7 +96,7 @@ class PiRunContext:
                 history_val = self.messages[:-1]
 
         return {
-            "run_id": self.task_id,
+            "run_id": self.run_id or self.task_id,
             "task_id": self.task_id,
             "topic_id": self.topic_id,
             "system_prompt": self.system_prompt,
@@ -133,7 +111,13 @@ class PiRunContext:
                 **({"context_window": self.context_window} if self.context_window else {}),
             },
             "workspace": {"project_cwd": str(self.project_cwd)},
-            "boundary_policy": self.boundary_policy,
+            "sandbox": self.sandbox,
+            "results_dir": self.results_dir,
+            "session_checkpoint": self.session_checkpoint,
+            "plan_approved": self.plan_approved,
+            "turn_offset": self.turn_offset,
+            "allow_questions": self.allow_questions,
+            "resume_operation": self.resume_operation,
             "skills": self.skills,
             "mcp_servers": self.mcp_servers,
             "runtime_env": self.runtime_env,
@@ -146,7 +130,6 @@ class PiRunContext:
             },
             "governance_settings": dict(self.governance_settings),
             "permission_mode": self.permission_mode,
-            "plan_denied_tools": list(self.plan_denied_tools),
         }
 
 
@@ -157,6 +140,7 @@ def resolve_cell_command(cfg: Any = None) -> list[str]:
     letting a spawn failure surface as an opaque OSError, mirroring how the SDK
     path reports ``sdk_not_installed``.
     """
+    cfg = cfg if cfg is not None else get_settings()
     node_bin = str(getattr(cfg, "dataagent_node_bin", "") or "").strip()
     node_bin = node_bin or os.environ.get("DATAAGENT_NODE_BIN", "").strip() or shutil.which("node") or ""
     if not node_bin:
@@ -307,285 +291,148 @@ def _stdio_frame_limit() -> int:
     Cell may send a UI copy of a tool result up to STRUCTURED_OUTPUT_MAX_BYTES
     (512 KiB) in one frame, so asyncio's 64 KiB default is far too small.
 
-    Shares agent_max_buffer_size_bytes with the SDK transport and the sandbox
-    runner, which already size their streams this way. A separate constant here
-    would mean the same run had different limits depending on which topology it
-    landed in.
+    Uses agent_max_buffer_size_bytes (10 MiB by default), which also covers
+    the bounded 8 MiB session snapshot and protocol envelope.
     """
     configured = int(getattr(get_settings(), "agent_max_buffer_size_bytes", 0) or 0)
     return max(1024 * 1024, configured)
 
 
+def accumulate_usage(previous: dict[str, Any] | None, current: dict[str, Any] | None) -> dict[str, Any]:
+    total = dict(previous or {})
+    for key, value in (current or {}).items():
+        if isinstance(value, dict):
+            total[key] = accumulate_usage(total.get(key), value)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            total[key] = (total.get(key) or 0) + value
+        else:
+            total[key] = value
+    return total
+
+
 async def execute_pi_run(
-    ctx: PiRunContext,
-    *,
-    writer: Any,
+    ctx: PiRunContext, *, writer: Any,
     cancel_reason: Callable[[], Awaitable[Any]] | None = None,
     cell_command: list[str] | None = None,
     child_env: dict[str, str] | None = None,
-    interaction_handler: InteractionHandler | None = None,
+    segment_handler: Callable[..., Awaitable[None]] | None = None,
+    operation_handler: Callable[..., Awaitable[None]] | None = None,
 ) -> PiRunOutcome:
-    """Run one turn on a Pi Cell and return its outcome.
-
-    ``writer`` receives every neutral event (a :class:`PiEventWriter`).
-    ``interaction_handler(kind, request_id, payload)`` asks the user and returns
-    the result sent back to the Cell; without one an interaction fails as a tool
-    error the model can see.
-    ``cell_command`` is injectable so a contract test can drive a stub Cell over
-    the real protocol instead of mocking the channel away.
-    """
     command = cell_command or resolve_cell_command()
-
     env = dict(child_env) if child_env is not None else dict(os.environ)
-    env.update(ctx.runtime_env)
     env.update(ctx.provider_env)
     env.setdefault("NODE_ENV", "production")
-
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(ctx.project_cwd),
-        env=env,
-        limit=_stdio_frame_limit(),
-    )
+    process = await asyncio.create_subprocess_exec(*command, stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        cwd=str(ctx.project_cwd), env=env, limit=_stdio_frame_limit())
     channel = _CellChannel(process, ctx.task_id)
     stderr_task = asyncio.create_task(_drain_stderr(process, ctx.task_id))
-
-    started_at = time.monotonic()
-    deadline = started_at + max(1, ctx.total_timeout_seconds)
-    last_activity = started_at
+    started = time.monotonic()
+    last_activity = started
+    cancel_deadline = None
+    next_cancel_check = started
+    snapshot = None
     highest_sequence = 0
     answer_parts: list[str] = []
-    usage: dict[str, Any] | None = None
-    terminal: PiRunOutcome | None = None
-    cancel_sent = False
-    cancel_deadline: float | None = None
-    # The user-facing wait runs beside the frame loop, so a Cell that dies or a
-    # cancel that lands while a person decides is still noticed.
-    pending: asyncio.Task[dict[str, Any] | None] | None = None
-    pending_request_id = ""
-    waited_from = 0.0
-
+    usage = None
+    cell_settled = False
     try:
         await channel.send("cell.init", ctx.to_init_payload())
-
         while True:
             now = time.monotonic()
-            if pending is not None:
-                if pending.done():
-                    result = pending.result()
-                    pending = None
-                    # The clock stood still while a person decided.
-                    deadline += now - waited_from
-                    last_activity = now
-                    if result is not None:
-                        await channel.send(
-                            "interaction.resolved", {"request_id": pending_request_id, "result": result}
-                        )
-                    elif not cancel_sent:
-                        cancel_sent = True
-                        cancel_deadline = now + CANCEL_GRACE_SECONDS
-                        await channel.send("run.cancel", {"reason": "user_cancel"})
-                else:
-                    last_activity = now
-            if pending is None and now >= deadline:
-                terminal = PiRunOutcome(
-                    terminal_status="failed",
-                    answer="".join(answer_parts),
-                    error_code="PI_RUN_TIMEOUT",
-                    error_message=f"Pi 运行时单轮执行超过 {ctx.total_timeout_seconds}s 总超时",
-                    last_sequence=highest_sequence,
-                )
-                break
-            # A cancel the Cell does not honour must not leave the user waiting
-            # out the rest of the run timeout. Once asked to stop it gets a
-            # grace period, then the run is settled as cancelled — which is what
-            # actually happened — and the finally block kills the child.
-            if cancel_deadline is not None and now >= cancel_deadline:
-                terminal = PiRunOutcome(
-                    terminal_status="cancelled",
-                    answer="".join(answer_parts),
-                    usage=usage,
-                    last_sequence=highest_sequence,
-                )
-                break
-            if (
-                cancel_deadline is None
-                and ctx.idle_timeout_seconds > 0
-                and (now - last_activity) >= ctx.idle_timeout_seconds
-            ):
-                terminal = PiRunOutcome(
-                    terminal_status="failed",
-                    answer="".join(answer_parts),
-                    error_code="PI_RUN_IDLE_TIMEOUT",
-                    error_message=f"Pi 运行时 {ctx.idle_timeout_seconds}s 内无任何事件或工具输出（任务已执行 {int(now - started_at)}s）",
-                    last_sequence=highest_sequence,
-                )
-                break
-
-            if cancel_reason is not None and not cancel_sent:
+            # Poll on the interval, not per frame: a streaming reply sends many
+            # frames per second and each check may reach Redis or MySQL.
+            reason = None
+            if cancel_reason and cancel_deadline is None and now >= next_cancel_check:
+                next_cancel_check = now + CANCEL_POLL_INTERVAL_SECONDS
                 reason = await cancel_reason()
-                if reason:
-                    cancel_sent = True
-                    if pending is not None:
-                        # Cancel is not an answer: the Cell aborts the waiting tool itself.
-                        pending.cancel()
-                        pending = None
-                    cancel_deadline = time.monotonic() + CANCEL_GRACE_SECONDS
-                    await channel.send("run.cancel", {"reason": str(reason)})
-
-            # Bounded wait so the cancel flag and both timeouts stay live even
-            # while the Cell is quiet.
-            budget = min(
-                CANCEL_POLL_INTERVAL_SECONDS,
-                max(0.05, deadline - now) if pending is None else CANCEL_POLL_INTERVAL_SECONDS,
-                # Keep the grace period accurate rather than rounding it up to
-                # the next poll tick.
-                max(0.05, cancel_deadline - now) if cancel_deadline is not None else CANCEL_POLL_INTERVAL_SECONDS,
-            )
+            if reason:
+                cancel_deadline = now + CANCEL_GRACE_SECONDS
+                await channel.send("run.cancel", {"reason": str(reason)})
+            if cancel_deadline is not None and now >= cancel_deadline:
+                # Raise so the handler below records the terminal run.cancelled event.
+                raise TimeoutError("PI_CANCEL_GRACE_EXPIRED")
+            if now - started >= ctx.total_timeout_seconds:
+                raise TimeoutError("PI_RUN_TIMEOUT")
+            if ctx.idle_timeout_seconds > 0 and now - last_activity >= ctx.idle_timeout_seconds:
+                raise TimeoutError("PI_RUN_IDLE_TIMEOUT")
             try:
-                frame = await asyncio.wait_for(channel.read_frame(), timeout=budget)
+                frame = await asyncio.wait_for(channel.read_frame(), timeout=CANCEL_POLL_INTERVAL_SECONDS)
             except asyncio.TimeoutError:
+                # EOF alone is not enough: a killed Cell's orphaned `docker exec`
+                # can inherit its stdout and hold the stream open until the
+                # sandboxed command ends. A quiet stream from an exited Cell is loss.
+                if process.returncode is not None:
+                    raise RuntimeError("CELL_LOSS")
                 continue
-
             if frame is None:
-                # stdout closed: the child exited without settling the run.
-                terminal = PiRunOutcome(
-                    terminal_status="cancelled" if cancel_sent else "failed",
-                    answer="".join(answer_parts),
-                    error_code="" if cancel_sent else "CELL_LOSS",
-                    error_message="" if cancel_sent else "Pi Cell 子进程在产出终态前退出",
-                    last_sequence=highest_sequence,
-                )
-                break
-
+                raise RuntimeError("CELL_LOSS")
+            if frame.get("protocol_version") != PROTOCOL_VERSION:
+                raise RuntimeError("PI_PROTOCOL_VERSION_MISMATCH")
             last_activity = time.monotonic()
-            ftype = str(frame.get("type") or "")
-            payload = frame.get("payload") if isinstance(frame.get("payload"), dict) else {}
-
-            if ftype == "run.event":
-                event = payload
-                sequence = event.get("sequence")
-                if isinstance(sequence, int):
-                    highest_sequence = max(highest_sequence, sequence)
-                writer.ingest(event)
-
-                event_type = str(event.get("type") or "")
-                event_payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-                if event_type == "content.delta" and str(event_payload.get("kind") or "") != "reasoning":
-                    answer_parts.append(str(event_payload.get("delta") or ""))
+            ftype = frame.get("type")
+            payload = frame.get("payload") or {}
+            if ftype == "session.entries":
+                if snapshot is not None:
+                    raise ValueError("Duplicate session snapshot")
+                snapshot = payload
+            elif ftype == "operation.result":
+                if operation_handler is None:
+                    raise ValueError("Operation persistence unavailable")
+                await operation_handler(payload)
+                await channel.send("operation.saved", {"request_id": payload["request_id"]})
+            elif ftype == "run.parked":
+                cell_settled = True  # Sent only after Cell.run finally has closed the sandbox.
+                if snapshot is None or segment_handler is None:
+                    raise ValueError("Parked segment has no persistent snapshot")
+                await segment_handler(snapshot, payload.get("interaction"), time.monotonic() - started, usage)
+                return PiRunOutcome(terminal_status="parked", answer="".join(answer_parts), usage=usage, last_sequence=highest_sequence)
+            elif ftype == "run.event":
+                event_type = payload.get("type")
+                event_data = payload.get("payload") or {}
+                highest_sequence = max(highest_sequence, int(payload.get("sequence") or 0))
+                if event_type in TERMINAL_EVENT_TYPES:
+                    cell_settled = True
+                if event_type == "run.completed":
+                    if snapshot is None or segment_handler is None:
+                        raise ValueError("Completed segment has no persistent snapshot")
+                    await segment_handler(snapshot, None, time.monotonic() - started, usage)
+                writer.ingest(payload)
+                if event_type == "content.delta" and event_data.get("kind") != "reasoning":
+                    answer_parts.append(str(event_data.get("delta") or ""))
                 elif event_type == "usage.updated":
-                    raw_usage = event_payload.get("usage")
-                    if isinstance(raw_usage, dict):
-                        usage = raw_usage
+                    usage = accumulate_usage(usage, event_data.get("usage"))
                 elif event_type in TERMINAL_EVENT_TYPES:
-                    terminal = _outcome_from_terminal_event(
-                        event_type, event_payload, "".join(answer_parts), usage, highest_sequence
-                    )
-                    break
-
-            elif ftype == "interaction.request":
-                request_id = str(payload.get("request_id") or "")
-                if pending is not None or cancel_sent:
-                    await channel.send(
-                        "interaction.resolved",
-                        {"request_id": request_id, "result": {"error": "已有一个待用户回答的请求"}},
-                    )
-                else:
-                    waited_from = time.monotonic()
-                    pending_request_id = request_id
-                    pending = asyncio.create_task(
-                        _resolve_interaction(interaction_handler, payload, ctx.task_id)
-                    )
-
-            elif ftype == "cell.ready":
-                logger.info("pi_cell.ready task_id=%s manifest=%s", ctx.task_id, payload.get("manifest"))
-
-            elif ftype == "run.heartbeat":
-                # Liveness only. last_activity was already refreshed above by the
-                # act of receiving a frame, which is the whole point: a slow tool
-                # stays alive without emitting an event nothing renders.
-                pass
-
+                    return _outcome_from_terminal_event(event_type,event_data,"".join(answer_parts),usage,highest_sequence)
             elif ftype == "protocol.error":
-                logger.error("pi_cell.protocol_error task_id=%s payload=%s", ctx.task_id, payload)
-
+                raise RuntimeError(str(payload.get("error") or "PI_PROTOCOL_ERROR"))
             elif ftype == "run.settled":
-                # Belt and braces: the Cell should always emit a terminal event
-                # before settling, but a settle without one must not hang us.
-                if terminal is None:
-                    status = str(payload.get("terminal_status") or "failed")
-                    terminal = PiRunOutcome(
-                        terminal_status="success" if status == "success" else status,
-                        answer="".join(answer_parts),
-                        error_code="" if status == "success" else "PI_SETTLED_WITHOUT_TERMINAL_EVENT",
-                        error_message=str(payload.get("error") or ""),
-                        usage=usage,
-                        last_sequence=highest_sequence,
-                    )
-                break
-
-        if terminal is None:
-            terminal = PiRunOutcome(
-                terminal_status="failed",
-                answer="".join(answer_parts),
-                error_code="PI_RUN_INCOMPLETE",
-                error_message="Pi 运行时未产出终态",
-                last_sequence=highest_sequence,
-            )
-
-        # A run cut short by us still owes the record stream a terminal event,
-        # otherwise history replay shows a turn that never ends.
-        if terminal.error_code in {"PI_RUN_TIMEOUT", "PI_RUN_IDLE_TIMEOUT", "CELL_LOSS", "PI_RUN_INCOMPLETE"}:
-            writer.ingest(
-                {
-                    "event_id": f"ev-{ctx.task_id}-terminal",
-                    "run_id": ctx.task_id,
-                    "task_id": ctx.task_id,
-                    "task_attempt_id": ctx.task_id,
-                    "sequence": highest_sequence + 1,
-                    "type": "run.failed",
-                    "payload": {"error_code": terminal.error_code, "message": terminal.error_message},
-                }
-            )
-        return terminal
-
+                raise RuntimeError("PI_SETTLED_WITHOUT_TERMINAL_EVENT")
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        # A cancel that lands between polls makes the segment commit refuse
+        # ("no longer running"); that is still the user's cancel, not a failure.
+        if cancel_deadline is None and cancel_reason and await cancel_reason():
+            cancel_deadline = time.monotonic()
+        code = "task_cancelled" if cancel_deadline is not None else str(exc)
+        run_id = ctx.run_id or ctx.task_id
+        writer.ingest({"event_id": f"ev-{run_id}-terminal", "run_id":run_id,
+            "task_id":ctx.task_id,"task_attempt_id":run_id,"sequence":highest_sequence+1,
+            "type":"run.cancelled" if cancel_deadline is not None else "run.failed",
+            "payload":{"error_code":code,"message":str(exc)}})
+        return PiRunOutcome(terminal_status="cancelled" if cancel_deadline is not None else "failed",
+            answer="".join(answer_parts), error_code=code, error_message=str(exc), usage=usage,last_sequence=highest_sequence)
     finally:
-        if pending is not None:
-            pending.cancel()
-        await channel.send("cell.shutdown", {})
-        await _terminate(process, ctx.task_id)
+        await _terminate(process,ctx.task_id)
         stderr_task.cancel()
         try:
             await stderr_task
-        except (asyncio.CancelledError, Exception):  # noqa: B014 - cleanup must not raise
+        except (asyncio.CancelledError,Exception):
             pass
-
-
-async def _resolve_interaction(
-    handler: InteractionHandler | None, frame: dict[str, Any], task_id: str
-) -> dict[str, Any] | None:
-    """Ask the user; any failure becomes an error result rather than a stuck Cell.
-
-    ``None`` means the run was cancelled: nothing is sent back, the run loop's
-    ``run.cancel`` ends the waiting tool.
-    """
-    from core.task_control import RunnerStoppedError, TaskCancelledError
-
-    kind = str(frame.get("kind") or "")
-    request_id = str(frame.get("request_id") or "")
-    payload = frame.get("payload") if isinstance(frame.get("payload"), dict) else {}
-    if handler is None or not request_id or kind not in {"question", "plan", "permission"}:
-        return {"error": "当前运行不支持向用户提问或提交计划"}
-    try:
-        return await handler(kind, request_id, payload)
-    except (TaskCancelledError, RunnerStoppedError):
-        return None
-    except Exception:
-        logger.exception("pi_cell.interaction_failed task_id=%s kind=%s", task_id, kind)
-        return {"error": "记录交互失败，请直接在回答中向用户说明"}
+        if ctx.sandbox and not cell_settled:
+            from core.sandbox_config import remove_segment_sandbox
+            await remove_segment_sandbox(ctx.sandbox)
 
 
 def _outcome_from_terminal_event(

@@ -233,27 +233,6 @@
                   </button>
                 </div>
               </section>
-              <section class="config-section">
-                <div class="section-title">
-                  <h3>
-                    <Icon name="code" />工具<span class="count">{{
-                      form.allowed_tools.length
-                    }}</span>
-                  </h3>
-                </div>
-                <div class="tools">
-                  <button
-                    v-for="tool in visibleTools"
-                    :key="tool"
-                    class="tool"
-                    :class="{ off: !form.allowed_tools.includes(tool) }"
-                    :aria-pressed="form.allowed_tools.includes(tool)"
-                    @click="toggleTool(tool)"
-                  >
-                    <Icon name="check" />{{ tool }}
-                  </button>
-                </div>
-              </section>
               <details class="config-section advanced-details">
                 <summary>
                   <h3><Icon name="database" />数据与权限</h3>
@@ -512,8 +491,7 @@
           <dt>配置内容</dt>
           <dd>
             {{ form.skill_folders.length }} Skills ·
-            {{ form.mcp_server_ids.length }} MCP ·
-            {{ form.allowed_tools.length }} 工具
+            {{ form.mcp_server_ids.length }} MCP
           </dd>
         </div>
         <div>
@@ -595,7 +573,6 @@ const form = reactive({
   name: "",
   description: "",
   system_prompt: "",
-  allowed_tools: [],
   mcp_server_ids: [],
   skill_folders: [],
   max_turns: 0,
@@ -615,7 +592,7 @@ const draft = reactive({
 const builtinPrompt = ref(""),
   envVarsText = ref("{}"),
   baseline = ref("");
-const capabilities = reactive({ tools: [], skills: [], mcp_servers: [] });
+const capabilities = reactive({ skills: [], mcp_servers: [] });
 const activeResourcePicker = ref("");
 const authUserOptions = ref([]),
   authUserLoading = ref(false);
@@ -645,9 +622,6 @@ const previewComposerConfig = computed(() => ({
   slashCommands: buildCommands(form.skill_folders),
   uploadBeforeConversation: true,
 }));
-const visibleTools = computed(() =>
-  canManage.value ? capabilities.tools : form.allowed_tools,
-);
 const nextVersion = computed(() => Number(draft.published_version || 0) + 1);
 const visibilityLabel = computed(
   () =>
@@ -805,7 +779,6 @@ function buildPayload() {
     name: form.name,
     description: form.description,
     system_prompt: form.system_prompt,
-    allowed_tools: [...form.allowed_tools],
     mcp_server_ids: [...form.mcp_server_ids],
     skill_folders: [...form.skill_folders],
     max_turns: Number(form.max_turns || 0),
@@ -911,12 +884,6 @@ async function searchAuthUsers(keyword = "") {
 }
 const authUserLabel = (user) =>
   user.display_name ? `${user.display_name}（${user.user_id}）` : user.user_id;
-const toggleTool = (tool) => {
-  if (canManage.value)
-    form.allowed_tools = form.allowed_tools.includes(tool)
-      ? form.allowed_tools.filter((t) => t !== tool)
-      : [...form.allowed_tools, tool];
-};
 const optionsFor = (kind) =>
   kind === "skills"
     ? capabilities.skills.map((s) => ({

@@ -10,14 +10,15 @@
 import { CellChannel, logDiagnostic } from "./protocol/channel.js";
 import { Cell } from "./kernel/cell.js";
 import { resolveRuntimeModel } from "./providers/stream-fn-resolver.js";
-import { InteractionBroker } from "./interaction/interaction-broker.js";
+
 import type { CellInitPayload, ProtocolFrame } from "./protocol/frames.js";
 
 function bootstrap(): void {
   const channel = new CellChannel(process.stdin, process.stdout);
   const cell = new Cell(resolveRuntimeModel);
-  const broker = new InteractionBroker((payload) => channel.send("interaction.request", payload));
+
   let running = false;
+  const operationAcks = new Map<string, () => void>();
 
   channel.onFrame(async (frame: ProtocolFrame) => {
     switch (frame.type) {
@@ -28,19 +29,28 @@ function bootstrap(): void {
         }
         running = true;
         const init = frame.payload as unknown as CellInitPayload;
-        channel.send("cell.ready", { manifest: { runtime_kind: "pi_agent_core", protocol_version: 1 } });
+        channel.send("cell.ready", { manifest: { runtime_kind: "pi_agent_core", protocol_version: 2 } });
+        let terminalEvent: Record<string, unknown> | undefined;
         try {
           const result = await cell.run(
             init,
             (event) => {
-              channel.send("run.event", event as unknown as Record<string, unknown>);
+              if (["run.completed", "run.failed", "run.cancelled", "run.suspended"].includes(event.type)) terminalEvent = event as unknown as Record<string, unknown>;
+              else channel.send("run.event", event as unknown as Record<string, unknown>);
             },
             (detail) => {
               channel.send("run.heartbeat", detail);
             },
-            broker
+            async (requestId, result) => {
+              const committed = new Promise<void>(resolve => operationAcks.set(requestId, resolve));
+              channel.send("operation.result", { request_id: requestId, result });
+              await committed;
+            }
           );
-          channel.send("run.settled", result as unknown as Record<string, unknown>);
+          if (result.checkpoint) channel.send("session.entries", { ...result.checkpoint, tool_calls: result.tool_calls, turns: result.turns } as unknown as Record<string, unknown>);
+          if (terminalEvent) channel.send("run.event", terminalEvent);
+          channel.send(result.terminal_status === "parked" ? "run.parked" : "run.settled",
+            { ...result, checkpoint: undefined } as unknown as Record<string, unknown>);
         } finally {
           running = false;
           // One run per Cell process: the control plane spawns a fresh child per
@@ -55,13 +65,6 @@ function bootstrap(): void {
         }
         return;
       }
-      case "interaction.resolved": {
-        const payload = frame.payload as { request_id?: string; result?: Record<string, unknown> };
-        if (!broker.resolve(String(payload?.request_id ?? ""), payload?.result ?? {})) {
-          logDiagnostic(`interaction.resolved for unknown request ${String(payload?.request_id ?? "")}`);
-        }
-        return;
-      }
       case "run.cancel": {
         logDiagnostic(`cancel requested: ${String((frame.payload as { reason?: string })?.reason ?? "")}`);
         cell.cancel();
@@ -71,6 +74,12 @@ function bootstrap(): void {
         channel.close();
         await channel.flush();
         process.exit(0);
+        return;
+      }
+      case "operation.saved": {
+        const requestId = String((frame.payload as { request_id?: string }).request_id ?? "");
+        operationAcks.get(requestId)?.();
+        operationAcks.delete(requestId);
         return;
       }
       default: {

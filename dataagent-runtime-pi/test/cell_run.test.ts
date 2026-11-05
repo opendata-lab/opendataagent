@@ -1,3 +1,4 @@
+import { sandboxFixture } from "./runtime-fixture.js";
 /**
  * Cell run lifecycle: event shape, terminal guarantees, tool gating.
  *
@@ -5,7 +6,7 @@
  * this Cell's behaviour, not a model's.
  */
 
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -15,13 +16,22 @@ import { Cell } from "../src/kernel/cell.js";
 import { DEFAULT_CONTEXT_WINDOW, resolveModel } from "../src/providers/stream-fn-resolver.js";
 import type { CellInitPayload, NeutralAgentEvent } from "../src/protocol/frames.js";
 
+const workspaces: string[] = [];
+afterEach(() => {
+  for (const root of workspaces.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root + "-results", { recursive: true, force: true });
+  }
+});
 function workspace(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "odw-cell-"));
+  workspaces.push(dir);
   return dir;
 }
 
 function initPayload(root: string, overrides: Partial<CellInitPayload> = {}): CellInitPayload {
   return {
+    ...sandboxFixture(root),
     run_id: "task-1",
     task_id: "task-1",
     topic_id: "topic-1",
@@ -29,18 +39,6 @@ function initPayload(root: string, overrides: Partial<CellInitPayload> = {}): Ce
     messages: [{ role: "user", content: "hi" }],
     model: { provider_id: "faux", api_format: "/v1/messages", model_id: "faux-1" },
     workspace: { project_cwd: root },
-    boundary_policy: {
-      policy_version: 1,
-      profile: "pi_agent_core",
-      workspace_root: root,
-      allowed_roots: [root],
-      allowed_executables: [],
-      discard_sinks: ["/dev/null"],
-      tool_path_keys: { Read: ["file_path"], LS: ["path"] },
-      operator_chars: "();<>|&",
-      tool_result_root: null,
-      readonly_commands: [],
-    },
     skills: [],
     runtime_env: {},
     limits: {
@@ -57,7 +55,7 @@ function initPayload(root: string, overrides: Partial<CellInitPayload> = {}): Ce
 /** A StreamFn that emits one text answer and stops. */
 function textStreamFactory(text: string) {
   return () => ({
-    model: {} as never,
+    model: resolveModel("faux", "faux-1", "/v1/messages"),
     streamFn: (() => {
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
@@ -88,7 +86,7 @@ function textStreamFactory(text: string) {
 /** A StreamFn that emits thinking followed by text answer and stops. */
 function thinkingAndTextStreamFactory(thought: string, answer: string) {
   return () => ({
-    model: {} as never,
+    model: resolveModel("faux", "faux-1", "/v1/messages"),
     streamFn: (() => {
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
@@ -248,7 +246,7 @@ test("a model stream failure is reported as failed, not success", async () => {
   // carrying no answer, and a broken turn is persisted as a good one.
   const root = workspace();
   const failing = () => ({
-    model: {} as never,
+    model: resolveModel("faux", "faux-1", "/v1/messages"),
     streamFn: (() => {
       throw new Error("provider exploded");
     }) as never,
@@ -269,7 +267,7 @@ test("a reply cut off at the output ceiling is reported as failed, not success",
   // and the run used to be persisted as a success that produced nothing.
   const root = workspace();
   const truncated = () => ({
-    model: { maxTokens: 8192 } as never,
+    model: { ...resolveModel("faux", "faux-1", "/v1/messages"), maxTokens: 8192 },
     streamFn: (() => {
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
@@ -386,11 +384,8 @@ test("replays assistant history without malforming the transcript", async () => 
   // object outright.
   const root = workspace();
   const init = initPayload(root, {
-    messages: [
-      { role: "user", content: "上一轮问题" },
-      { role: "assistant", content: "上一轮回答" },
-      { role: "user", content: "这一轮问题" },
-    ],
+    history: [{ role: "user", content: "上一轮问题" }, { role: "assistant", content: "上一轮回答" }],
+    prompt: "这一轮问题",
   });
 
   const { events, result } = await runCell(init, textStreamFactory("second turn answer"));
@@ -406,7 +401,7 @@ test("the transcript handed to the agent keeps assistant turns as assistant", as
   let seenRoles: string[] = [];
 
   const factory = () => ({
-    model: { api: "faux", provider: "faux", id: "faux-1" } as never,
+    model: resolveModel("faux", "faux-1", "/v1/messages"),
     streamFn: ((_model: unknown, context: { messages?: Array<{ role: string }> }) => {
       seenRoles = (context?.messages ?? []).map((m) => m.role);
       const stream = createAssistantMessageEventStream();
@@ -431,18 +426,15 @@ test("the transcript handed to the agent keeps assistant turns as assistant", as
 
   await runCell(
     initPayload(root, {
-      messages: [
-        { role: "user", content: "q1" },
-        { role: "assistant", content: "a1" },
-        { role: "user", content: "q2" },
-      ],
+      history: [{ role: "user", content: "q1" }, { role: "assistant", content: "a1" }],
+      prompt: "q2",
     }),
     factory as never
   );
 
   // pi 1.x hands the system prompt over as a leading system message; the turn
   // structure under test is everything after it.
-  assert.deepEqual(seenRoles, ["system", "user", "assistant", "user"]);
+  assert.deepEqual(seenRoles.filter(role => role !== "system"), ["user", "assistant", "user"]);
 });
 
 /**
@@ -451,13 +443,13 @@ test("the transcript handed to the agent keeps assistant turns as assistant", as
  */
 function toolLoopFactory(toolTurns: number, calls: { count: number }) {
   return () => ({
-    model: { api: "faux", provider: "faux", id: "faux-1" } as never,
+    model: resolveModel("faux", "faux-1", "/v1/messages"),
     streamFn: (() => {
       const stream = createAssistantMessageEventStream();
       const index = calls.count++;
       const wantsTool = index < toolTurns;
       const content = wantsTool
-        ? [{ type: "toolCall" as const, id: `loop-${index}`, name: "Bash", arguments: { command: "true" } }]
+        ? [{ type: "toolCall" as const, id: `loop-${index}`, name: "bash", arguments: { command: "true" } }]
         : [{ type: "text" as const, text: "done" }];
       queueMicrotask(() => {
         const message = {
@@ -535,7 +527,7 @@ test("a failing tool call surfaces as is_error in the event stream", async () =>
   let turn = 0;
 
   const factory = () => ({
-    model: { api: "faux", provider: "faux", id: "faux-1" } as never,
+    model: resolveModel("faux", "faux-1", "/v1/messages"),
     streamFn: (() => {
       const stream = createAssistantMessageEventStream();
       const wantsTool = turn++ === 0;
@@ -544,7 +536,7 @@ test("a failing tool call surfaces as is_error in the event stream", async () =>
             {
               type: "toolCall" as const,
               id: "tc-1",
-              name: "Bash",
+              name: "bash",
               arguments: { command: "echo before-failure; exit 7" },
             },
           ]
@@ -573,7 +565,7 @@ test("a failing tool call surfaces as is_error in the event stream", async () =>
   const completed = events.find((e) => e.type === "tool.completed");
   assert.ok(completed, "expected a tool.completed event");
   assert.equal(completed.payload.is_error, true, "a failed command must be reported as an error");
-  assert.equal(completed.payload.tool_name, "Bash");
+  assert.equal(completed.payload.tool_name, "bash");
   // The output has to survive the failure, or the model cannot diagnose it.
   assert.match(JSON.stringify(completed.payload.output), /before-failure/);
 });
@@ -588,7 +580,7 @@ test("records token usage in the shape the rest of the stack reads", async () =>
   // camelCase Usage verbatim would leave the display blank anyway.
   const root = workspace();
   const factory = () => ({
-    model: { api: "faux", provider: "faux", id: "faux-1" } as never,
+    model: resolveModel("faux", "faux-1", "/v1/messages"),
     streamFn: (() => {
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
@@ -687,76 +679,11 @@ test("a heartbeat sink is optional and does not change the run outcome", async (
   assert.equal(beats.length, 0, "no slow tool in this run, so no beat is due");
 });
 
-test("folding keeps the tool's own details alongside the fold provenance", async () => {
-  // Registering only the content array dropped `details` for exactly the large
-  // results the UI registry exists to protect, so the transcript kept the full
-  // payload but lost what the tool said about it — and the fold provenance that
-  // replaced it looked like the whole story.
-  //
-  // Drives a real Read over a file past the fold threshold, so the assertion is
-  // about what afterToolCall actually registers, not about a copy hand-placed
-  // into the registry.
-  const root = workspace();
-  const big = "x".repeat(64 * 1024);
-  fs.writeFileSync(path.join(root, "big.txt"), big);
-  let turn = 0;
-
-  const factory = () => ({
-    model: { api: "faux", provider: "faux", id: "faux-1" } as never,
-    streamFn: (() => {
-      const stream = createAssistantMessageEventStream();
-      const wantsTool = turn++ === 0;
-      const content = wantsTool
-        ? [
-            {
-              type: "toolCall" as const,
-              id: "tc-fold",
-              name: "Read",
-              arguments: { file_path: path.join(root, "big.txt") },
-            },
-          ]
-        : [{ type: "text" as const, text: "done" }];
-      queueMicrotask(() => {
-        const message = {
-          role: "assistant" as const,
-          content,
-          api: "faux" as const,
-          provider: "faux",
-          model: "faux-1",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          stopReason: wantsTool ? ("toolUse" as const) : ("stop" as const),
-          timestamp: Date.now(),
-        };
-        stream.push({ type: "start", partial: message as never });
-        stream.push({ type: "done", reason: wantsTool ? "toolUse" : "stop", message: message as never });
-        stream.end();
-      });
-      return stream;
-    }) as never,
-  });
-
-  const { events } = await runCell(initPayload(root), factory as never);
-
-  const completed = events.find((e) => e.type === "tool.completed");
-  assert.ok(completed, "expected a tool.completed event");
-  const meta = completed.payload.output_meta as Record<string, unknown>;
-
-  // The tool's own report survives.
-  assert.equal(typeof meta.byte_count, "number", "Read's byte count must survive folding");
-  assert.equal(meta.truncated, false);
-  // And the fold provenance sits beside it rather than on top of it.
-  const fold = meta.fold as Record<string, unknown>;
-  assert.equal(typeof fold.result_ref, "string");
-  assert.equal(fold.original_bytes, 64 * 1024);
-  // The transcript still holds the whole payload, not the digest.
-  assert.match(JSON.stringify(completed.payload.output), /x{2000}/);
-});
-
 /** Drive real tools with a deterministic model, then finish on the next turn. */
 function bashBatchFactory(commands: string[]) {
   let turn = 0;
   return () => ({
-    model: { api: "faux", provider: "faux", id: "faux-1" } as never,
+    model: resolveModel("faux", "faux-1", "/v1/messages"),
     streamFn: (() => {
       const stream = createAssistantMessageEventStream();
       const wantsTool = turn++ === 0;
@@ -765,7 +692,7 @@ function bashBatchFactory(commands: string[]) {
           role: "assistant" as const,
           content: wantsTool
             ? commands.map((command, index) => ({
-                type: "toolCall", id: `budget-${index}`, name: "Bash", arguments: { command },
+                type: "toolCall", id: `budget-${index}`, name: "bash", arguments: { command },
               }))
             : [{ type: "text", text: "done" }],
           api: "faux", provider: "faux", model: "faux-1",
@@ -791,7 +718,7 @@ for (const timeout of [0.05, 2]) {
     const completed = events.find((event) => event.type === "tool.completed");
     assert.ok(completed);
     assert.equal(completed.payload.is_error, timeout < 0.3);
-    if (timeout < 0.3) assert.match(JSON.stringify(completed.payload.output), /TOOL_TIMEOUT/);
+    if (timeout < 0.3) assert.match(JSON.stringify(completed.payload.output), /SANDBOX_COMMAND_TIMEOUT/);
   });
 }
 
@@ -805,6 +732,70 @@ for (const count of [2, 3]) {
     const successes = events.filter((event) => event.type === "tool.completed" && !event.payload.is_error);
     assert.equal(successes.length, 2);
     assert.equal(result.terminal_status, count === 2 ? "success" : "failed");
-    if (count > 2) assert.equal(events.at(-1)?.payload.error_code, "PI_LIMIT_EXCEEDED");
+    if (count > 2) {
+      assert.equal(events.at(-1)?.payload.error_code, "PI_LIMIT_EXCEEDED");
+      // The over-budget call is closed for the UI instead of left running.
+      assert.equal(events.filter((event) => event.type === "tool.denied").length, 1);
+    }
   });
 }
+
+
+test("zero remaining tool budget cannot execute another sandbox command", async (t) => {
+  const root = workspace(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const init = initPayload(root); init.limits.max_tool_calls = 0;
+  const { result } = await runCell(init, bashBatchFactory(["touch forbidden.txt"]) as never);
+  assert.equal(result.terminal_status, "failed");
+  assert.equal(fs.existsSync(path.join(root, "forbidden.txt")), false);
+});
+
+test("resumed segments keep distinct frontend turn ids", async (t) => {
+  const root = workspace(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const init = initPayload(root); init.turn_offset = 4;
+  const { events } = await runCell(init, textStreamFactory("resumed"));
+  assert.equal(events.find(e => e.type === "turn.started")?.payload.turn_id, "turn-5");
+});
+
+test("result storage failure ends the segment before executing tools", async (t) => {
+  const root = workspace(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const init = initPayload(root); init.results_dir = path.join(root, "not-a-directory");
+  fs.writeFileSync(init.results_dir, "occupied");
+  const { result } = await runCell(init, bashBatchFactory(["touch forbidden.txt"]) as never);
+  assert.equal(result.terminal_status, "failed");
+  assert.match(result.error ?? "", /RESULT_STORAGE_FAILED/);
+  assert.equal(fs.existsSync(path.join(root, "forbidden.txt")), false);
+});
+
+
+test("large structured bash output stays whole for UI with bounded model context", async (t) => {
+  const root = workspace(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const init = initPayload(root);
+  const payload = { kind: "chart_spec", dataset: Array.from({length: 2000}, (_, id) => ({ id, value: id })) };
+  const command = "python -c 'import json; print(json.dumps(" + JSON.stringify(payload) + "))'";
+  const { events, result } = await runCell(init, bashBatchFactory([command]) as never);
+  assert.equal(result.terminal_status, "success", result.error);
+  const completed = events.find(e => e.type === "tool.completed")!;
+  const ui = completed.payload.output as Array<{text:string}>;
+  assert.deepEqual(JSON.parse(ui[0].text), payload);
+  const entries = result.checkpoint?.entries as Array<{message?:{role?:string;content?:Array<{text?:string}>}}>;
+  const toolResults = entries.filter(e => e.message?.role === "toolResult");
+  assert.equal(toolResults.length, 1);
+  const modelText = toolResults[0].message?.content?.[0]?.text ?? "";
+  assert.match(modelText, /Output saved:/);
+  assert.ok(Buffer.byteLength(modelText) < 17 * 1024);
+  assert.equal(modelText.includes('"id": 1999'), false);
+});
+
+test("unconfigured model context window falls back to governance max_context_tokens", async (t) => {
+  const root = workspace(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const windows: unknown[] = [];
+  const base = textStreamFactory("ok");
+  const capture = ((...args: unknown[]) => { windows.push(args[5]); return (base as any)(...args); }) as typeof base;
+  const init = initPayload(root);
+  delete (init.model as { context_window?: number }).context_window;
+  init.governance_settings = { ...init.governance_settings, max_context_tokens: 64_000 };
+  await runCell(init, capture);
+  init.model = { ...init.model, context_window: 128_000 };
+  await runCell(init, capture);
+  assert.deepEqual(windows, [64_000, 128_000]);
+});

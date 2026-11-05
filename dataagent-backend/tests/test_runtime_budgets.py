@@ -19,8 +19,8 @@ from core.task_executor import TaskExecutionInput, TaskExecutionResult
 @pytest.mark.parametrize("mode,turns,calls,total,bash", [
     (None, 24, 100, 360, 300),
     ("interactive", 24, 100, 360, 300),
-    ("auto", 40, 200, 1800, 900),
-    ("background", 40, 200, 1800, 900),
+    ("auto", 40, 200, 1800, 600),
+    ("background", 40, 200, 1800, 600),
 ])
 def test_no_overrides_selects_bounded_mode_defaults(mode, turns, calls, total, bash):
     cfg = Settings(_env_file=None)
@@ -54,7 +54,7 @@ def test_global_budgets_reject_unbounded_or_negative_values(field, invalid):
 
 
 @pytest.mark.parametrize("patch", [
-    {"agent_background_bash_timeout_seconds": 120},
+    {"agent_background_bash_timeout_seconds": 1800},
     {"agent_interactive_timeout_seconds": 300},
 ])
 def test_invalid_timeout_chain_is_rejected(patch):
@@ -67,26 +67,3 @@ def test_submission_and_execution_share_total_budget_and_preserve_submitted_valu
     monkeypatch.setattr(task_submission_service, "get_settings", lambda: cfg)
     assert task_submission_service.resolve_task_timeouts("auto")["timeout_seconds"] == 2400
     assert resolve_run_limits(cfg, "auto", total_timeout_seconds=1800)["total_timeout_seconds"] == 1800
-
-
-@pytest.mark.asyncio
-async def test_sandbox_receives_resolved_control_plane_budget(monkeypatch):
-    cfg = Settings(_env_file=None, dataagent_sandbox_mode="container",
-                   agent_background_max_tool_calls=260, dataagent_run_idle_timeout_seconds=240)
-    monkeypatch.setattr(task_executor, "get_settings", lambda: cfg)
-    captured = {}
-
-    async def runner(params, **kwargs):
-        # The same dataclass serialization/reconstruction used by runner + child.
-        received = TaskExecutionInput(**asdict(params))
-        captured.update(received.runtime_limits)
-        return TaskExecutionResult(task_status="finished", content="ok")
-
-    monkeypatch.setattr(task_executor, "_execute_task_stream_via_runner", runner)
-    params = TaskExecutionInput(task_id="t", topic_id="tp", question="hi", history=[],
-                                resume_session_id=None, provider_id="p", model="m", database_hint=None,
-                                execution_mode="auto", timeout_seconds=1200,
-                                agent_snapshot={"max_turns": 18})
-    await task_executor.execute_task_stream(params, emit=lambda event: None)
-    assert captured == dict(max_turns=18, max_tool_calls=260, total_timeout_seconds=1200,
-                            idle_timeout_seconds=240, bash_timeout_seconds=900)

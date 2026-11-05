@@ -126,8 +126,8 @@ class TestTaskReadsAreScoped:
             "api_get_task_message",
             "api_stream_sdk_events",
             "api_cancel_task",
-            "api_submit_permission_decision",
-            "api_submit_question_answer",
+            "_record_permission_decision",
+            "_record_question_answer",
         ],
     )
     def test_every_task_route_resolves_a_request_context(self, route_name):

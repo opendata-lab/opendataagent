@@ -165,3 +165,19 @@ def test_format_answer_reports_error_on_invalid_json():
 
     assert payload["kind"] == "python_execution"
     assert payload["error"]
+
+
+def test_generate_report_reads_complete_saved_json_file(tmp_path):
+    source = tmp_path / "saved.json"
+    source.write_text(json.dumps({"rows": [{"id": i} for i in range(1000)], "warning": "metadata"}))
+    output = tmp_path / "full.xlsx"
+    result = subprocess.run([sys.executable, str(GENERATE_REPORT), "--input-file", str(source),
+        "--output", str(output)], check=True, capture_output=True, text=True)
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "success"
+    assert payload["row_count"] == 1000
+    from zipfile import ZipFile
+    from xml.etree import ElementTree
+    with ZipFile(output) as workbook:
+        sheet = ElementTree.fromstring(workbook.read("xl/worksheets/sheet1.xml"))
+        assert len(sheet.findall('.//{*}sheetData/{*}row')) == 1001

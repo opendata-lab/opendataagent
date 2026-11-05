@@ -19,7 +19,7 @@ class DraftConflict(ValueError):
 
 
 def configuration(profile: dict[str, Any]) -> dict[str, Any]:
-    keys = ("agent_id", "name", "description", "system_prompt", "allowed_tools",
+    keys = ("agent_id", "name", "description", "system_prompt",
             "mcp_server_ids", "skill_folders", "max_turns", "plan_timeout_action", "env_vars",
             "visibility", "preset_questions", "is_default", "is_builtin")
     return {key: profile.get(key, [] if key == "preset_questions" else None) for key in keys}
@@ -62,7 +62,7 @@ class AgentDraftStore:
         return row
 
     def _result(self, row: dict) -> dict:
-        return {**json.loads(row["draft_json"]), "revision": int(row["revision"]),
+        return {**configuration(json.loads(row["draft_json"])), "revision": int(row["revision"]),
                 "published_version": int(row["published_version"]),
                 "has_changes": row.get("published_json") != row["draft_json"],
                 "preview_task_id": row.get("preview_task_id"),
@@ -107,7 +107,7 @@ class AgentDraftStore:
                 for agent_id in ids:
                     item = self._result(self._read(cur, agent_id))
                     result.append({key: item[key] for key in (
-                        "agent_id", "name", "description", "allowed_tools", "mcp_server_ids",
+                        "agent_id", "name", "description", "mcp_server_ids",
                         "skill_folders", "is_default", "is_builtin",
                         "revision", "published_version", "has_changes")} |
                         {"visibility_mode": (item.get("visibility") or {}).get("mode", "all")})

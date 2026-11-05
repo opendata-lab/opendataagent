@@ -21,12 +21,13 @@ DEFAULT_AGENT_NAME = "默认助手"
 PERMISSION_MODES: tuple[str, ...] = ("default", "acceptEdits", "plan", "bypassPermissions")
 DEFAULT_PERMISSION_MODE = "default"
 
-SAFE_AGENT_TOOLS = ["Skill", "Bash", "Read", "LS", "Glob", "Grep"]
-GENERAL_AGENT_TOOLS = ["Read", "LS", "Glob", "Grep"]
 
 RESERVED_ENV_KEYS = {"PATH", "HOME", "VIRTUAL_ENV", "TZ"}
 RESERVED_ENV_PREFIXES = (
     "ANTHROPIC_",
+    "OPENAI_",
+    "SKILLS_ROOT",
+    "SESSION_MYSQL_",
     "DATAAGENT_",
     "MYSQL_",
     "REDIS_",
@@ -95,15 +96,6 @@ def normalize_permission_mode(permission_mode: Any) -> str:
     if requested in PERMISSION_MODES:
         return requested
     return DEFAULT_PERMISSION_MODE
-
-
-def _validate_tools(values: Any) -> list[str]:
-    tools = _dedupe_strings(values)
-    allowed = set(SAFE_AGENT_TOOLS)
-    unknown = [tool for tool in tools if tool not in allowed]
-    if unknown:
-        raise ValueError(f"unsupported allowed tool: {unknown[0]}")
-    return tools
 
 
 def _validate_members(values: Any, available: set[str], *, label: str) -> list[str]:
@@ -188,7 +180,6 @@ def normalize_agent_profile_payload(
     name = _validate_name(data.get("name", base.get("name") if has_existing else ""))
     description = str(data.get("description", base.get("description") or "") or "").strip()
     system_prompt = str(data.get("system_prompt", base.get("system_prompt") or "") or "").strip()
-    allowed_tools = _validate_tools(data.get("allowed_tools", base.get("allowed_tools") or list(SAFE_AGENT_TOOLS)))
     mcp_server_ids = _validate_members(
         data.get("mcp_server_ids", base.get("mcp_server_ids") or []),
         available_mcp_server_ids,
@@ -214,7 +205,6 @@ def normalize_agent_profile_payload(
         "name": name,
         "description": description,
         "system_prompt": system_prompt,
-        "allowed_tools": allowed_tools,
         "mcp_server_ids": mcp_server_ids,
         "skill_folders": skill_folders,
         "max_turns": max_turns,
@@ -231,7 +221,6 @@ def build_agent_snapshot(profile: dict[str, Any]) -> dict[str, Any]:
         "name": str(profile.get("name") or DEFAULT_AGENT_NAME),
         "description": str(profile.get("description") or ""),
         "system_prompt": str(profile.get("system_prompt") or ""),
-        "allowed_tools": _dedupe_strings(profile.get("allowed_tools")),
         "mcp_server_ids": _dedupe_strings(profile.get("mcp_server_ids")),
         "skill_folders": _dedupe_strings(profile.get("skill_folders")),
         "max_turns": int(profile.get("max_turns") or 0),
@@ -274,7 +263,6 @@ def default_agent_payload() -> dict[str, Any]:
         "name": DEFAULT_AGENT_NAME,
         "description": "通用对话与分析入口，预置图表与报告能力。",
         "system_prompt": "",
-        "allowed_tools": list(GENERAL_AGENT_TOOLS),
         "mcp_server_ids": [],
         "skill_folders": [
             "chart-visualization",
@@ -336,7 +324,6 @@ class AgentProfileStore:
             "name": str(row.get("name") or ""),
             "description": str(row.get("description") or ""),
             "system_prompt": str(row.get("system_prompt") or ""),
-            "allowed_tools": _dedupe_strings(_safe_json_load(row.get("allowed_tools_json"), [])),
             "mcp_server_ids": _dedupe_strings(_safe_json_load(row.get("mcp_server_ids_json"), [])),
             "skill_folders": _dedupe_strings(_safe_json_load(row.get("skill_folders_json"), [])),
             "max_turns": int(row.get("max_turns") or 0),
@@ -415,7 +402,6 @@ class AgentProfileStore:
                 name = VALUES(name),
                 description = VALUES(description),
                 system_prompt = VALUES(system_prompt),
-                allowed_tools_json = VALUES(allowed_tools_json),
                 mcp_server_ids_json = VALUES(mcp_server_ids_json),
                 skill_folders_json = VALUES(skill_folders_json),
                 max_turns = VALUES(max_turns),
@@ -432,7 +418,7 @@ class AgentProfileStore:
                 str(profile.get("name") or ""),
                 str(profile.get("description") or ""),
                 str(profile.get("system_prompt") or ""),
-                _json_dump(_dedupe_strings(profile.get("allowed_tools"))),
+                _json_dump([]),
                 _json_dump(_dedupe_strings(profile.get("mcp_server_ids"))),
                 _json_dump(_dedupe_strings(profile.get("skill_folders"))),
                 int(profile.get("max_turns") or 0),
@@ -646,7 +632,6 @@ def agent_capabilities(skill_documents: list[dict[str, Any]]) -> dict[str, Any]:
         )
         item["enabled"] = bool(item.get("enabled")) or bool(document.get("enabled"))
     return {
-        "tools": list(SAFE_AGENT_TOOLS),
         "mcp_servers": available_mcp_servers(),
         "skills": sorted(folders.values(), key=lambda item: item["folder"]),
     }

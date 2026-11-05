@@ -16,6 +16,7 @@ import json
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,9 +26,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.pi_runtime import (  # noqa: E402
     PiRunContext,
     PiRuntimeUnavailable,
-    execute_pi_run,
+    execute_pi_run as _execute_pi_run,
     resolve_cell_command,
 )
+
+
+async def execute_pi_run(*args, **kwargs):
+    async def commit(*_): pass
+    kwargs.setdefault("segment_handler",commit)
+    return await _execute_pi_run(*args,**kwargs)
 
 
 class _RecordingWriter:
@@ -48,7 +55,6 @@ def _context(tmp_path: Path, **overrides: Any) -> PiRunContext:
         system_prompt="sys",
         messages=[{"role": "user", "content": "hi"}],
         project_cwd=tmp_path,
-        boundary_policy={"policy_version": 1, "allowed_roots": [str(tmp_path)]},
         total_timeout_seconds=10,
         idle_timeout_seconds=5,
         max_turns=24,
@@ -67,11 +73,13 @@ def _stub_cell(body: str) -> list[str]:
 
         def send(frame_type, payload=None):
             sys.stdout.write(json.dumps(
-                {"protocol_version": 1, "type": frame_type, "payload": payload or {}}
+                {"protocol_version": 2, "type": frame_type, "payload": payload or {}}
             ) + "\\n")
             sys.stdout.flush()
 
         def event(sequence, event_type, payload=None):
+            if event_type == "run.completed":
+                send("session.entries", {"header":{},"entries":[],"leaf_id":None,"tool_calls":0,"turns":1})
             send("run.event", {
                 "event_id": "ev-%s" % sequence,
                 "run_id": "task-1",
@@ -275,6 +283,35 @@ async def test_cancel_flag_sends_run_cancel_frame(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_cancel_check_is_throttled_not_per_frame(tmp_path: Path):
+    """A streaming reply must not trigger one cancel lookup per frame."""
+    writer = _RecordingWriter()
+    cell = _stub_cell(
+        """
+        read()
+        event(1, "run.started")
+        for i in range(500):
+            event(i + 2, "content.delta", {"delta": "x"})
+        event(502, "run.completed")
+        """
+    )
+    calls = 0
+
+    async def _cancelled() -> None:
+        nonlocal calls
+        calls += 1
+        return None
+
+    outcome = await execute_pi_run(
+        _context(tmp_path), writer=writer, cell_command=cell, cancel_reason=_cancelled
+    )
+
+    assert outcome.terminal_status == "success"
+    assert outcome.answer == "x" * 500
+    assert 1 <= calls <= 5, f"cancel polled {calls} times for 502 frames"
+
+
+@pytest.mark.asyncio
 async def test_child_is_always_reaped(tmp_path: Path):
     """Even a Cell that settles but refuses to exit must not survive the run."""
     writer = _RecordingWriter()
@@ -322,8 +359,8 @@ async def test_runtime_env_reaches_the_child(tmp_path: Path):
     cell = _stub_cell(
         """
         import os
-        read()
-        assert os.environ.get("DATAAGENT_PYTHON_BIN") == "/usr/bin/python3"
+        read_init = read()
+        assert read_init["payload"]["runtime_env"]["DATAAGENT_PYTHON_BIN"] == "/usr/bin/python3"
         event(1, "run.completed", {"terminal_status": "success"})
         """
     )
@@ -334,12 +371,13 @@ async def test_runtime_env_reaches_the_child(tmp_path: Path):
     assert outcome.terminal_status == "success"
 
 
-def test_missing_cell_entrypoint_reports_actionable_error(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("DATAAGENT_RUNTIME_PI_DIR", str(tmp_path / "nonexistent"))
-    monkeypatch.setenv("DATAAGENT_NODE_BIN", sys.executable)
+def test_missing_cell_entrypoint_reports_actionable_error(tmp_path: Path):
+    # Explicit settings: a developer .env must not mask the missing entrypoint.
+    cfg = SimpleNamespace(dataagent_node_bin=sys.executable,
+                          dataagent_runtime_pi_dir=str(tmp_path / "nonexistent"))
 
     with pytest.raises(PiRuntimeUnavailable, match="Pi Cell 入口不存在"):
-        resolve_cell_command()
+        resolve_cell_command(cfg)
 
 
 @pytest.mark.asyncio
@@ -376,6 +414,7 @@ async def test_cancel_is_bounded_when_the_cell_ignores_it(tmp_path: Path):
 
     assert outcome.terminal_status == "cancelled", "an ignored cancel is still a cancellation"
     assert elapsed < 20, f"cancel took {elapsed:.1f}s; it must be bounded by the grace period"
+    assert writer.events[-1]["type"] == "run.cancelled", "grace expiry must still record a terminal event"
 
 
 @pytest.mark.asyncio
@@ -412,88 +451,98 @@ send("interaction.request", {"request_id": "q-1", "kind": "question", "payload":
 """
 
 
-@pytest.mark.asyncio
-async def test_interaction_round_trip_pauses_the_timers(tmp_path: Path):
-    writer = _RecordingWriter()
-    cell = _stub_cell(
-        _INTERACTION_REQUEST
-        + textwrap.dedent(
-            """
-        frame = read()
-        assert frame["type"] == "interaction.resolved", frame
-        event(2, "run.completed", {"answer": json.dumps(frame["payload"])})
-        """
-        )
-    )
-
-    async def handler(kind: str, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        # Longer than the idle timeout: a person deciding is not a stalled run.
-        await asyncio.sleep(1.5)
-        return {"answers": [{"selected": ["按天"]}], "kind": kind, "request_id": request_id}
-
-    outcome = await execute_pi_run(
-        _context(tmp_path, idle_timeout_seconds=1),
-        writer=writer,
-        cell_command=cell,
-        interaction_handler=handler,
-    )
-
-    assert outcome.terminal_status == "success", outcome
-    resolved = json.loads(writer.events[-1]["payload"]["answer"])
-    assert resolved == {
-        "request_id": "q-1",
-        "result": {"answers": [{"selected": ["按天"]}], "kind": "question", "request_id": "q-1"},
-    }
+def test_cell_command_reads_dotenv_backed_settings(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    import core.pi_runtime as runtime
+    entry = tmp_path / "dist/src/main.js"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// fixture")
+    monkeypatch.delenv("DATAAGENT_NODE_BIN", raising=False)
+    monkeypatch.delenv("DATAAGENT_RUNTIME_PI_DIR", raising=False)
+    monkeypatch.setattr(runtime, "get_settings", lambda: SimpleNamespace(
+        dataagent_node_bin="/configured/node", dataagent_runtime_pi_dir=str(tmp_path)))
+    assert runtime.resolve_cell_command() == ["/configured/node", str(entry)]
 
 
 @pytest.mark.asyncio
-async def test_cancel_while_waiting_sends_run_cancel_not_an_answer(tmp_path: Path):
+@pytest.mark.parametrize('terminal', ['run.completed','run.failed','run.cancelled','run.suspended','run.parked',None])
+async def test_backend_cleanup_only_when_cell_did_not_settle(tmp_path, monkeypatch, terminal):
+    from core import sandbox_config
+    calls = []
+    async def cleanup(config): calls.append(config)
+    monkeypatch.setattr(sandbox_config, 'remove_segment_sandbox', cleanup)
+    script = 'read()\n'
+    if terminal == 'run.parked':
+        script += 'send("session.entries", {"header":{},"entries":[],"leaf_id":None})\nsend("run.parked", {})\n'
+    elif terminal:
+        script += f'event(1, {terminal!r})\n'
+    ctx = _context(tmp_path, sandbox={'cli': 'unavailable-daemon', 'runId': 'test'})
+    result = await execute_pi_run(ctx, writer=_RecordingWriter(), cell_command=_stub_cell(script))
+    assert len(calls) == (0 if terminal else 1)
+    if terminal == 'run.completed': assert result.terminal_status == 'success'
+    if terminal == 'run.parked': assert result.terminal_status == 'parked'
+
+
+@pytest.mark.asyncio
+async def test_token_usage_sums_model_turns(tmp_path):
+    script = '''
+read()
+event(1, "usage.updated", {"usage": {"input_tokens": 10, "output_tokens": 2, "cost": {"total": 0.1}}})
+event(2, "usage.updated", {"usage": {"input_tokens": 20, "output_tokens": 3, "cost": {"total": 0.2}}})
+event(3, "run.completed")
+'''
+    result = await execute_pi_run(_context(tmp_path), writer=_RecordingWriter(), cell_command=_stub_cell(script))
+    assert result.usage['input_tokens'] == 30
+    assert result.usage['output_tokens'] == 5
+    assert result.usage['cost']['total'] == pytest.approx(0.3)
+
+
+@pytest.mark.asyncio
+async def test_cancel_racing_segment_commit_is_reported_as_cancel(tmp_path: Path):
+    """The commit refuses once cancel_requested_at is set; that is the user's cancel."""
     writer = _RecordingWriter()
     cell = _stub_cell(
-        _INTERACTION_REQUEST
-        + textwrap.dedent(
-            """
-        frame = read()
-        assert frame["type"] == "run.cancel", frame
-        event(2, "run.cancelled", {"reason": frame["payload"].get("reason")})
         """
-        )
+        read()
+        event(1, "run.completed")
+        """
     )
-    cancelled = {"value": ""}
+    polls = 0
 
-    async def handler(kind: str, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        cancelled["value"] = "user_cancel"
-        await asyncio.sleep(30)
-        return {}
+    async def _cancelled():
+        nonlocal polls
+        polls += 1
+        return None if polls == 1 else "user_cancel"
 
-    async def cancel_reason() -> str:
-        return cancelled["value"]
+    async def refuse(*_):
+        raise ValueError("Session task is no longer running")
 
-    outcome = await execute_pi_run(
-        _context(tmp_path),
-        writer=writer,
-        cell_command=cell,
-        cancel_reason=cancel_reason,
-        interaction_handler=handler,
-    )
+    outcome = await execute_pi_run(_context(tmp_path), writer=writer, cell_command=cell,
+                                   cancel_reason=_cancelled, segment_handler=refuse)
 
     assert outcome.terminal_status == "cancelled"
     assert writer.events[-1]["type"] == "run.cancelled"
 
 
 @pytest.mark.asyncio
-async def test_cell_exit_while_waiting_is_cell_loss(tmp_path: Path):
+async def test_killed_cell_is_lost_even_if_a_grandchild_holds_stdout(tmp_path: Path):
+    """Linux CI: an orphaned docker exec kept the stdout socket open, so EOF never came."""
     writer = _RecordingWriter()
-    cell = _stub_cell(_INTERACTION_REQUEST + "\nsys.exit(0)\n")
-
-    async def handler(kind: str, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        await asyncio.sleep(30)
-        return {}
-
-    outcome = await asyncio.wait_for(
-        execute_pi_run(_context(tmp_path), writer=writer, cell_command=cell, interaction_handler=handler),
-        timeout=8,
+    cell = _stub_cell(
+        """
+        import os, signal, subprocess
+        read()
+        event(1, "run.started")
+        subprocess.Popen(["sleep", "30"], stdout=sys.stdout, stderr=subprocess.DEVNULL)
+        os.kill(os.getpid(), signal.SIGKILL)
+        """
     )
+    started = asyncio.get_running_loop().time()
+    outcome = await execute_pi_run(
+        _context(tmp_path, total_timeout_seconds=60, idle_timeout_seconds=0), writer=writer, cell_command=cell
+    )
+    elapsed = asyncio.get_running_loop().time() - started
 
     assert outcome.terminal_status == "failed"
     assert outcome.error_code == "CELL_LOSS"
+    assert elapsed < 10, f"loss detected after {elapsed:.1f}s"

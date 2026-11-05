@@ -39,7 +39,6 @@ describe('demoAdapter intelligent query admin endpoints', () => {
     await expect(request('get', '/api/v1/dataagent/agents/capabilities')).resolves.toMatchObject({
       code: 200,
       data: expect.objectContaining({
-        tools: expect.arrayContaining(['Skill', 'Read']),
         skills: [
           expect.objectContaining({
             folder: 'dataagent-nl2sql'

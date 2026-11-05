@@ -10,7 +10,7 @@ RUN npm ci --ignore-scripts
 COPY dataagent-runtime-pi/src ./src
 RUN npm run build && npm prune --omit=dev
 
-FROM python:3.11-slim
+FROM python:3.13-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -23,7 +23,7 @@ COPY dataagent-backend/requirements.txt /tmp/requirements.txt
 ARG PIP_INDEX_URL
 ARG PIP_TRUSTED_HOST
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl gosu passwd \
     && rm -rf /var/lib/apt/lists/*
 RUN PIP_INDEX_URL="${PIP_INDEX_URL}" PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST}" \
     pip install --no-cache-dir -r /tmp/requirements.txt
@@ -40,8 +40,11 @@ ENV DATAAGENT_RUNTIME_PI_DIR=/opt/dataagent-runtime-pi
 
 COPY dataagent-backend /opt/dataagent-backend
 
-COPY .claude/skills /app/.claude/skills
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY .claude/skills /opt/dataagent-bundled-skills
+RUN find /opt/dataagent-bundled-skills -type f -exec sha256sum {} + | sort | sha256sum > /opt/dataagent-bundled-skills/.bundled-version \
+    && chmod +x /opt/dataagent-backend/docker-entrypoint.sh
 
 EXPOSE 8900
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8900"]
+ENTRYPOINT ["/opt/dataagent-backend/docker-entrypoint.sh"]

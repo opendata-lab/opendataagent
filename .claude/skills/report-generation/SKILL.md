@@ -2,7 +2,7 @@
 name: report-generation
 description: "当需要把一组行数据导出成 Excel 或 HTML 报告文件，或需要从结果 JSON 中提炼结构化摘要时使用。用户提到生成报告、导出报表、导出 Excel、下载表格、结果摘要时必须使用。只负责结果加工与导出，不负责取数。"
 compatibility: "需要 DATAAGENT_PYTHON_BIN 与 SKILLS_ROOT_DIR，以及 pandas 与 openpyxl。不需要任何数据平台、MCP 或外部服务。"
-tools: [Bash, Read]
+tools: [bash, read]
 ---
 
 # 报告生成技能
@@ -37,7 +37,8 @@ tools: [Bash, Read]
   [--title "<报告标题>"]
 ```
 
-`--input` 接受三种形态：CSV 文件路径、JSON 数组、含 `rows` 字段的 JSON 对象。
+`--input` 接受 CSV/JSON 文件路径、JSON 数组或含 `rows` 字段的 JSON 对象。
+完整落盘结果使用 `--input-file /mnt/results/<运行时返回的文件名>`（CSV 或标准 JSON），与 `--input` 互斥；不会按 CSV 解析 JSON 文件。
 输出目录不存在时会自动创建。输出后缀决定格式，`.xlsx` 走 Excel，`.html` 走 HTML，其它后缀直接报错。
 
 ### 提炼结果摘要
@@ -54,7 +55,7 @@ tools: [Bash, Read]
 
 ## 硬规则
 
-- 必须通过 Bash 工具实际执行脚本生成文件。不得声称已生成报告却没有真实调用，
+- 必须通过 bash 工具实际执行脚本生成文件。不得声称已生成报告却没有真实调用，
   也不得凭记忆编造 `output_path` 或 `file_size`。
 - 报告内容必须基于真实且完整的数据，不得捏造行、抽样或只截取前 N 行。
   数据已被标记为不完整时应先把取数收敛到完整结果，再导出。

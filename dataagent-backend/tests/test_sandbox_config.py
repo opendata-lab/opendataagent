@@ -1,0 +1,93 @@
+import json
+import subprocess
+from types import SimpleNamespace
+
+import pytest
+
+from core import sandbox_config as sandbox
+
+
+def test_mount_inspection_is_cached_by_container_identity(monkeypatch):
+    sandbox._discover_mount_root.cache_clear()
+    calls = []
+    def run(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout=json.dumps([{'Mounts': [{'Source': '/host', 'Destination': '/runtime'}]}]))
+    monkeypatch.setattr(sandbox.subprocess, 'run', run)
+    try:
+        assert sandbox._discover_mount_root('docker', 'backend') == sandbox._discover_mount_root('docker', 'backend')
+        assert len(calls) == 1
+        sandbox._discover_mount_root('docker', 'other')
+        assert len(calls) == 2
+    finally:
+        sandbox._discover_mount_root.cache_clear()
+
+
+@pytest.mark.parametrize('error', [subprocess.CalledProcessError(1, ['docker']), subprocess.TimeoutExpired(['docker'], 15), FileNotFoundError()])
+def test_inspection_errors_have_actionable_code(monkeypatch, error):
+    sandbox._discover_mount_root.cache_clear()
+    def run(*args, **kwargs): raise error
+    monkeypatch.setattr(sandbox.subprocess, 'run', run)
+    with pytest.raises(RuntimeError, match='SANDBOX_UNAVAILABLE'):
+        sandbox._discover_mount_root('docker', 'backend')
+    assert sandbox._discover_mount_root.cache_info().currsize == 0
+
+
+def test_host_mount_discovery_never_inspects_a_container(monkeypatch):
+    monkeypatch.setattr(sandbox, '_running_in_container', lambda: False)
+    def unexpected(*args, **kwargs): raise AssertionError('host mode must not inspect')
+    monkeypatch.setattr(sandbox.subprocess, 'run', unexpected)
+    assert sandbox.backend_mounts() == []
+
+
+@pytest.mark.asyncio
+async def test_cleanup_accepts_an_absent_docker_container(monkeypatch):
+    import re
+    commands = []
+    class Process:
+        def __init__(self, code): self.returncode = code
+        async def communicate(self): return b'', b''
+    async def spawn(*args, **kwargs):
+        commands.append(args)
+        return Process(1 if args[1] == 'rm' else 0)
+    import asyncio
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
+    await sandbox.remove_segment_sandbox({'cli': 'docker', 'runId': 'review'})
+    pattern = commands[1][-1].removeprefix('name=')
+    name = commands[0][-1]
+    assert re.fullmatch(pattern, '/' + name)
+    assert not re.fullmatch(pattern, name + '-other')
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reports_an_unavailable_daemon(monkeypatch):
+    import asyncio
+    class Process:
+        returncode = 1
+        async def communicate(self): return b'', b''
+    async def spawn(*args, **kwargs): return Process()
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
+    with pytest.raises(RuntimeError, match='SANDBOX_CLEANUP_FAILED'):
+        await sandbox.remove_segment_sandbox({'cli': 'docker', 'runId': 'review'})
+
+
+def test_sandbox_config_carries_resource_limits(monkeypatch, tmp_path):
+    monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/usr/bin/docker')
+    monkeypatch.setattr(sandbox, 'backend_mounts', lambda: [])
+    cfg = SimpleNamespace(dataagent_sandbox_image='img', dataagent_sandbox_memory='1g',
+                          dataagent_sandbox_cpus='1.5', dataagent_sandbox_pids_limit=256)
+    config, _ = sandbox.build_sandbox_config(cfg, run_id='r', workspace=tmp_path / 'topic' / 'workspace',
+                                             enabled_roots={}, lifetime=60, env={})
+    assert (config['memory'], config['cpus'], config['pidsLimit']) == ('1g', '1.5', 256)
+
+
+def test_in_container_path_without_host_mount_is_refused(monkeypatch, tmp_path):
+    monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/usr/bin/docker')
+    monkeypatch.setattr(sandbox, '_running_in_container', lambda: True)
+    # A tmpfs has no host Source and must never be used as a bind source.
+    monkeypatch.setattr(sandbox, 'backend_mounts', lambda: [{'Source': '', 'Destination': '/'}])
+    cfg = SimpleNamespace(dataagent_sandbox_image='img', dataagent_sandbox_memory='1g',
+                          dataagent_sandbox_cpus='1', dataagent_sandbox_pids_limit=64)
+    with pytest.raises(ValueError, match='No daemon-visible mount source'):
+        sandbox.build_sandbox_config(cfg, run_id='r', workspace=tmp_path / 'workspace',
+                                     enabled_roots={}, lifetime=60, env={})

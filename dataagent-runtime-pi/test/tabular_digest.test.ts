@@ -62,11 +62,11 @@ test("extractDigest extracts schema, sample rows, and numerical stats from tabul
 
     // Notice mentions 25 rows and warns not to assume 10 rows
     assert.match(digest.notice, /25 rows/);
-    assert.match(digest.notice, /Do NOT assume/);
-    assert.match(digest.notice, /fetch_tool_result/);
+    assert.match(digest.notice, /Do not infer unseen rows/);
+    assert.match(digest.notice, /read/);
   }
 
-  const jsonStr = formatDigestText(digest);
+  const jsonStr = formatDigestText(digest, "/mnt/results/test.json");
   assert.ok(jsonStr.startsWith("<persisted-output>"));
   assert.ok(jsonStr.length < 5000); // Compact representation remains well bounded
 });
@@ -82,7 +82,7 @@ test("extractDigest handles non-tabular text gracefully", () => {
   if (!digest.is_tabular) {
     assert.ok(digest.total_chars > 5000);
     assert.ok(digest.preview_head.length <= 1200);
-    assert.match(digest.notice, /ResultStore/);
+    assert.match(digest.notice, /saved \/mnt\/results/);
   }
 });
 
@@ -108,7 +108,7 @@ test("column stats cover every row, not a 100-row prefix", () => {
 test("a wide cell cannot make the digest larger than the original", () => {
   const raw = JSON.stringify([{ note: "数".repeat(20_000) }]);
   const digest = extractDigest(raw, { resultRef: "res_z", toolName: "run_sql" });
-  const digestBytes = Buffer.byteLength(formatDigestText(digest), "utf8");
+  const digestBytes = Buffer.byteLength(formatDigestText(digest, "/mnt/results/test.json"), "utf8");
   assert.ok(
     digestBytes < Buffer.byteLength(raw, "utf8"),
     `digest ${digestBytes}B should be smaller than original ${Buffer.byteLength(raw, "utf8")}B`
@@ -180,8 +180,8 @@ test("the digest tells the model to keep the folding to itself", () => {
   for (const digest of [tabular, text]) {
     const notice = digest.notice;
     // Still has to say what it needs the model to do.
-    assert.match(notice, /fetch_tool_result/);
+    assert.match(notice, /read/);
     // And that this is not for the reader.
-    assert.match(notice, /never mention it/);
+    assert.match(notice, /need not explain storage/);
   }
 });

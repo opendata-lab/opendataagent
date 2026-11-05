@@ -316,7 +316,6 @@ const demoAgents = [
     description: '面向 DataAgent 演示数据的智能问数助手。',
     system_prompt: '你是 DataAgent 演示数据助手。',
     permission_mode: 'inherit',
-    allowed_tools: ['Skill', 'Read', 'Grep'],
     mcp_server_ids: [],
     skill_folders: ['dataagent-nl2sql'],
     max_turns: 0,
@@ -836,7 +835,6 @@ export const demoAdapter = async (config) => {
 
   if (method === 'get' && pathname === '/v1/dataagent/agents/capabilities') {
     return createResponse(config, {
-      tools: ['Skill', 'Read', 'Grep', 'Bash'],
       mcp_servers: [],
       skills: demoSkillDocuments
         .filter((item) => item.file_name === 'SKILL.md')

@@ -44,7 +44,7 @@ COMBINED_ARCHIVE="$IMAGE_DIR/all-images.tar"
 LEGACY_IMAGES=(
     "oda-frontend.tar"
     "oda-backend.tar"
-    "oda-runner.tar"
+    "oda-sandbox.tar"
     "mysql-8.0.tar"
     "redis-7.2-alpine.tar"
     "docker-27.5.1-cli.tar"
@@ -101,7 +101,7 @@ fi
 IMAGES=(
     "oda-frontend:${IMAGE_TAG}"
     "oda-backend:${IMAGE_TAG}"
-    "oda-runner:${IMAGE_TAG}"
+    "oda-sandbox:${IMAGE_TAG}"
     "mysql:8.0"
     "redis:7.2-alpine"
     "docker:27.5.1-cli"

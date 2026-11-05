@@ -1,6 +1,6 @@
 # DataAgent
 
-Independent FastAPI backend, Vue frontend and Pi/Claude runtime.
+Independent FastAPI backend, Vue frontend and Pi runtime.
 Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runtime commands. Use Python 3.13 at `dataagent-backend/.venv-py313`; install requirements in the new environment.
 
 ## Working Rules
@@ -142,12 +142,11 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
 
 ### Intelligent Query runtime engine selection
 
-- `DATAAGENT_RUNTIME_KIND` picks the engine and defaults to `pi_agent_core`, which is what production runs. It defaulted to `claude_code` until 2026-09-11; a smoke run from before then that did not set it exercised the Claude SDK path no matter what had changed in `dataagent-runtime-pi`, and still looked healthy.
-- To smoke the Claude SDK engine instead, set `DATAAGENT_RUNTIME_KIND=claude_code`.
-- For the Pi engine, point `DATAAGENT_RUNTIME_PI_DIR` at `<repo>/dataagent-runtime-pi` when running outside a container.
-- Production runs Pi in the child-container topology (`DATAAGENT_SANDBOX_MODE`), which spawns the same `core/pi_runtime.py` inside the container — so a local Pi smoke exercises the same engine code, but not the container hop itself.
-- Build the runtime first (`npm run build` in `dataagent-runtime-pi`); the backend spawns the compiled output, so TypeScript edits do not take effect until it is rebuilt.
-- Confirm which engine actually ran before trusting the result: `da_agent_sdk_record.engine_kind` is `pi_agent_core` for Pi records, and the backend log shows `claude_agent_sdk._internal.transport.subprocess_cli` for the Claude path.
+- `DATAAGENT_RUNTIME_KIND` accepts only `pi_agent_core`, the production and local engine. The Claude SDK path and `DATAAGENT_SANDBOX_MODE` were removed.
+- Point `DATAAGENT_RUNTIME_PI_DIR` at `<repo>/dataagent-runtime-pi` when running outside a container.
+- Build Pi first (`nvm use`, then `npm run build` in `dataagent-runtime-pi`); the backend starts its compiled output as a child process. Rebuild after TypeScript edits.
+- Build the tools-only sandbox before a local smoke that executes tools: `docker build -f dataagent-backend/Dockerfile.sandbox -t oda-sandbox:latest .` from the repo root. Docker must be available for sandbox tool execution. Pi and model/MCP connections stay in the backend; sandbox containers start lazily and have no network or provider credentials.
+- Confirm `da_agent_sdk_record.engine_kind` is `pi_agent_core`. Every execution segment has its own Pi process and at most one on-demand sandbox; parked cards release both and resume from MySQL session entries.
 - The SSE route is `GET /api/v1/nl2sql/tasks/{task_id}/sdk-events/stream`. `/events/stream` returns 404.
 - The task submission body uses `message_type` and `message_content`, not `question`.
 - It also takes `execution_mode`, and omitting it is not neutral: the field defaults to `None`, which resolves to the **interactive** tier (`agent_interactive_timeout_seconds`, 360s). The real frontend sends `"auto"`, which resolves to the background tier (1800s). A probe that leaves it out runs every turn against a budget production never uses, and heavy analytical turns then fail at ~361s for a reason that has nothing to do with what is being tested.
@@ -157,7 +156,7 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
 - For local UI validation of intelligent-query, default to starting:
   - frontend dev server with `nvm use`
   - `dataagent-backend`
-- When switching the DataAgent Python environment or restarting services after fixing dependencies, stop any stale `main.py` processes first. Old backend processes can keep using the wrong interpreter and surface outdated errors such as `claude-agent-sdk 未安装` even after the correct environment has been fixed.
+- When switching the DataAgent Python environment or restarting services after fixing dependencies, stop any stale `main.py` processes first. Old backend processes can retain stale interpreter packages or compiled runtime settings after dependencies have been fixed.
 - Do not ask the user to repeat frontend `nvm`, Python interpreter choice, or Docker MySQL as long as these repository defaults are applicable.
 - Do not ask the user to repeat Docker Redis as long as the repository default `127.0.0.1:6379` assumption is still applicable.
 - If startup fails, report the concrete failed assumption directly, for example:
@@ -165,7 +164,6 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
   - no usable container CLI for Redis bootstrap (`docker` and `podman` both unavailable)
   - Redis port unreachable
   - selected Python interpreter missing required packages
-  - wrong Python major/minor for `claude-agent-sdk`
   - provider credentials or `da_agent_settings` not configured
 - Minimum smoke scenarios for async intelligent-query changes:
   - background run accepted: verify `POST /api/v1/nl2sql/tasks` or `POST /api/v1/nl2sql/tasks/deliver-message` returns `accepted=true` and a `task_id`

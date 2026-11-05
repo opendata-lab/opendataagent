@@ -72,7 +72,7 @@ class TaskCoordinator:
             self._redis = None
 
     async def submit_task(self, task_id: str) -> dict[str, Any] | None:
-        task = self.store.get_task(task_id)
+        task = await asyncio.to_thread(self.store.get_task, task_id)
         if not task:
             logger.warning("task.queue.missing task_id=%s", task_id)
             return None
@@ -110,7 +110,7 @@ class TaskCoordinator:
             str(task.get("model") or ""),
             str(task.get("agent_id") or ""),
         )
-        return self.store.get_task(task_id) or task
+        return await asyncio.to_thread(self.store.get_task, task_id) or task
 
     async def request_cancel(self, task_id: str) -> None:
         if self._redis is None:
@@ -120,7 +120,7 @@ class TaskCoordinator:
     async def is_cancel_requested(self, task_id: str) -> bool:
         if self._redis is not None and await self._redis.exists(self._cancel_key(task_id)):
             return True
-        return self.store.is_task_cancel_requested(task_id)
+        return await asyncio.to_thread(self.store.is_task_cancel_requested, task_id)
 
     async def _queue_loop(self) -> None:
         while not self._closing:
@@ -130,7 +130,15 @@ class TaskCoordinator:
                 continue
             worker = asyncio.create_task(self._run_task(task_id), name=f"dataagent-task-{task_id}")
             self._active_tasks[task_id] = worker
-            worker.add_done_callback(lambda done, current_task_id=task_id: self._active_tasks.pop(current_task_id, None))
+            worker.add_done_callback(lambda done, current_task_id=task_id: self._task_done(current_task_id))
+
+    def _task_done(self, task_id: str) -> None:
+        self._active_tasks.pop(task_id, None)
+        # A fast card answer can arrive before the parked segment releases its
+        # lease. Queue it as soon as the preceding segment is fully gone.
+        if self._closing:
+            return
+        asyncio.create_task(self.submit_task(task_id), name=f"dataagent-task-resume-{task_id}")
 
     async def _run_task(self, task_id: str) -> None:
         topic_id = ""
@@ -172,15 +180,13 @@ class TaskCoordinator:
                     return
 
                 topic_id = str(task.get("topic_id") or "")
-                resume_session_id = self.store.get_resumable_conversation_id(topic_id)
                 logger.info(
-                    "task.run.start task_id=%s topic_id=%s provider=%s model=%s agent_id=%s resume_session=%s timeout=%s sql_read_timeout=%s",
+                    "task.run.start task_id=%s topic_id=%s provider=%s model=%s agent_id=%s timeout=%s sql_read_timeout=%s",
                     task_id,
                     topic_id,
                     str(task.get("provider_id") or ""),
                     str(task.get("model") or ""),
                     str(task.get("agent_id") or ""),
-                    bool(resume_session_id),
                     int(task.get("timeout_seconds") or 0),
                     int(task.get("sql_read_timeout_seconds") or 0),
                 )
@@ -189,14 +195,18 @@ class TaskCoordinator:
                 self.store.ensure_assistant_message(topic_id=topic_id, task_id=task_id, status="running")
 
                 history = self._build_history(topic_id=topic_id, task_id=task_id)
-                workspace_before = self._snapshot_workspace(topic_id)
+                saved = self.store.get_session_checkpoint(topic_id)
+                baseline = (saved["state"].get("workspace_before")
+                    if saved and saved["task_id"] == task_id else None)
+                workspace_before = ({name: tuple(meta) for name, meta in baseline.items()}
+                    if baseline is not None else self._snapshot_workspace(topic_id))
                 result = await execute_task_stream(
                     TaskExecutionInput(
                         task_id=task_id,
                         topic_id=topic_id,
                         question=str(task.get("prompt") or ""),
                         history=history,
-                        resume_session_id=resume_session_id,
+                        workspace_before=workspace_before,
                         provider_id=str(task.get("provider_id") or ""),
                         model=str(task.get("model") or ""),
                         database_hint=str(task.get("database_hint") or "") or None,
@@ -212,11 +222,6 @@ class TaskCoordinator:
                         # recent choice. The mode is then stable for the whole run.
                         permission_mode=self.store.get_topic_permission_mode(topic_id),
                     ),
-                    emit=lambda record: self._persist_emitted_sdk_record(
-                        topic_id=topic_id,
-                        task_id=task_id,
-                        record=record,
-                    ),
                     is_cancel_requested=lambda: self._task_stop_reason(task_id, lease_lost),
                 )
                 logger.info(
@@ -231,7 +236,7 @@ class TaskCoordinator:
                     bool(result.session_id),
                     bool(result.usage),
                 )
-                if self._is_parked_waiting(task_id) and str((result.error or {}).get("code") or "") != "task_cancelled":
+                if result.task_status == "parked":
                     logger.info(
                         "task.run.left_parked task_id=%s topic_id=%s result_status=%s error_code=%s",
                         task_id,
@@ -242,13 +247,8 @@ class TaskCoordinator:
                     return
                 attachments = self._collect_generated_files(topic_id, task_id, workspace_before)
                 self.store.update_assistant_message(
-                    topic_id=topic_id,
-                    task_id=task_id,
-                    status=result.task_status,
-                    content=result.content,
-                    usage=result.usage,
-                    error=result.error,
-                    attachments=attachments,
+                    topic_id=topic_id, task_id=task_id, status=result.task_status,
+                    content=result.content, usage=result.usage, error=result.error, attachments=attachments,
                 )
                 logger.info(
                     "task.run.message_updated task_id=%s topic_id=%s status=%s content_len=%s attachments=%s error_code=%s",
@@ -342,33 +342,6 @@ class TaskCoordinator:
                 "Generated-file diff failed topic_id=%s task_id=%s", topic_id, task_id, exc_info=True
             )
             return []
-
-    def _persist_emitted_sdk_record(self, *, topic_id: str, task_id: str, record: dict[str, Any]) -> None:
-        # This is the sandbox-runner protocol sink. The current local/child
-        # execution path also writes SDK rows directly through SdkBlockWriter, so
-        # this method is intentionally not the only da_agent_sdk_record writer.
-        if not isinstance(record, dict):
-            return
-        record_type = str(record.get("record_type") or "").strip()
-        if record_type not in {"stream", "tool_result", "done", "error"}:
-            return
-        try:
-            turn_index = int(record.get("turn_index") or 0)
-        except (TypeError, ValueError):
-            turn_index = 0
-        raw_event_type = record.get("event_type")
-        event_type = str(raw_event_type) if raw_event_type is not None else None
-        data = record.get("data")
-        if not isinstance(data, dict):
-            data = {"value": data}
-        self.store.append_sdk_record(
-            task_id=task_id,
-            topic_id=topic_id,
-            turn_index=turn_index,
-            record_type=record_type,
-            event_type=event_type,
-            data=data,
-        )
 
     async def _heartbeat_loop(
         self,
@@ -464,15 +437,11 @@ class TaskCoordinator:
                 str(task.get("topic_id") or ""),
                 str(task.get("heartbeat_at") or ""),
             )
-            replacement = self.store.create_recovery_task(task_id)
-            if replacement:
-                logger.info(
-                    "task.recovery.replacement_created old_task_id=%s new_task_id=%s topic_id=%s",
-                    task_id,
-                    str(replacement.get("task_id") or ""),
-                    str(replacement.get("topic_id") or ""),
-                )
-                await self.submit_task(str(replacement.get("task_id") or ""))
+            # Never replay in-flight work with unknown external side effects.
+            error = {"code":"run_interrupted","message":"运行进程中断，外部操作结果可能未知；请核对状态后重新发起。"}
+            self.store.update_assistant_message(topic_id=str(task.get("topic_id") or ""),task_id=task_id,
+                status="suspended",content="",usage=None,error=error)
+            self.store.finish_task(task_id=task_id,task_status="suspended",error=error)
 
     async def _recover_parked_tasks(self, *, batch_size: int) -> None:
         for task in self.store.list_parked_tasks(limit=batch_size):
@@ -483,17 +452,28 @@ class TaskCoordinator:
             if await self._lease_exists(task_id):
                 continue
             error: dict[str, Any] | None = None
+            checkpoint = self.store.get_session_checkpoint(topic_id)
             if self.store.is_task_cancel_requested(task_id):
-                error = {"code": "task_cancelled", "message": "任务已取消"}
-            elif (
-                self.store.get_pending_permission_request(task_id) is None
-                and self.store.get_pending_question_request(task_id) is None
-                and self.store.has_resolved_waiting_interaction(task_id)
-            ):
-                error = {
-                    "code": "run_lost",
-                    "message": "确认/输入已提交，但原运行器已释放，请重新发送请求继续。",
-                }
+                error = {"code":"task_cancelled","message":"任务已取消"}
+            elif not checkpoint or checkpoint["task_id"] != task_id:
+                error = {"code":"session_checkpoint_missing","message":"等待任务缺少会话快照，请重新发送请求。"}
+            else:
+                interaction = checkpoint["state"].get("interaction") or {}
+                if interaction.get("result"):
+                    self.store.set_task_status(task_id,"waiting")
+                    await self.submit_task(task_id)
+                    continue
+                deadline = interaction.get("deadline_at")
+                if deadline:
+                    from datetime import datetime, timezone
+                    from core.interaction_policy import recommended_answers, AUTO_TIMEOUT_SOURCE
+                    if datetime.now(timezone.utc) >= datetime.fromisoformat(deadline):
+                        if interaction["kind"] == "question":
+                            self.store.append_question_answer_if_waiting(task_id=task_id,request_id=interaction["request_id"],
+                                answers=recommended_answers(interaction["payload"]["questions"]),source=AUTO_TIMEOUT_SOURCE)
+                        elif interaction["kind"] == "plan":
+                            self.store.append_permission_decision_if_waiting(task_id=task_id,request_id=interaction["request_id"],decision="allow",source=AUTO_TIMEOUT_SOURCE)
+                        await self.submit_task(task_id)
             if not error:
                 continue
             logger.warning(

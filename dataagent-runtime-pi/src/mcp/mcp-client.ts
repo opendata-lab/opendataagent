@@ -3,12 +3,13 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Type } from "@earendil-works/pi-ai";
+import { createHash } from "node:crypto";
 import { logDiagnostic } from "../protocol/channel.js";
 import type { McpServerConfig } from "../protocol/frames.js";
 import { redactString } from "../observability/redaction.js";
 
 /** An error the MCP server itself returned, already worded for the model. */
-class McpToolError extends Error {}
+export class McpToolError extends Error {}
 
 export interface McpBridgeResult {
   tools: unknown[];
@@ -256,7 +257,7 @@ export function prepareArguments(
 
 export async function connectMcpServers(
   servers: McpServerConfig[] | undefined,
-  options?: { connectTimeoutMs?: number }
+  options?: { connectTimeoutMs?: number; remainingMs?: () => number; readTimeoutMs?: number; writeTimeoutMs?: number }
 ): Promise<McpBridgeResult> {
   const allTools: unknown[] = [];
   const clients: Client[] = [];
@@ -291,18 +292,24 @@ export async function connectMcpServers(
 
         allTools.push({
           name: toolName,
+          mcpServerName: server.name,
+          mcpServerIdentity: createHash("sha256").update(JSON.stringify(server)).digest("hex"),
           mcpAnnotations: mcpTool.annotations ?? {},
           label: toolName,
           description: toolDescription,
           parameters: inputSchema,
           prepareArguments: (args: unknown) => prepareArguments(args, inputSchema, toolName),
-          execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+          execute: async (_toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal) => {
             const prepared = prepareArguments(params || {}, inputSchema, toolName);
             try {
+              const readonly = mcpTool.annotations?.readOnlyHint === true && mcpTool.annotations?.destructiveHint !== true;
+              const budget = Math.min(options?.remainingMs?.() ?? 1800_000,
+                readonly ? options?.readTimeoutMs ?? 300_000 : options?.writeTimeoutMs ?? 60_000);
+              if (budget <= 0) throw new Error("MCP task budget exhausted");
               const res = await client.callTool({
                 name: toolName,
                 arguments: prepared,
-              });
+              }, undefined, { signal, timeout: budget });
 
               const content = Array.isArray(res.content)
                 ? res.content.map((item: any) => {

@@ -61,7 +61,7 @@ def test_offline_package_carries_template_but_not_runtime_env(tmp_path: Path):
                    "load-package-and-start.sh", "lib/container-runtime.sh"):
         assert any(name.endswith(f"/scripts/{script}") for name in names), script
     assert not any("/scripts/run-dataagent" in name for name in names)
-    for image in ("oda-frontend", "oda-backend", "oda-runner"):
+    for image in ("oda-frontend", "oda-backend", "oda-sandbox"):
         var = f"ODA_{image.split('-')[1].upper()}_IMAGE"
         assert f"{var}={image}:env-policy-test" in template
 
@@ -133,7 +133,7 @@ def test_offline_upgrade_takes_image_tags_from_the_package_and_keeps_other_setti
     (package / "scripts" / "load-images.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     (deploy_dir / ".env").write_text("DATAAGENT_MYSQL_PASSWORD=secret\nODA_BACKEND_IMAGE=oda-backend:1.0.0\n", encoding="utf-8")
     (deploy_dir / ".env.example").write_text(
-        "DATAAGENT_MYSQL_PASSWORD=dataagent123\nODA_BACKEND_IMAGE=oda-backend:1.1.0\nODA_RUNNER_IMAGE=oda-runner:1.1.0\n",
+        "DATAAGENT_MYSQL_PASSWORD=dataagent123\nODA_BACKEND_IMAGE=oda-backend:1.1.0\nODA_SANDBOX_IMAGE=oda-sandbox:1.1.0\n",
         encoding="utf-8")
     archive = tmp_path / "upgrade.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
@@ -148,4 +148,4 @@ def test_offline_upgrade_takes_image_tags_from_the_package_and_keeps_other_setti
     )
 
     env = (workdir / "oda-deployment" / "deploy" / ".env").read_text(encoding="utf-8")
-    assert env == "DATAAGENT_MYSQL_PASSWORD=secret\nODA_BACKEND_IMAGE=oda-backend:1.1.0\nODA_RUNNER_IMAGE=oda-runner:1.1.0\n"
+    assert env == "DATAAGENT_MYSQL_PASSWORD=secret\nODA_BACKEND_IMAGE=oda-backend:1.1.0\nODA_SANDBOX_IMAGE=oda-sandbox:1.1.0\n"

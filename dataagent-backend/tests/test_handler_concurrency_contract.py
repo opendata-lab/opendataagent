@@ -45,8 +45,6 @@ MUST_BE_SYNC = {
         "api_get_task",
         "api_get_task_message",
         "api_list_sdk_events",
-        "api_submit_permission_decision",
-        "api_submit_question_answer",
         "api_query_message_queues",
         "api_create_message_queue",
         "api_update_message_queue",
@@ -87,6 +85,9 @@ MUST_BE_ASYNC = {
         "api_deliver_message",
         "api_create_task",
         "api_cancel_task",
+        # Card persistence runs as one worker-thread operation, then awaits enqueue.
+        "api_submit_permission_decision",
+        "api_submit_question_answer",
         "api_consume_message_queue",
         # Returns a StreamingResponse; the SSE generator stays on the loop.
         "api_stream_sdk_events",

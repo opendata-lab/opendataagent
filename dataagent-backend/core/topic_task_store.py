@@ -88,13 +88,6 @@ def _parse_client_ts(value: Any) -> datetime | None:
     return parsed
 
 
-def _is_placeholder_conversation_id(value: str | None) -> bool:
-    text = str(value or "").strip()
-    if not text:
-        return True
-    return text.startswith("chat_conv_") or text.startswith("chat_conversation_")
-
-
 def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Rebuild v2-compatible blocks from da_agent_sdk_record rows.
 
@@ -372,7 +365,10 @@ SYSTEM_PROMPT_MAX_BYTES = 16 * 1024 * 1024 - 1
 SYSTEM_PROMPT_IO_TIMEOUT_SECONDS = 5
 
 
-class TopicTaskStore:
+from core.session_checkpoint import SessionCheckpointStore
+
+
+class TopicTaskStore(SessionCheckpointStore):
     def __init__(self):
         self._ready = False
         self._ready_lock = threading.Lock()
@@ -1043,15 +1039,6 @@ class TopicTaskStore:
             bool(value),
         )
         return self.get_topic(topic_id)
-
-    def get_resumable_conversation_id(self, topic_id: str) -> str | None:
-        topic = self.get_topic(topic_id)
-        if not topic:
-            return None
-        conversation_id = str(topic.get("chat_conversation_id") or "").strip()
-        if _is_placeholder_conversation_id(conversation_id):
-            return None
-        return conversation_id or None
 
     def delete_topic(self, topic_id: str, context: dict[str, Any] | None = None):
         self._ensure_ready()
@@ -2056,9 +2043,6 @@ class TopicTaskStore:
                 if not task_row:
                     conn.rollback()
                     return "not_found"
-                if str(task_row.get("task_status") or "") != waiting_status or task_row.get("cancel_requested_at") is not None:
-                    conn.rollback()
-                    return "status_mismatch"
                 cur.execute(
                     """
                     SELECT id, topic_id, turn_index, record_type, data
@@ -2077,6 +2061,9 @@ class TopicTaskStore:
                 if str(interaction.get("status") or "") == "resolved":
                     conn.rollback()
                     return "already_resolved"
+                if str(task_row.get("task_status") or "") != waiting_status or task_row.get("cancel_requested_at") is not None:
+                    conn.rollback()
+                    return "status_mismatch"
                 cur.execute(
                     """
                     INSERT INTO da_agent_sdk_record (topic_id, task_id, turn_index, record_type, event_type, data)
@@ -2091,6 +2078,22 @@ class TopicTaskStore:
                         json.dumps(payload, ensure_ascii=False, default=_json_default),
                     ),
                 )
+                cur.execute("SELECT topic_id,state_json FROM da_agent_session_checkpoint WHERE task_id=%s FOR UPDATE", (task_id,))
+                checkpoint = cur.fetchone()
+                if not checkpoint:
+                    conn.rollback()
+                    return "status_mismatch"
+                state = _safe_json_load(checkpoint["state_json"]) or {}
+                interaction_state = state.get("interaction") or {}
+                if interaction_state.get("request_id") != request_id:
+                    conn.rollback()
+                    return "status_mismatch"
+                interaction_state["result"] = payload
+                if interaction_state.get("kind") == "plan":
+                    state["plan_approved"] = payload.get("decision") == "allow"
+                cur.execute("UPDATE da_agent_session_checkpoint SET state_json=%s WHERE topic_id=%s", (_json_dump(state),checkpoint["topic_id"]))
+                cur.execute("UPDATE da_agent_task SET task_status='waiting' WHERE task_id=%s", (task_id,))
+                cur.execute("UPDATE da_agent_topic SET current_task_status='waiting' WHERE current_task_id=%s", (task_id,))
             conn.commit()
         except Exception:
             conn.rollback()

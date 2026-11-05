@@ -705,7 +705,15 @@ async def api_cancel_task(task_id: str, request: Request):
 
 
 @task_router.post("/{task_id}/permission-decision", response_model=PermissionDecisionResponse)
-def api_submit_permission_decision(task_id: str, payload: PermissionDecisionRequest, request: Request):
+async def api_submit_permission_decision(task_id: str, payload: PermissionDecisionRequest, request: Request):
+    response, appended = await asyncio.to_thread(_record_permission_decision, task_id, payload, request)
+    if appended:
+        await get_task_coordinator().submit_task(task_id)
+    return response
+
+
+def _record_permission_decision(task_id: str, payload: PermissionDecisionRequest, request: Request):
+    appended = False
     store = _get_store()
     context = _request_context(request)
     task = store.get_task(task_id, context=context)
@@ -734,16 +742,26 @@ def api_submit_permission_decision(task_id: str, payload: PermissionDecisionRequ
                 else "failed to record permission decision"
             )
             raise HTTPException(status_code=409, detail=detail)
+        appended = append_result == "appended"
         resolved = store.get_current_permission_interaction(task_id=task_id, request_id=request_id)
         effective = str((resolved or {}).get("decision") or decision)
 
-    return PermissionDecisionResponse.model_validate(
+    response = PermissionDecisionResponse.model_validate(
         {"task_id": task_id, "request_id": request_id, "decision": normalize_permission_decision(effective)}
     )
+    return response, appended
 
 
 @task_router.post("/{task_id}/question-answer", response_model=QuestionAnswerResponse)
-def api_submit_question_answer(task_id: str, payload: QuestionAnswerRequest, request: Request):
+async def api_submit_question_answer(task_id: str, payload: QuestionAnswerRequest, request: Request):
+    response, appended = await asyncio.to_thread(_record_question_answer, task_id, payload, request)
+    if appended:
+        await get_task_coordinator().submit_task(task_id)
+    return response
+
+
+def _record_question_answer(task_id: str, payload: QuestionAnswerRequest, request: Request):
+    appended = False
     store = _get_store()
     context = _request_context(request)
     task = store.get_task(task_id, context=context)
@@ -767,9 +785,11 @@ def api_submit_question_answer(task_id: str, payload: QuestionAnswerRequest, req
                 else "failed to record user answer"
             )
             raise HTTPException(status_code=409, detail=detail)
-    return QuestionAnswerResponse.model_validate(
+        appended = append_result == "appended"
+    response = QuestionAnswerResponse.model_validate(
         {"task_id": task_id, "request_id": request_id, "accepted": True}
     )
+    return response, appended
 
 
 @queue_router.post("/queries", response_model=MessageQueuePageResponse)

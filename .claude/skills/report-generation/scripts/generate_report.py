@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -211,27 +210,25 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate Excel (.xlsx) or HTML reports from CSV/JSON input"
     )
-    parser.add_argument("--input", required=True, help="Input CSV file path or raw JSON array")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--input", help="CSV/JSON file path or raw JSON array/object")
+    source.add_argument("--input-file", help="CSV/JSON file path for complete saved results")
     parser.add_argument("--output", required=True, help="Output file path (e.g. output/report.xlsx or output/report.html)")
     parser.add_argument("--title", default="数据分析报告", help="Report Title")
     args = parser.parse_args()
 
-    input_val = str(args.input or "").strip()
+    input_val = str(args.input_file or args.input or "").strip()
     output_path = _resolve_path(args.output)
     title = str(args.title or "").strip()
 
     try:
         rows: list[dict[str, Any]] = []
-        if input_val.endswith(".csv") or os.path.exists(input_val):
-            csv_path = _resolve_path(input_val)
-            if not csv_path.exists():
-                raise FileNotFoundError(f"输入文件不存在: {csv_path}")
-
-            with open(csv_path, "r", encoding="utf-8-sig") as handle:
-                reader = csv.DictReader(handle)
-                rows = [dict(row) for row in reader]
+        input_path = _resolve_path(input_val) if args.input_file or input_val.endswith(".csv") or not input_val.startswith(("[", "{")) else None
+        if input_path is not None and input_path.suffix.lower() == ".csv":
+            with input_path.open("r", encoding="utf-8-sig") as handle:
+                rows = [dict(row) for row in csv.DictReader(handle)]
         else:
-            loaded = load_json_input(raw=input_val)
+            loaded = load_json_input(file_path=str(input_path)) if input_path is not None else load_json_input(raw=input_val)
             if isinstance(loaded, list):
                 rows = [dict(row) for row in loaded if isinstance(row, dict)]
             elif isinstance(loaded, dict) and "rows" in loaded:

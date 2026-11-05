@@ -12,10 +12,10 @@
  * an object containing one.
  */
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Frames the control plane sends to this Cell. */
-export type InboundFrameType = "cell.init" | "run.cancel" | "cell.shutdown" | "interaction.resolved";
+export type InboundFrameType = "cell.init" | "run.cancel" | "cell.shutdown" | "operation.saved";
 /** Frames this Cell sends to the control plane. */
 export type OutboundFrameType =
   | "cell.ready"
@@ -25,9 +25,9 @@ export type OutboundFrameType =
   // renders just to avoid being mistaken for a stall.
   | "run.heartbeat"
   | "run.settled"
-  // A tool needs the user: {request_id, kind: "question" | "plan", payload}.
-  // The control plane answers with interaction.resolved {request_id, result}.
-  | "interaction.request"
+  | "session.entries"
+  | "run.parked"
+  | "operation.result"
   | "protocol.error";
 
 export interface ProtocolFrame<T = Record<string, unknown>> {
@@ -110,7 +110,14 @@ export interface CellInitPayload {
     context_window?: number;
   };
   workspace: { project_cwd: string };
-  boundary_policy: Record<string, unknown>;
+  sandbox: import("../sandbox/docker-sandbox-manager.js").SandboxConfig;
+  results_dir: string;
+  session_checkpoint?: { header: unknown; entries: unknown[]; leaf_id: string | null };
+  plan_approved?: boolean;
+  turn_offset?: number;
+  allow_questions?: boolean;
+  resume_operation?: { request_id: string; payload: { tool_name: string; server_name?: string; server_identity?: string; arguments: Record<string, unknown> };
+    operation_status: string; operation_result?: unknown };
   skills: Array<{ name: string; root_path: string }>;
   mcp_servers?: McpServerConfig[];
   runtime_env: Record<string, string>;
@@ -122,10 +129,8 @@ export interface CellInitPayload {
     bash_timeout_seconds: number;
   };
   governance_settings?: GovernanceSettings;
-  /** "plan" adds ExitPlanMode and holds plan_denied_tools until the plan is approved. */
+  /** "plan" adds ExitPlanMode and gates writes until the plan is approved. */
   permission_mode?: string;
-  /** Bare tool names (MCP prefix stripped) refused before plan approval. */
-  plan_denied_tools?: string[];
 }
 
 export function makeFrame<T extends Record<string, unknown>>(

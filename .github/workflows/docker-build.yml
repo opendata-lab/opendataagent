@@ -31,10 +31,10 @@ jobs:
             context: .
             dockerfile: ./dataagent-backend/Dockerfile
             build_args: ""
-          - name: dataagent-runner
-            image: oda-runner
+          - name: dataagent-sandbox
+            image: oda-sandbox
             context: .
-            dockerfile: ./dataagent-backend/Dockerfile.runner
+            dockerfile: ./dataagent-backend/Dockerfile.sandbox
             build_args: ""
           - name: dataagent-evals-builtin
             image: oda-evals-builtin
@@ -142,7 +142,7 @@ jobs:
             echo '```bash'
             echo "docker pull ${NS}/oda-frontend:${VERSION}"
             echo "docker pull ${NS}/oda-backend:${VERSION}"
-            echo "docker pull ${NS}/oda-runner:${VERSION}"
+            echo "docker pull ${NS}/oda-sandbox:${VERSION}"
             echo '```'
           } > release_body.md
 
@@ -196,7 +196,7 @@ jobs:
             echo '```bash'
             echo "docker pull ${NS}/oda-frontend:${IMAGE_TAG}"
             echo "docker pull ${NS}/oda-backend:${IMAGE_TAG}"
-            echo "docker pull ${NS}/oda-runner:${IMAGE_TAG}"
+            echo "docker pull ${NS}/oda-sandbox:${IMAGE_TAG}"
             echo '```'
           } > latest_release_body.md
 
@@ -232,7 +232,7 @@ jobs:
           NS="${{ secrets.DOCKER_USERNAME }}"
           {
             echo "## Docker images pushed"
-            for image in oda-frontend oda-backend oda-runner oda-evals-builtin oda-evals-deepeval; do
+            for image in oda-frontend oda-backend oda-sandbox oda-evals-builtin oda-evals-deepeval; do
               echo "- \`${NS}/${image}\`"
             done
             echo ""

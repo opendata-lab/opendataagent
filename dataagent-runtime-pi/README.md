@@ -1,60 +1,29 @@
 # dataagent-runtime-pi
 
-DataAgent 的 Pi 数据面：一个 Node 子进程，在 `@earendil-works/pi-agent-core` 的
-官方 Agent 循环上执行一轮 NL2SQL，通过 stdio 上的 NDJSON 与 Python 控制面通信。
+DataAgent 的 Pi 控制面子进程，基于 `@earendil-works/pi-coding-agent@1.4.0`。
+Python backend 负责调度、凭据、事件和会话持久化；Cell 使用内存 SDK 设置和显式资源加载器，不读取宿主/global skills、扩展、会话或认证文件。
 
-配套设计：`docs/design/2026-09-08-dataagent-runtime-plane-split-design.md`
+## 工具与会话
 
-## 本包不产出独立镜像
+固定注册 `bash/read/write/edit/ls/find/grep`，以同名自定义实现覆盖 SDK 默认宿主工具。所有模型路径在 `oda-sandbox` 内解析；工作区读写，当前 topic 结果与启用 skills 只读，无网络、凭据或 socket。MCP 仅使用数据库下发配置，由控制面连接。
 
-这里**没有 Dockerfile，也不在 CI 的镜像构建矩阵里**，这是刻意的。
+同段懒启动一个容器；正常结束、卡片、取消和命令超时均销毁。卡片结束 SDK 段并保存合法 session header/entries/leaf，回答后同一任务导入并追加新输入，不重放批次。写批准绑定具体 MCP 服务/工具/参数，实际结果落库确认后才继续推理；未知结果不重试。
 
-Cell 是子进程，不是网络服务。它的构建产物由 `dataagent-backend` 与
-`dataagent-runner` 两个镜像的多阶段构建吸收：
+大结果保存原始 JSON/文本，返回 `/mnt/results/<name>` 及有界预览；普通沙箱工具和 Python 直接消费完整文件。UI 结构化结果独立保存，避免模型摘要破坏图表。
 
-```dockerfile
-# dataagent-backend/Dockerfile 与 Dockerfile.runner
-FROM node:22-bookworm-slim AS pi-cell
-...
-COPY --from=pi-cell /build/dist        /opt/dataagent-runtime-pi/dist
-COPY --from=pi-cell /build/node_modules /opt/dataagent-runtime-pi/node_modules
-ENV DATAAGENT_RUNTIME_PI_DIR=/opt/dataagent-runtime-pi
-```
-
-隔离由平台既有的机制提供，不由本包自己发明：
-
-| 隔离拓扑 | 由谁决定 | Cell 在哪运行 |
-|---|---|---|
-| 进程内 | `DATAAGENT_SANDBOX_MODE` 未设置 | `dataagent-backend` 容器内的子进程 |
-| 子容器 | `DATAAGENT_SANDBOX_MODE` 已设置 | sandbox runner 拉起的子容器内的子进程 |
-
-两种拓扑下 Cell 都是子进程。引擎选择（`DATAAGENT_RUNTIME_KIND`）与隔离拓扑
-正交——分叉点在 `core/task_executor._execute_task_stream_local` 内部，而不是
-和 `_should_use_sandbox_runner` 并列，这样切到 Pi 不会静默丢失容器隔离。
-
-曾经短暂存在过一个独立的 `opendataworks-dataagent-runtime-pi` 镜像。它被移除是
-因为没有任何地方部署它：compose 里没有对应 service，却每次提交都要构建推送。
-若将来真需要「Cell 独立成容器」这种拓扑，应当连同 compose service、离线包
-（`scripts/create-offline-package.sh`、`scripts/load-images.sh`）和发布说明一起
-在同一次改动里加回，而不是只留一个无人拉取的镜像。
-
-## 开发
+## 构建与验证
 
 ```bash
-nvm use                 # .nvmrc 指定 22.19.0
+. "$HOME/.nvm/nvm.sh" && nvm use
 npm ci
 npm run typecheck
-npm test                # tsc 后跑 node --test
-npm run build
+# 在仓库根构建，然后回到本目录
+# docker build -f dataagent-backend/Dockerfile.sandbox -t oda-sandbox:test .
+DATAAGENT_SANDBOX_TEST_IMAGE=oda-sandbox:test npm test
 ```
 
-Python 侧的 `core/pi_runtime.resolve_cell_command` 需要 `dist/src/main.js` 存在，
-否则会以 `pi_runtime_missing` 报错并给出构建提示。跨进程契约测试
-（`dataagent-backend/tests/test_pi_runtime_e2e.py`）也依赖它，未构建时会跳过。
+`npm run build` 清理并生成 `dist/src/main.js`。backend 镜像的多阶段构建吸收此产物，本包不产出独立服务镜像。开发环境必须先构建，Python 的 `DATAAGENT_RUNTIME_PI_DIR` 指向本目录。
 
-## 与 Python 侧共享的契约
+协议 v2 定义见 `src/protocol/frames.ts` 与 `dataagent-backend/core/pi_runtime.py`：`session.entries` 在终态或 `run.parked` 前输出，`operation.result` 通过 `operation.saved` 确认持久化。Python 定向协议测试覆盖超时、取消、排空和进程退出。
 
-- 帧协议与中立事件：`core/pi_runtime.py` 顶部注释，以及本包 `src/protocol/frames.ts`
-- 工作区边界：策略由 Python 生成（`core/boundary_policy.py`），本包执行
-  （`src/policy/workspace-boundary-enforcer.ts`）。两套实现由共享用例表
-  `contracts/boundary/v1/conformance-cases.json` 约束，任一侧漂移即测试失败。
+完整设计、迁移和本地 HTTP/部署验证见 [设计](../docs/design/2026-11-03-agent-runtime-sandbox-architecture-design.md)、[计划](../docs/plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)、[报告](../docs/reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。

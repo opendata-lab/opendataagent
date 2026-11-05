@@ -8,7 +8,6 @@ from core.interaction_policy import (
     question_deadline,
     recommended_answers,
 )
-from core.user_interaction import plan_rejection_message
 
 
 def test_recommended_answers_pick_the_recommendation_or_skip():
@@ -65,8 +64,3 @@ def test_zero_timeout_waits_forever():
     assert deadline.seconds == 0
     assert not deadline.expired
     assert deadline.iso == ""
-
-
-def test_plan_rejection_carries_the_users_note():
-    assert "先不建汇总表" in plan_rejection_message("先不建汇总表")
-    assert "ExitPlanMode" in plan_rejection_message("")
