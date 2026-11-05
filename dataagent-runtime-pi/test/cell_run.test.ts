@@ -495,7 +495,20 @@ test("the turn ceiling ends the run after exactly max_turns provider requests", 
       ["run.completed", "run.failed", "run.cancelled", "run.suspended"].includes(e.type)
     );
     assert.equal(terminals.length, 1);
+    // Still asking for tools at the ceiling: unfinished, not a normal completion.
+    assert.equal(terminals[0].type, "run.failed");
+    assert.equal((terminals[0] as any).payload?.error_code ?? (terminals[0] as any).error_code, "PI_LIMIT_EXCEEDED");
   }
+});
+
+test("a final answer on the last allowed turn still completes", async () => {
+  const calls = { count: 0 };
+  const { result } = await runCell(
+    initPayload(workspace(), { limits: limitsWith(2) }),
+    toolLoopFactory(1, calls) as never
+  );
+  assert.equal(calls.count, 2);
+  assert.equal(result.terminal_status, "success");
 });
 
 test("a non-positive turn ceiling leaves the loop unbounded", async () => {
