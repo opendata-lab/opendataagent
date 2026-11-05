@@ -34,6 +34,11 @@
 - **现状**：Pi 直接使用 MCP 返回的工具名注册，没有按服务加命名空间，不同 MCP 的同名工具会冲突。插件设计里先用"冲突即拒绝"兜底。
 - **要做**：设计按服务加命名空间的方案，兼顾现有 MCP 配置和技能文档；本轮已实现重复/保留工具名明确拒绝。
 
+### 智能体可查看并选择 MCP 工具（新功能）
+
+- **现状**（2026-11-04 核实）：智能体只能整体绑定 MCP 服务（`mcp_server_ids`），运行时注册该服务返回的全部工具，配置页看不到具体有哪些工具。`da_agent_profile.allowed_tools_json` 是旧 Claude SDK 时代的工具名列表（Skill/Bash/Read 等），Pi 运行时已不读取。Pi 自带的 MCP 探测入口（`dist/src/mcp/probe-cli.js`，后端 `resolve_mcp_probe_command`）可以列出服务的工具。
+- **要做**：在智能体配置里按服务列出 MCP 工具（名称、说明、只读/写入/破坏性注解），允许只勾选部分工具；保存为智能体快照的一部分，运行时只注册被允许的工具，并对未允许的调用明确拒绝。同时决定旧 `allowed_tools_json` 是复用还是删除，并与上方“MCP 工具名命名空间”一起设计（同名工具需按服务区分）。涉及 schema、后端接口、前端配置页与 Pi 运行时，属中大型变更，先写设计与计划。来源：用户 2026-11-04 提出。
+
 ### 系统提示落库的后续
 
 - 管理端查看页面（接口 `GET /api/v1/dataagent/tasks/{task_id}/system-prompt` 已有）。
@@ -77,6 +82,16 @@
 
 - 2026-11-03 改造前再验仍为相同两项：全量 182/184，通过定向重跑 channel_flush，Bash 2 秒仍失败，详见[构建验证报告](reports/2026-11-03-ci-build-optimization-verification.md)。Pi 的 Bash 2 秒时序用例在本机全量与单独运行均超时；来源仓库未修改的 HEAD 副本同样失败，保留后续稳定性治理。另一次并发全量中 channel_flush 的负向控制用例未发生预期截断，重跑通过；需使该测试不依赖机器调度时序。来源：opendataworks `docs/reports/2026-10-27-dataagent-opendataworks-decoupling-verification.md`。
 - 历史缺口（2026-10-27）：当时未测 child-container/技能卷。2026-11-03 新版拓扑已完成本地真实 backend 镜像、技能卷及工具 sandbox 演练；真实生产 provider/MCP 验收仍由上方生产拓扑待办跟踪。
+
+### 对话界面改造（参考 ZCode）
+
+- **现状**（2026-11-04）：对话界面由 `dataagent-frontend/packages/agent-conversation` 渲染，主聊天页 `NL2SqlChatV2.vue` 与 widget `WidgetChat.vue` 各自组织消息、工具块与图表。用户提出参考 Z.ai 的 ZCode（以智能体对话为中心的工作区：对话输入支持附件与 @ 文件、模式切换、过程与结果分区）改造我们的对话界面。参考：[zcode.z.ai](https://zcode.z.ai)、[zai-org/ZCode](https://github.com/zai-org/ZCode)、[第三方介绍](https://www.eesel.ai/blog/zcode)。
+- **要做**：先对照 ZCode 梳理我们的信息结构（过程区/工具调用、结论区、图表与附件、卡片、输入区），确定改造范围，再按中大型变更写设计与计划；主聊天页与 widget 共用同一套组件和规则，不各自分叉。来源：用户 2026-11-04 提出。
+- **widget 与门户对话统一（并入本项）**：用户希望 widget 对话和门户对话的 UX 一致并一起改进。现状（2026-11-04 核实）：门户 `NL2SqlChatV2.vue` 通过 `packages/agent-conversation` 的 `<dataagent-conversation>` 整体渲染；widget `WidgetChat.vue`（1247 行）自行拼装消息列表，只单独引用包里的 `ToolOutput`、`ChartSpecView`、`QuestionCard`、`PermissionCard`，并自带文本/图表拆分逻辑，导致两边的展示和修复不同步。要做：widget 改为复用同一个对话组件，只保留宿主差异（尺寸、身份、入口），本项的图表、HTML 预览等改进一次覆盖两端；对两端补同一组回归用例。
+
+- **真实浏览器预览 HTML（并入本项）**：用户希望像 ZCode 的内置浏览器一样完整看到生成的 HTML（如报告技能导出的 HTML 报告）。现状（2026-11-04 核实）：`AttachmentPreview.vue` 用不带任何权限的 `<iframe sandbox="" srcdoc>` 预览，这是有意的安全选择，结果是脚本不执行（依赖 JS 绘图的报告显示为空或残缺），且 `srcdoc` 没有基础地址，相对路径的样式、图片、脚本加载失败；预览也只在对话内的小面板里。要做：提供可全屏或新标签打开的真实页面预览，允许脚本执行和相对资源加载，同时保持与主应用隔离——文件从独立的预览来源（单独域名/端口或不透明来源）提供，绝不同时给 `allow-scripts` 和 `allow-same-origin`，配合 CSP 禁止访问主应用接口和凭据。隔离方案需在设计里写清并做安全验证。
+
+- **图表重复显示（并入本项）**：同一张图在回答中部（工具块下方）和结尾各出现一次。原因已核实：图表脚本输出的 `chart_spec` 由 `ToolOutput.vue` 画在工具块下；同时系统提示 `prompts/data_agent_system_prompt.md` 第 53 行要求模型把完整 `chart_spec` JSON 放进回答，图表技能 `SKILL.md` 第 47 行也允许，`MarkdownText.vue` 于是把回答里的副本再画一次。本地最近 30 天的消息里没有带图回答，未能用落库数据复现，依据是代码路径与用户观察。建议方向：图只保留一份，数据来自工具结果，显示在结论处；模型不再把图表 JSON 写进回答（省输出 token，也避免模型改写数据），旧消息中已内嵌的 JSON 继续由 `stripChartSpecsFromText` 去掉；工具块只留“已生成图表”的提示。具体位置随本项设计一起定。涉及提示词、图表技能、前端两处渲染，属中等变更，需先写设计与计划。
 
 ### PR #5 二次评审发现（2026-11-04）
 
