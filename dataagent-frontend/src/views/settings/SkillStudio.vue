@@ -54,6 +54,17 @@
               @update:model-value="setSkillEnabled(skill, $event)"
             />
             <el-button
+              v-if="canManage"
+              text
+              size="small"
+              title="导出为 ZIP"
+              :loading="downloadingFolder === skill.folder"
+              :disabled="Boolean(downloadingFolder) && downloadingFolder !== skill.folder"
+              @click="downloadSkill(skill)"
+            >
+              导出
+            </el-button>
+            <el-button
               v-if="canManage && skill.source === 'managed'"
               text
               type="danger"
