@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     dataagent_sandbox_memory: str = "2g"
     dataagent_sandbox_cpus: str = "2"
     dataagent_sandbox_pids_limit: int = 512
+    # Docker network for sandbox containers. "none" (default) isolates tools;
+    # trusted deployments whose skills call internal services may name a
+    # network such as "bridge" (2026-11-05).
+    dataagent_sandbox_network: str = "none"
 
     # ---- 运行策略 ----
     max_few_shot_examples: int = 5
