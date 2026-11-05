@@ -8,7 +8,7 @@ WORKDIR /build
 COPY dataagent-runtime-pi/package.json dataagent-runtime-pi/package-lock.json dataagent-runtime-pi/tsconfig.json ./
 RUN npm ci --ignore-scripts
 COPY dataagent-runtime-pi/src ./src
-RUN npm run build && npm prune --omit=dev
+RUN npm run build
 
 FROM python:3.13-slim-bookworm
 
@@ -34,7 +34,6 @@ RUN mkdir -p /dataagent_runtime /app/.claude/skills && chmod 1777 /dataagent_run
 # COPY --from pattern the runner image already uses for the docker CLI.
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=pi-cell /build/dist /opt/dataagent-runtime-pi/dist
-COPY --from=pi-cell /build/node_modules /opt/dataagent-runtime-pi/node_modules
 ENV DATAAGENT_NODE_BIN=/usr/local/bin/node
 ENV DATAAGENT_RUNTIME_PI_DIR=/opt/dataagent-runtime-pi
 

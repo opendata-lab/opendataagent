@@ -3,32 +3,6 @@
 name: opendataagent
 
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: dataagent-mysql
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
-      MYSQL_DATABASE: dataagent
-      MYSQL_USER: dataagent
-      MYSQL_PASSWORD: ${DATAAGENT_MYSQL_PASSWORD:-dataagent123}
-      TZ: ${TZ:-Asia/Shanghai}
-    ports:
-    - 3326:3306
-    volumes:
-    - mysql-data:/var/lib/mysql
-    - ./database/mysql:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysqladmin ping -h localhost -uroot
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    command:
-    - --character-set-server=utf8mb4
-    - --collation-server=utf8mb4_unicode_ci
-    - --default-authentication-plugin=mysql_native_password
   redis:
     image: redis:7.2-alpine
     container_name: dataagent-redis
@@ -55,13 +29,15 @@ services:
     - ./.env
     user: "0:0"
     environment:
-      MYSQL_HOST: mysql
-      MYSQL_USER: ${DATAAGENT_MYSQL_USER:-dataagent}
-      MYSQL_PASSWORD: ${DATAAGENT_MYSQL_PASSWORD:-dataagent123}
-      MYSQL_DATABASE: ${DATAAGENT_SESSION_MYSQL_DATABASE:-dataagent}
-      SESSION_MYSQL_DATABASE: ${DATAAGENT_SESSION_MYSQL_DATABASE:-dataagent}
+      MYSQL_HOST: ${MYSQL_HOST:-127.0.0.1}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER:-${DATAAGENT_MYSQL_USER:-dataagent}}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-${DATAAGENT_MYSQL_PASSWORD:-dataagent123}}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-${DATAAGENT_SESSION_MYSQL_DATABASE:-dataagent}}
+      SESSION_MYSQL_DATABASE: ${MYSQL_DATABASE:-${DATAAGENT_SESSION_MYSQL_DATABASE:-dataagent}}
       SKILLS_ROOT_DIR: /app/.claude/skills
-      REDIS_HOST: redis
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
       DATAAGENT_SANDBOX_IMAGE: ${ODA_SANDBOX_IMAGE:-mikefan2019/oda-sandbox:latest}
       DATAAGENT_RUNTIME_UID: ${DATAAGENT_RUNTIME_UID:-1000}
       DATAAGENT_RUNTIME_GID: ${DATAAGENT_RUNTIME_GID:-1000}
@@ -69,8 +45,6 @@ services:
     ports:
     - 8900:8900
     depends_on:
-      mysql:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -108,38 +82,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-  # 日志收集 sidecar：只读挂 docker socket，对每个目标容器实时 `docker logs --follow`
-  # 写到宿主机 deploy/logs/<container>.log；Pi 执行事件持久化到 MySQL。
-  # 如需增减目标容器，在 .env 设置 LOG_COLLECTOR_CONTAINERS。
-  log-collector:
-    image: ${LOG_COLLECTOR_IMAGE:-docker:27.5.1-cli}
-    container_name: dataagent-log-collector
-    restart: always
-    user: "0:0"
-    environment:
-      LOG_COLLECTOR_CONTAINERS: ${LOG_COLLECTOR_CONTAINERS:-dataagent-backend}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-    - |
-      set -u
-      mkdir -p /logs
-      echo "[log-collector] following: $$LOG_COLLECTOR_CONTAINERS"
-      for c in $$LOG_COLLECTOR_CONTAINERS; do
-        (
-          while true; do
-            # --tail 0：仅从挂接点起的新日志，避免重连后重复回灌历史。
-            docker logs --follow --timestamps --tail 0 "$$c" >> "/logs/$$c.log" 2>>"/logs/_collector.err" || true
-            sleep 3
-          done
-        ) &
-      done
-      wait
-    volumes:
-    - ./logs:/logs
-    - ${DATAAGENT_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
-
 volumes:
-  mysql-data:
-    driver: local
   dataagent-skills:
     driver: local

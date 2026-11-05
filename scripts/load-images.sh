@@ -45,9 +45,7 @@ LEGACY_IMAGES=(
     "oda-frontend.tar"
     "oda-backend.tar"
     "oda-sandbox.tar"
-    "mysql-8.0.tar"
     "redis-7.2-alpine.tar"
-    "docker-27.5.1-cli.tar"
 )
 
 if [ -f "$COMBINED_ARCHIVE" ]; then
@@ -94,18 +92,26 @@ echo ""
 # 定义需要修复的镜像（支持 latest 与版本号如 0.2.0）
 # 若 manifest.json 存在则从中读取 DataAgent 镜像的 tag
 IMAGE_TAG="latest"
+IMAGES=()
 if [[ -f "$IMAGE_DIR/manifest.json" ]]; then
-    _tag=$(grep -o '"target": *"oda-frontend:[^"]*"' "$IMAGE_DIR/manifest.json" 2>/dev/null | sed 's/.*oda-frontend://;s/"//')
+    _tag=$(grep -o '"target": *"oda-frontend:[^"]*"' "$IMAGE_DIR/manifest.json" 2>/dev/null | sed 's/.*oda-frontend://;s/"//' || true)
     [[ -n "$_tag" ]] && IMAGE_TAG="$_tag"
+    _targets=$(grep -o '"target": *"[^"]*"' "$IMAGE_DIR/manifest.json" 2>/dev/null | sed 's/.*"target": *"//;s/"//' || true)
+    if [[ -n "$_targets" ]]; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && IMAGES+=("$line")
+        done <<< "$_targets"
+    fi
 fi
-IMAGES=(
-    "oda-frontend:${IMAGE_TAG}"
-    "oda-backend:${IMAGE_TAG}"
-    "oda-sandbox:${IMAGE_TAG}"
-    "mysql:8.0"
-    "redis:7.2-alpine"
-    "docker:27.5.1-cli"
-)
+
+if [[ ${#IMAGES[@]} -eq 0 ]]; then
+    IMAGES=(
+        "oda-frontend:${IMAGE_TAG}"
+        "oda-backend:${IMAGE_TAG}"
+        "oda-sandbox:${IMAGE_TAG}"
+        "redis:7.2-alpine"
+    )
+fi
 
 # 修复每个镜像
 for image in "${IMAGES[@]}"; do

@@ -233,9 +233,7 @@ MAIN_IMAGES=(
 )
 
 EXTRA_IMAGES=(
-    "mysql-8.0.tar|docker.io/library/mysql:8.0|mysql:8.0"
     "redis-7.2-alpine.tar|docker.io/library/redis:7.2-alpine|redis:7.2-alpine"
-    "docker-27.5.1-cli.tar|docker.io/library/docker:27.5.1-cli|docker:27.5.1-cli"
 )
 
 COMBINED_ARCHIVE="all-images.tar"

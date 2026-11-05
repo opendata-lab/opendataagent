@@ -1,7 +1,7 @@
 # DataAgent 部署
 
 `deploy/docker-compose.yml` 是一个独立的 Compose 项目（项目名固定为 `opendataagent`），
-自带 MySQL、Redis、backend 和前端，工具使用按需启动的 oda-sandbox 容器，不依赖任何其他平台。
+包含 Redis、backend 和前端，支持连接外部自备 MySQL，工具使用按需启动的 oda-sandbox 容器，不依赖任何其他平台。
 
 ```sh
 cp deploy/.env.example deploy/.env      # 按需修改；缺失时 start.sh 会从模板复制
@@ -16,9 +16,9 @@ scripts/start.sh                         # 启动；另有 stop.sh、restart.sh�
 | --- | --- | --- |
 | dataagent-frontend | 8901 | 管理台与问答页，`/widget/dataagent-widget.bundle.js` |
 | dataagent-backend | 8900 | `/api/v1/nl2sql/*`、`/api/v1/dataagent/*`、`/api/v1/nl2sql-admin/*` |
-| mysql | 3326 | 会话库 `dataagent` |
 | redis | 6389 | 任务协调 |
 
+DataAgent 采用自备外部 MySQL 数据库架构（在 `.env` 中配置 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`，支持云 RDS 或已有 MySQL 实例）。
 宿主机端口避开了 OpenDataWorks 默认使用的 3306/3316/6379，可以和它部署在同一台机器上。
 backend 容器启动时先执行 `alembic upgrade head`，再启动服务。
 
@@ -31,7 +31,7 @@ scripts/create-offline-package.sh --tag 1.0.0 --output oda-deployment-1.0.0.tar.
 ```
 
 包内含 `deploy/`（只有 `.env.example`，不带打包机的 `.env`）、部署脚本和去重后的单个镜像归档
-`deploy/docker-images/all-images.tar`（oda-frontend/backend/sandbox、mysql、redis、docker CLI）。
+`deploy/docker-images/all-images.tar`（oda-frontend/backend/sandbox、redis）。
 `.env.example` 中的 `ODA_*_IMAGE` 会被改写为本地镜像名。发版 tag（`v*`）时 CI 自动生成并上传到 GitHub Release；main 分支每次推送刷新 `latest` Release。
 
 目标机器（需 `xz`）：
@@ -45,9 +45,7 @@ scripts/load-package-and-start.sh --package .   # 加载镜像；deploy/.env 不
 
 ## 日志
 
-- `log-collector` 把 `dataagent-backend` 的日志实时写到 `deploy/logs/<容器名>.log`；
-  在 `.env` 用 `LOG_COLLECTOR_CONTAINERS` 增减目标容器。
-- `scripts/dump-logs.sh` 导出全部服务日志到 `deploy/logs/services/`，并把 旧版本 task child 日志汇总到 `deploy/logs/task-child/<topic>/`；
+- `scripts/dump-logs.sh` 导出全部服务日志到 `deploy/logs/services/`；
   打包带走：`tar -czf dataagent-logs.tgz -C deploy logs`。
 
 ## 运行配置
