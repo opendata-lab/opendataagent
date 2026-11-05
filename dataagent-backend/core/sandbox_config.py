@@ -30,6 +30,13 @@ def backend_mounts() -> list[dict[str, Any]]:
     return _discover_mount_root("docker", own_id)
 
 
+def pip_env(cfg: Any) -> dict[str, str]:
+    """Runtime pip settings for the sandbox; unset values keep pip's default."""
+    values = {"PIP_INDEX_URL": getattr(cfg, "dataagent_sandbox_pip_index_url", ""),
+              "PIP_TRUSTED_HOST": getattr(cfg, "dataagent_sandbox_pip_trusted_host", "")}
+    return {key: value for key, value in values.items() if value}
+
+
 def build_sandbox_config(cfg: Any, *, run_id: str, workspace: Path,
                          enabled_roots: dict[str, str], lifetime: int,
                          env: dict[str, str]) -> tuple[dict[str, Any], Path]:
@@ -58,9 +65,10 @@ def build_sandbox_config(cfg: Any, *, run_id: str, workspace: Path,
             "uid": os.getuid(), "gid": os.getgid(), "lifetimeSeconds": lifetime,
             "memory": cfg.dataagent_sandbox_memory, "cpus": cfg.dataagent_sandbox_cpus,
             "pidsLimit": cfg.dataagent_sandbox_pids_limit,
+            "network": cfg.dataagent_sandbox_network,
             "workspaceSource": source(workspace), "resultsSource": source(results),
             "skills": [{"folder": name, "source": source(Path(root))} for name, root in enabled_roots.items()],
-            "env": env}, results
+            "env": {**pip_env(cfg), **env}}, results
 
 
 async def remove_segment_sandbox(config: dict[str, Any]) -> None:

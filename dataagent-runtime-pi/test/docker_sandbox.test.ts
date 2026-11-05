@@ -31,6 +31,17 @@ test("sandbox rejects malformed resource limits before any docker call", () => {
   }
 });
 
+test("sandbox network is a plain docker network name", () => {
+  const base = { runId: "r", image: "img", cli: "docker" as const, uid: 1000, gid: 1000, lifetimeSeconds: 60,
+    memory: "2g", cpus: "2", pidsLimit: 512, workspaceSource: "/w", resultsSource: "/r", skills: [] };
+  for (const network of [undefined, "none", "bridge", "oda_trusted-net.1"]) {
+    assert.doesNotThrow(() => new DockerSandboxManager({ ...base, network }));
+  }
+  for (const network of ["", "container:abc", "bridge --privileged", "-x"]) {
+    assert.throws(() => new DockerSandboxManager({ ...base, network }), /Invalid sandbox network/);
+  }
+});
+
 test("real sandbox reuses one container and enforces readonly mounts and no network", { skip: !image }, async () => {
   const { root, dirs, manager } = fixture();
   const execute = async (args: string[]) => {
