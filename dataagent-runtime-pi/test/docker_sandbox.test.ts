@@ -58,6 +58,20 @@ test("real sandbox reuses one container and enforces readonly mounts and no netw
   }
 });
 
+test("slow container startup does not spend the command timeout", { skip: !image }, async () => {
+  const { root, manager } = fixture();
+  // Simulate a slow daemon: startup takes longer than the whole command budget.
+  const internals = manager as unknown as { start: () => Promise<void> };
+  const realStart = internals.start.bind(manager);
+  internals.start = async () => { await new Promise(resolve => setTimeout(resolve, 1500)); await realStart(); };
+  try {
+    const code = await manager.execute(["true"], { timeoutMs: 1000, onData: () => {} });
+    assert.equal(code, 0);
+  } finally {
+    await manager.close(); fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("timeout destroys all descendants and the segment cannot restart", { skip: !image }, async () => {
   const { root, manager } = fixture();
   try {
