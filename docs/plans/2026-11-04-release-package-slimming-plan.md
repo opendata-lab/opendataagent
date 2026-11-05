@@ -32,10 +32,10 @@
    - 修改 `scripts/load-images.sh`：
      - 同步移除对历史 `mysql-8.0.tar`、`docker-27.5.1-cli.tar` 的强制依赖检查。
 
-5. **依赖修剪与运行时动态 Pip**：
+5. **依赖修剪**：
    - 修剪 `dataagent-backend/requirements-sandbox.txt`：仅保留 `pandas>=2.1.0` 与 `openpyxl>=3.1.0`，移除 `duckdb`、`matplotlib` 等重型依赖；
    - 修剪 `dataagent-backend/requirements.txt`：移除后端未直接引用的 `jieba`、`numpy`、`pandas`、`openpyxl`；
-   - 依赖项通过沙箱运行时的 `PIP_INDEX_URL` 按需下载。
+   - 更正（2026-11-05）：沙箱无网络且只读，不能运行时安装；技能依赖只能打进 `requirements-sandbox.txt`。CI 的 python 作业及本地开发环境额外安装 `requirements-sandbox.txt`，供技能脚本测试使用。
    - 保留 `redis:7.2-alpine` 作为默认协调依赖。
 
 6. **本地验证与回归测试**：

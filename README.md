@@ -122,7 +122,7 @@ dataagent-backend（FastAPI）── MySQL / Redis
 pyenv install -s 3.13.18
 pyenv local 3.13.18
 python -m venv dataagent-backend/.venv-py313
-dataagent-backend/.venv-py313/bin/pip install -r dataagent-backend/requirements.txt
+dataagent-backend/.venv-py313/bin/pip install -r dataagent-backend/requirements.txt -r dataagent-backend/requirements-sandbox.txt
 
 # Node（版本见 .nvmrc）
 . "$HOME/.nvm/nvm.sh"

@@ -122,7 +122,7 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
   - create or reuse a local Python `3.10+` virtualenv
   - in this repository, prefer reusing `dataagent-backend/.venv-py313` when it exists
   - if no `3.10+` virtualenv is available, fall back to `/Applications/Xcode.app/Contents/Developer/usr/bin/python3` only for non-agent tasks after confirming imports succeed there
-  - install `dataagent-backend/requirements.txt`
+  - install `dataagent-backend/requirements.txt` and `dataagent-backend/requirements-sandbox.txt` (skill-script tests run the bundled skills with this interpreter)
   - set runtime env to local MySQL:
     - `MYSQL_HOST=127.0.0.1`
     - `MYSQL_PORT=3326` when using `deploy/docker-compose.yml` (or the actual published port in your local setup)
