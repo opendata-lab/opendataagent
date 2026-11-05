@@ -273,8 +273,12 @@ describe('SkillStudio', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    const targetSkill = wrapper.vm.filteredSkills.find((item) => item.folder === 'marketing-insights')
-    await wrapper.vm.downloadSkill(targetSkill)
+    // Click the row's button: the handler existed for a long time with no
+    // button wired to it, so calling downloadSkill directly proved nothing.
+    const row = wrapper.findAll('.skill-row').find((item) => item.text().includes('marketing-insights'))
+    const exportButton = row.findAll('button').find((item) => item.text() === '导出')
+    expect(exportButton).toBeTruthy()
+    await exportButton.trigger('click')
     await flushPromises()
 
     expect(apiMocks.exportSkill).toHaveBeenCalledWith('marketing-insights')
@@ -320,7 +324,7 @@ describe('SkillStudio', () => {
     // The whole row opens the detail view, so a button repeating that is gone.
     expect(wrapper.findAll('.skill-row').length).toBeGreaterThan(0)
     expect(wrapper.text()).not.toContain('导入 Skill')
-    expect(wrapper.text()).not.toContain('下载')
+    expect(wrapper.text()).not.toContain('导出')
     expect(wrapper.text()).not.toContain('卸载')
 
     const targetSkill = wrapper.vm.filteredSkills.find((item) => item.folder === 'marketing-insights')
