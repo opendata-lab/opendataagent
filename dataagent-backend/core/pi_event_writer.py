@@ -6,6 +6,8 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from core.pi_runtime import accumulate_usage
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +44,7 @@ class PiEventWriter:
         self._topic_id = topic_id
         self._turn_index = initial_turn_index
         self._highest_sequence = 0
+        self.usage: dict[str, Any] = {}
 
     @property
     def turn_index(self) -> int:
@@ -92,6 +95,8 @@ class PiEventWriter:
         # handling need, so coerce rather than drop.
         raw_payload = event.get("payload")
         payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        if event_type == "usage.updated":
+            self.usage = accumulate_usage(self.usage, payload.get("usage"))
         # The envelope was previously discarded, so a stored record could not be
         # deduplicated, ordered against its producer, or attributed to an engine
         # — everything history replay needs once it stops going through a second
@@ -120,50 +125,6 @@ class PiEventWriter:
                 message=str(payload.get("message") or "Pi 运行时执行失败"),
                 detail=str(payload.get("detail") or ""),
             )
-
-    def append_question_request(self, *, request_id: str, questions: Any, deadline_at: str = "") -> None:
-        """Persist a question card in the common frontend record format."""
-        self._store.append_sdk_record(
-            task_id=self._task_id,
-            topic_id=self._topic_id,
-            turn_index=self._turn_index,
-            record_type="question_request",
-            event_type=None,
-            data={
-                "request_id": str(request_id),
-                "questions": questions if isinstance(questions, list) else [],
-                "deadline_at": str(deadline_at or ""),
-            },
-        )
-
-    def append_permission_request(
-        self,
-        *,
-        request_id: str,
-        tool_name: str,
-        risk_level: str = "high",
-        title: str = "",
-        summary: str = "",
-        payload_preview: Any = None,
-        deadline_at: str = "",
-    ) -> None:
-        """Persist an approval card in the common frontend record format."""
-        self._store.append_sdk_record(
-            task_id=self._task_id,
-            topic_id=self._topic_id,
-            turn_index=self._turn_index,
-            record_type="permission_request",
-            event_type=None,
-            data={
-                "request_id": str(request_id),
-                "tool_name": str(tool_name or ""),
-                "risk_level": str(risk_level or "high"),
-                "title": str(title or ""),
-                "summary": str(summary or ""),
-                "payload_preview": payload_preview,
-                "deadline_at": str(deadline_at or ""),
-            },
-        )
 
     def append_error(self, *, code: str = "pi_runtime_error", message: str = "请求失败", detail: str = "") -> None:
         """Emit the shared terminal error record.

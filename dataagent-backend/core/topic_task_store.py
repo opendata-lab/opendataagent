@@ -2096,17 +2096,20 @@ class TopicTaskStore(SessionCheckpointStore):
                 )
                 cur.execute("SELECT topic_id,state_json FROM da_agent_session_checkpoint WHERE task_id=%s FOR UPDATE", (task_id,))
                 checkpoint = cur.fetchone()
-                if checkpoint:
-                    state = _safe_json_load(checkpoint["state_json"]) or {}
-                    interaction_state = state.get("interaction") or {}
-                    if interaction_state.get("request_id") != request_id:
-                        raise ValueError("Checkpoint interaction mismatch")
-                    interaction_state["result"] = payload
-                    if interaction_state.get("kind") == "plan":
-                        state["plan_approved"] = payload.get("decision") == "allow"
-                    cur.execute("UPDATE da_agent_session_checkpoint SET state_json=%s WHERE topic_id=%s", (_json_dump(state),checkpoint["topic_id"]))
-                    cur.execute("UPDATE da_agent_task SET task_status='waiting' WHERE task_id=%s", (task_id,))
-                    cur.execute("UPDATE da_agent_topic SET current_task_status='waiting' WHERE current_task_id=%s", (task_id,))
+                if not checkpoint:
+                    conn.rollback()
+                    return "status_mismatch"
+                state = _safe_json_load(checkpoint["state_json"]) or {}
+                interaction_state = state.get("interaction") or {}
+                if interaction_state.get("request_id") != request_id:
+                    conn.rollback()
+                    return "status_mismatch"
+                interaction_state["result"] = payload
+                if interaction_state.get("kind") == "plan":
+                    state["plan_approved"] = payload.get("decision") == "allow"
+                cur.execute("UPDATE da_agent_session_checkpoint SET state_json=%s WHERE topic_id=%s", (_json_dump(state),checkpoint["topic_id"]))
+                cur.execute("UPDATE da_agent_task SET task_status='waiting' WHERE task_id=%s", (task_id,))
+                cur.execute("UPDATE da_agent_topic SET current_task_status='waiting' WHERE current_task_id=%s", (task_id,))
             conn.commit()
         except Exception:
             conn.rollback()

@@ -75,3 +75,36 @@ def test_confirmed_operation_is_claimed_once_and_unknown_results_are_not_replaye
     cached=store.claim_confirmed_operation(topic_id=topic_id,task_id=task_id,request_id="request-1")
     assert cached["operation_status"]=="done"
     assert cached["operation_result"]=={"ok":True}
+
+
+@pytest.mark.parametrize('checkpoint_state', ['missing', 'mismatched'])
+def test_card_answer_conflict_rolls_back_record_and_leaves_task_parked(task, checkpoint_state):
+    import json
+    store, topic_id, task_id = task
+    commit_card(*task)
+    connection = store._connect(database=store._schema_name())
+    try:
+        with connection.cursor() as cursor:
+            if checkpoint_state == 'missing':
+                cursor.execute('DELETE FROM da_agent_session_checkpoint WHERE topic_id=%s', (topic_id,))
+            else:
+                state = {'interaction': {'request_id': 'newer-card', 'kind': 'question'}}
+                cursor.execute('UPDATE da_agent_session_checkpoint SET state_json=%s WHERE topic_id=%s', (json.dumps(state), topic_id))
+        connection.commit()
+    finally:
+        connection.close()
+    assert store.append_question_answer_if_waiting(task_id=task_id, request_id='request-1', answers=[]) == 'status_mismatch'
+    assert store.get_task(task_id)['task_status'] == 'waiting_input'
+    assert store.get_current_question_interaction(task_id=task_id, request_id='request-1')['status'] != 'resolved'
+
+
+def test_explicit_failed_operation_is_a_durable_reusable_result(task):
+    store, topic_id, task_id = task
+    commit_card(*task, kind='permission')
+    store.append_permission_decision_if_waiting(task_id=task_id, request_id='request-1', decision='allow')
+    store.claim_confirmed_operation(topic_id=topic_id, task_id=task_id, request_id='request-1')
+    result = {'isError': True, 'content': [{'type': 'text', 'text': 'Validation rejected'}]}
+    store.save_confirmed_operation_result(topic_id=topic_id, task_id=task_id, request_id='request-1', result=result)
+    cached = store.claim_confirmed_operation(topic_id=topic_id, task_id=task_id, request_id='request-1')
+    assert cached['operation_status'] == 'done'
+    assert cached['operation_result'] == result

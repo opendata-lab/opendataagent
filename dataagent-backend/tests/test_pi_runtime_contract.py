@@ -430,3 +430,34 @@ def test_cell_command_reads_dotenv_backed_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "get_settings", lambda: SimpleNamespace(
         dataagent_node_bin="/configured/node", dataagent_runtime_pi_dir=str(tmp_path)))
     assert runtime.resolve_cell_command() == ["/configured/node", str(entry)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('lifecycle,expected_cleanups', [([], 0), (['starting','closed'], 0), (['starting'], 1)])
+async def test_backend_cleanup_only_for_outstanding_sandbox_intent(tmp_path, monkeypatch, lifecycle, expected_cleanups):
+    from core import sandbox_config
+    calls = []
+    async def cleanup(config): calls.append(config)
+    monkeypatch.setattr(sandbox_config, 'remove_segment_sandbox', cleanup)
+    script = 'read()\n'
+    for state in lifecycle:
+        script += f'send("run.heartbeat", {{"sandbox_state": {state!r}}})\n'
+    script += 'event(1, "run.completed")\n'
+    ctx = _context(tmp_path, sandbox={'cli': 'unavailable-daemon', 'runId': 'test'})
+    result = await execute_pi_run(ctx, writer=_RecordingWriter(), cell_command=_stub_cell(script))
+    assert result.terminal_status == 'success'
+    assert len(calls) == expected_cleanups
+
+
+@pytest.mark.asyncio
+async def test_token_usage_sums_model_turns(tmp_path):
+    script = '''
+read()
+event(1, "usage.updated", {"usage": {"input_tokens": 10, "output_tokens": 2, "cost": {"total": 0.1}}})
+event(2, "usage.updated", {"usage": {"input_tokens": 20, "output_tokens": 3, "cost": {"total": 0.2}}})
+event(3, "run.completed")
+'''
+    result = await execute_pi_run(_context(tmp_path), writer=_RecordingWriter(), cell_command=_stub_cell(script))
+    assert result.usage['input_tokens'] == 30
+    assert result.usage['output_tokens'] == 5
+    assert result.usage['cost']['total'] == pytest.approx(0.3)

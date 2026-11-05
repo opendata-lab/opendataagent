@@ -141,6 +141,12 @@ class TestTaskReadsAreScoped:
 
         source = inspect.getsource(getattr(routes, route_name))
 
-        assert "_request_context(" in source, (
-            f"{route_name} must resolve a request context before reading a task"
+        import ast
+        calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)]
+        resolves_context = any(
+            (isinstance(call.func, ast.Name) and call.func.id == "_request_context")
+            or (isinstance(call.func, ast.Attribute) and call.func.attr == "to_thread"
+                and call.args and isinstance(call.args[0], ast.Name) and call.args[0].id == "_request_context")
+            for call in calls
         )
+        assert resolves_context, f"{route_name} must resolve a request context before reading a task"

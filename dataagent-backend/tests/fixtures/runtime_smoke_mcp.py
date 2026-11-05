@@ -20,4 +20,8 @@ async def smoke_write_record(value:str,hold:bool=False)->dict:
     if hold: await asyncio.sleep(60)
     return {'ok':True,'count':len(entries)}
 
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False,destructiveHint=False))
+def smoke_write_rejected()->dict:
+    raise ValueError('Validation rejected: invalid smoke value')
+
 if __name__=='__main__': mcp.run(transport='streamable-http')

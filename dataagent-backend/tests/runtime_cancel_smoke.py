@@ -20,7 +20,8 @@ ADMIN = '/api/v1/nl2sql-admin'
 AGENTS = '/api/v1/dataagent'
 NAME = 'cancel-smoke-' + uuid.uuid4().hex[:10]
 LOGS = Path(tempfile.mkdtemp(prefix=NAME, dir='/tmp'))
-client = httpx.Client(base_url='http://127.0.0.1:8900', timeout=10)
+BASE = os.environ.get('DATAAGENT_SMOKE_BASE_URL', 'http://127.0.0.1:8900')
+client = httpx.Client(base_url=BASE, timeout=10)
 topics = []
 agent = None
 
@@ -84,7 +85,7 @@ def main():
     draft = request('POST', AGENTS+'/agents', json={'name': NAME, 'skill_folders': [], 'mcp_server_ids': []})
     agent = draft['agent_id']
     request('POST', f'{AGENTS}/agents/{agent}/publish', json={'expected_revision': draft['revision']})
-    coordination = redis.Redis(host='127.0.0.1', port=6379)
+    coordination = redis.Redis(host='127.0.0.1', port=6379, db=int(os.environ.get('REDIS_DB', '0')))
     results = []
     for scenario in ['CANCEL', 'CANCEL_BASH']:
         topic = request('POST', API+'/topics', json={'title': NAME+scenario, 'agent_id': agent})['topic_id']
@@ -135,7 +136,7 @@ if __name__ == '__main__':
     try:
         until(lambda: provider.poll() is None and subprocess.run(['curl', '-sf', 'http://127.0.0.1:8919/smoke-state'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0)
-        until(lambda: subprocess.run(['curl', '-sf', 'http://127.0.0.1:8900/api/v1/nl2sql/health'],
+        until(lambda: subprocess.run(['curl', '-sf', BASE + '/api/v1/nl2sql/health'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0)
         main()
     finally:

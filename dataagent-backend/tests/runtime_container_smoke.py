@@ -51,7 +51,8 @@ def wait_ready():
     raise TimeoutError(docker('logs',NAME,check=False)[-4000:])
 
 
-def start(image='oda-backend:test',legacy=False):
+def start(image=None,legacy=False):
+    image=image or os.environ.get('DATAAGENT_SMOKE_BACKEND_IMAGE','oda-backend:test')
     global backend_started
     args=['run','-d','--name',NAME,'--network',NETWORK,'-p','127.0.0.1:8902:8900',
         '-e','MYSQL_HOST=smoke-mysql','-e','MYSQL_PORT=3306','-e','MYSQL_USER=dataagent','-e','MYSQL_PASSWORD=dataagent123',

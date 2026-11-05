@@ -1,12 +1,27 @@
 """Resolve trusted control-plane paths into Docker daemon mount sources."""
 from __future__ import annotations
 
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 from typing import Any
+
+
+@lru_cache(maxsize=8)
+def _discover_mount_root(cli: str, own_id: str) -> list[dict[str, Any]]:
+    try:
+        inspected = subprocess.run([cli, "inspect", own_id], check=True, capture_output=True, text=True, timeout=15)
+        return json.loads(inspected.stdout)[0]["Mounts"]
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError) as exc:
+        raise RuntimeError("SANDBOX_UNAVAILABLE: cannot inspect backend container mounts") from exc
+
+
+def _running_in_container() -> bool:
+    return (Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
+            or bool(os.environ.get("DATAAGENT_CONTAINER_ID")))
 
 
 def build_sandbox_config(cfg: Any, *, run_id: str, workspace: Path,
@@ -22,10 +37,9 @@ def build_sandbox_config(cfg: Any, *, run_id: str, workspace: Path,
         else:
             raise RuntimeError("SANDBOX_UNAVAILABLE: Docker/Podman CLI missing")
     mounts: list[dict[str, Any]] = []
-    if Path("/.dockerenv").exists() or os.environ.get("DATAAGENT_CONTAINER_ID"):
+    if _running_in_container():
         own_id = os.environ.get("DATAAGENT_CONTAINER_ID") or os.environ.get("HOSTNAME", "")
-        inspected = subprocess.run([cli, "inspect", own_id], check=True, capture_output=True, text=True, timeout=15)
-        mounts = json.loads(inspected.stdout)[0]["Mounts"]
+        mounts = _discover_mount_root(cli, own_id)
 
     def source(local: Path) -> str:
         local = local.resolve()
@@ -53,17 +67,23 @@ async def remove_segment_sandbox(config: dict[str, Any]) -> None:
     import asyncio
     import hashlib
     name = "oda-sandbox-" + hashlib.sha256(config["runId"].encode()).hexdigest()[:24]
-    process = await asyncio.create_subprocess_exec(config["cli"], "rm", "-f", name,
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-    try:
-        await asyncio.wait_for(process.wait(), timeout=15)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
-        raise RuntimeError("SANDBOX_CLEANUP_FAILED")
-    if process.returncode:
-        check = await asyncio.create_subprocess_exec(config["cli"], "ps", "-aq", "--filter", f"name=^/{name}$",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        output, _ = await asyncio.wait_for(check.communicate(), timeout=15)
-        if check.returncode or output.strip():
+    async def command(*args: str) -> tuple[int, bytes]:
+        try:
+            process = await asyncio.create_subprocess_exec(config["cli"], *args,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        except OSError as exc:
+            raise RuntimeError("SANDBOX_CLEANUP_FAILED") from exc
+        try:
+            output, _ = await asyncio.wait_for(process.communicate(), timeout=15)
+        except asyncio.TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise RuntimeError("SANDBOX_CLEANUP_FAILED") from exc
+        return process.returncode, output
+
+    status, _ = await command("rm", "-f", name)
+    if status:
+        # Docker may prefix names with '/', Podman does not.
+        status, output = await command("ps", "-aq", "--filter", f"name=^/?{name}$")
+        if status or output.strip():
             raise RuntimeError("SANDBOX_CLEANUP_FAILED")

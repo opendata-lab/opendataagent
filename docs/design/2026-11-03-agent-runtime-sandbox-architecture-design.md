@@ -235,3 +235,17 @@
 ### 报告技能文件输入修正
 
 完整结果 smoke 发现报告技能文档声明 `--input-file`，但 generate_report.py 未实现，且 JSON 路径按 CSV 读取。本轮在技能本地实现互斥的 `--input`/`--input-file`，JSON 文件直接读取 rows；保留已有 CSV/内联 JSON 调用，更新技能文档及回归测试。共享运行时不增加报告专用调用层。
+
+
+### 2026-11-04 PR review corrections
+
+The review identified gaps in segment completion and sandbox lifecycle accounting. The backend, Pi runtime and local infrastructure paths are affected; frontend contracts remain unchanged.
+
+- An explicit MCP `isError` response is a known result: persist it with `isError: true` under the existing `operation_status=done` contract before continuing. Transport failures keep the claimed operation unknown and must never be replayed. Approved calls reserve the first resumed model turn and emit paired tool events; this does not consume an extra model-turn budget.
+- Persist each segment's generated attachments before returning a parked task, merging by `rel_path` across segments. Accumulate numeric token usage across model turns and segments separately from elapsed/tool/turn budgets.
+- Card submission validates the current checkpoint before inserting the answer, returns conflict for missing/mismatched checkpoints, and queues the first accepted response immediately. Recovery polling covers crashes and responses racing the preceding segment's lease release.
+- Reading an existing result references that file rather than saving another copy. Line reads also support byte offsets for long single-line JSON, preserving exact raw payloads and a bounded preview. Small errors stay inline; large/partial Bash output remains durable.
+- Container mount discovery runs off the asyncio loop and caches successful inspection per CLI/container identity, including Podman detection. Inspection errors report SANDBOX_UNAVAILABLE. Lifecycle heartbeats mark sandbox creation intent and successful removal; backend cleanup runs only for outstanding intent, including abrupt Cell loss. Absence checks inspect exact container names for both CLIs.
+- Delete superseded interaction wait loops and event sinks. Correct regression fixtures to exercise MCP folding directly and remove all temporary fixture directories. Local contributor guidance uses only Pi and documents the sandbox image build.
+
+Verification uses deterministic local provider/MCP fixtures, real MySQL/Redis and Docker, with no additional paid provider calls. Existing production-data/Podman-environment limitations remain explicit in the verification report and backlog.

@@ -62,47 +62,6 @@ def test_heartbeat_tick_reports_lost_lease():
     assert anyio.run(lambda: coordinator._heartbeat_tick("task-1", running=running)) is False
 
 
-def test_task_coordinator_persists_only_emitted_sdk_records():
-    appended: list[dict] = []
-
-    class FakeStore:
-        def append_sdk_record(self, **kwargs):
-            appended.append(kwargs)
-
-    coordinator = TaskCoordinator(store=FakeStore())
-
-    coordinator._persist_emitted_sdk_record(
-        topic_id="topic-1",
-        task_id="task-1",
-        record={
-            "record_type": "stream",
-            "event_type": "message_start",
-            "turn_index": 2,
-            "data": {"type": "message_start"},
-        },
-    )
-    coordinator._persist_emitted_sdk_record(
-        topic_id="topic-1",
-        task_id="task-1",
-        record={
-            "record_type": "event",
-            "event_type": "lifecycle",
-            "data": {"legacy": True},
-        },
-    )
-
-    assert appended == [
-        {
-            "task_id": "task-1",
-            "topic_id": "topic-1",
-            "turn_index": 2,
-            "record_type": "stream",
-            "event_type": "message_start",
-            "data": {"type": "message_start"},
-        }
-    ]
-
-
 def test_task_stop_reason_distinguishes_lease_loss_from_user_cancel():
     class FakeStore:
         def __init__(self):
@@ -152,3 +111,20 @@ def test_execution_identity_prefers_dataagent_login_then_host_reported_widget_us
     assert _execution_user_id({"auth_user_id": "local:alice", "external_user_id": "local:bob"}) == "local:alice"
     assert _execution_user_id({"auth_user_id": "", "external_user_id": "local:bob"}) == "local:bob"
     assert _execution_user_id({"auth_user_id": "", "external_user_id": "", "visitor_id": "v1"}) == ""
+
+
+def test_fast_card_answer_is_queued_after_previous_segment_releases_lease():
+    class Store:
+        def get_task(self, task_id): return {'task_status': 'waiting'}
+    coordinator = TaskCoordinator(store=Store())
+    queued = []
+    async def submit(task_id):
+        assert task_id not in coordinator._active_tasks
+        queued.append(task_id)
+    coordinator.submit_task = submit
+    async def run():
+        coordinator._active_tasks['task-1'] = object()
+        coordinator._task_done('task-1')
+        await asyncio.sleep(0)
+    anyio.run(run)
+    assert queued == ['task-1']

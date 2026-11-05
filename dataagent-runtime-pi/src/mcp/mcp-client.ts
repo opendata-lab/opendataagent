@@ -9,7 +9,7 @@ import type { McpServerConfig } from "../protocol/frames.js";
 import { redactString } from "../observability/redaction.js";
 
 /** An error the MCP server itself returned, already worded for the model. */
-class McpToolError extends Error {}
+export class McpToolError extends Error {}
 
 export interface McpBridgeResult {
   tools: unknown[];

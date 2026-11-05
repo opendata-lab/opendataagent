@@ -300,6 +300,18 @@ def _stdio_frame_limit() -> int:
     return max(1024 * 1024, configured)
 
 
+def accumulate_usage(previous: dict[str, Any] | None, current: dict[str, Any] | None) -> dict[str, Any]:
+    total = dict(previous or {})
+    for key, value in (current or {}).items():
+        if isinstance(value, dict):
+            total[key] = accumulate_usage(total.get(key), value)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            total[key] = (total.get(key) or 0) + value
+        else:
+            total[key] = value
+    return total
+
+
 async def execute_pi_run(
     ctx: PiRunContext, *, writer: Any,
     cancel_reason: Callable[[], Awaitable[Any]] | None = None,
@@ -324,6 +336,7 @@ async def execute_pi_run(
     highest_sequence = 0
     answer_parts: list[str] = []
     usage = None
+    sandbox_pending = False
     try:
         await channel.send("cell.init", ctx.to_init_payload())
         while True:
@@ -349,7 +362,10 @@ async def execute_pi_run(
             last_activity = time.monotonic()
             ftype = frame.get("type")
             payload = frame.get("payload") or {}
-            if ftype == "session.entries":
+            if ftype == "run.heartbeat":
+                if payload.get("sandbox_state") == "starting": sandbox_pending = True
+                elif payload.get("sandbox_state") == "closed": sandbox_pending = False
+            elif ftype == "session.entries":
                 if snapshot is not None:
                     raise ValueError("Duplicate session snapshot")
                 snapshot = payload
@@ -375,7 +391,7 @@ async def execute_pi_run(
                 if event_type == "content.delta" and event_data.get("kind") != "reasoning":
                     answer_parts.append(str(event_data.get("delta") or ""))
                 elif event_type == "usage.updated":
-                    usage = event_data.get("usage")
+                    usage = accumulate_usage(usage, event_data.get("usage"))
                 elif event_type in TERMINAL_EVENT_TYPES:
                     return _outcome_from_terminal_event(event_type,event_data,"".join(answer_parts),usage,highest_sequence)
             elif ftype == "protocol.error":
@@ -399,7 +415,7 @@ async def execute_pi_run(
             await stderr_task
         except (asyncio.CancelledError,Exception):
             pass
-        if ctx.sandbox:
+        if ctx.sandbox and sandbox_pending:
             from core.sandbox_config import remove_segment_sandbox
             await remove_segment_sandbox(ctx.sandbox)
 

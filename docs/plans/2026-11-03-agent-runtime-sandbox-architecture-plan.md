@@ -124,3 +124,13 @@
 ### 2026-11-04 Stop 的实际资源验收补充
 
 在不使用真实模型额度的 HTTP fixture 中观测请求生命周期：取消时确认服务端流断开、Pi 子进程消失、Redis lease 释放、运行中 sandbox 及后代销毁、任务/助手/SSE 均终态且记录不再增长。复用正在运行的 backend，新增专用 cancel smoke，仅创建自己的本地 provider/agent/topics，不改用户模型。真实 ODW 只读查询另外记录实际工具结果，不把验收测试表声称为生产业务数据。
+
+
+### 2026-11-04 PR review correction plan
+
+1. Fix explicit approved MCP failures, turn attribution and durable result reuse in `cell.ts`/`mcp-client.ts`; add successful/error/transport regressions.
+2. Preserve attachments and numeric token totals across parked segments in coordinator/executor/runtime; reject checkpoint conflicts transactionally and enqueue accepted answers from routes.
+3. Add resumable byte reads without copying existing result files; retain exact JSON. Cover pagination, small errors and output persistence with real sandbox tests.
+4. Cache mount discovery off-loop, recognize Podman environments, and track sandbox creation/close using existing heartbeat frames. Verify cleanup on abnormal termination and zero daemon calls for pure-model segments.
+5. Remove dead interaction modules/event sinks and obsolete tests; repair folding tests and fixture cleanup. Update AGENTS.md and final verification report.
+6. Build Pi with nvm Node, run focused then full relevant Python/runtime suites and local HTTP smoke (MySQL 127.0.0.1:3326/dataagent, Redis 127.0.0.1:6379, Python .venv-py313, Docker). Use only local fixtures; preserve user configuration/history. Commit and push corrections to PR #5 after validation. Rollback is the previous PR commit; no schema change is required.

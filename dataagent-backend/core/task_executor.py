@@ -17,7 +17,7 @@ from core.agent_runtime import (_build_system_prompt, _build_mcp_servers, _build
 from core.context_governance import build_governance_settings
 from core.interaction_policy import plan_deadline, question_deadline
 from core.pi_event_writer import PiEventWriter
-from core.pi_runtime import PiRunContext, execute_pi_run
+from core.pi_runtime import PiRunContext, accumulate_usage, execute_pi_run
 from core.sandbox_config import build_sandbox_config
 from core.topic_task_store import get_topic_task_store
 from core.topic_workspace import prepare_topic_workspace
@@ -84,7 +84,6 @@ class TaskExecutionResult:
 
 
 async def _execute_task_stream(params: TaskExecutionInput, *,
-    emit: Callable[[dict[str, Any]], Awaitable[None] | None],
     is_cancel_requested: Callable[[], Awaitable[Any] | Any] | None = None,
 ) -> TaskExecutionResult:
     cfg = get_settings()
@@ -133,7 +132,7 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         "DATAAGENT_SQL_WRITE_TIMEOUT_SECONDS":str(min(params.sql_write_timeout_seconds or 60,limits["total_timeout_seconds"]))}
     runtime_env.update((snapshot or {}).get("env_vars") or {})
     run_id = uuid.uuid4().hex
-    sandbox,results = build_sandbox_config(cfg,run_id=run_id,workspace=workspace,
+    sandbox,results = await asyncio.to_thread(build_sandbox_config,cfg,run_id=run_id,workspace=workspace,
         enabled_roots=roots,lifetime=limits["total_timeout_seconds"],env=runtime_env)
     provider_env = _build_provider_env(api_format,api_key=str(target.get("api_key") or ""),
         auth_token=str(target.get("auth_token") or ""),base_url=str(target.get("base_url") or ""))
@@ -163,7 +162,8 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         next_state = {"plan_approved":plan_approved,"usage":{
             "elapsed_seconds":previous_usage.get("elapsed_seconds",0)+elapsed,
             "turns":previous_usage.get("turns",0)+int(checkpoint.get("turns") or 0),
-            "tool_calls":previous_usage.get("tool_calls",0)+int(checkpoint.get("tool_calls") or 0)}}
+            "tool_calls":previous_usage.get("tool_calls",0)+int(checkpoint.get("tool_calls") or 0),
+            "tokens":accumulate_usage(previous_usage.get("tokens"),writer.usage)}}
         card = None
         if request:
             kind = request["kind"]; data=request["payload"]; request_id=request["request_id"]
@@ -194,15 +194,15 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
 
     outcome = await execute_pi_run(ctx,writer=writer,cancel_reason=cancelled,segment_handler=commit,operation_handler=operation_result)
     return TaskExecutionResult(task_status="parked" if outcome.terminal_status=="parked" else from_engine_outcome(outcome.terminal_status),
-        content=outcome.answer or outcome.error_message,usage=outcome.usage,
+        content=outcome.answer or outcome.error_message,usage=accumulate_usage(previous_usage.get("tokens"),outcome.usage) or None,
         error={"code":outcome.error_code,"message":outcome.error_message} if outcome.error_code else None,
         provider_id=provider_id,model=model,session_id=f"pi-{params.topic_id}")
 
 
-async def execute_task_stream(params: TaskExecutionInput, *, emit, is_cancel_requested=None) -> TaskExecutionResult:
+async def execute_task_stream(params: TaskExecutionInput, *, is_cancel_requested=None) -> TaskExecutionResult:
     from core.agent_identity import _identity, set_execution_identity
     token = set_execution_identity(params)
     try:
-        return await _execute_task_stream(params,emit=emit,is_cancel_requested=is_cancel_requested)
+        return await _execute_task_stream(params,is_cancel_requested=is_cancel_requested)
     finally:
         _identity.reset(token)

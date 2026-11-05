@@ -35,9 +35,10 @@ async def complete(request:Request):
         else: answer='tools-ok'
     elif scenario=='QUESTION':
         if not tools:
-            call('bash',command='echo before >before.txt')
+            call('bash',command='mkdir -p output; echo before >before.txt; echo first >output/before-card.txt')
             call('AskUserQuestion',questions=[{'question':'Choose?','options':[{'label':'A','recommended':True},{'label':'B'}]}])
             call('bash',command='echo forbidden >after.txt')
+        elif len(tools)==3: call('bash',command='echo second >output/after-card.txt')
         else: answer='resumed-ok'
     elif scenario in {'PLAN','PLAN_REJECT'}:
         if not tools:
@@ -54,9 +55,11 @@ async def complete(request:Request):
             call('bash',command=f'"$DATAAGENT_PYTHON_BIN" "${{SKILLS_ROOT_DIR}}/report-generation/scripts/generate_report.py" --input-file {file} --output output/full-report.xlsx --title "Smoke full data"')
             call('bash',command=f'"$DATAAGENT_PYTHON_BIN" "${{SKILLS_ROOT_DIR}}/chart-visualization/scripts/build_chart_spec.py" --input-file {file} --chart-type line --x-field id --y-field id --title "Smoke full chart"')
         else: answer='mcp-read-ok'
-    elif scenario in {'MCP_WRITE','MCP_DENY','MCP_UNKNOWN'}:
-        if not tools: call('smoke_write_record',value=scenario,hold=scenario=='MCP_UNKNOWN')
-        else: answer='write-resumed-ok'
+    elif scenario in {'MCP_WRITE','MCP_DENY','MCP_UNKNOWN','MCP_ERROR'}:
+        if not tools:
+            if scenario=='MCP_ERROR': call('smoke_write_rejected')
+            else: call('smoke_write_record',value=scenario,hold=scenario=='MCP_UNKNOWN')
+        else: answer='write-error-reported' if scenario=='MCP_ERROR' and 'MCP_TOOL_ERROR' in transcript else 'write-resumed-ok'
     elif scenario in {'BASH_TIMEOUT','CANCEL_BASH'}:
         if not tools: call('bash',command='sleep 20 & wait')
     async def stream():

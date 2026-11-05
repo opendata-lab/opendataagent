@@ -91,6 +91,8 @@
 
 ## 已完成
 
+- **PR #5 代码评审修正（2026-11-04）**：已修复批准 MCP 的明确失败持久化、跨段附件/用量、回答立即入队及快照冲突、长 JSON 读取与重复文件、挂载发现与清理生命周期，删除旧等待循环和事件 sink，修复真实 folding 回归和测试目录清理，同步 Pi-only 本地指引。来源：用户提供的 PR review；设计/计划先行更新，验证与具体结果见[评审修正报告](reports/2026-11-04-agent-runtime-pr-review-fixes.md)。Podman 实机等既有环境边界仍由原待办跟踪。
+
 - **HTTP fixture 的 MCP major 约束（2026-11-03）**：CI 解析到 Python mcp 2.x，FastMCP 已改名导致 fixture 无法启动；requirements 限定已验证的 v1 API 范围 `>=1.23.0,<2`，不保留兼容分支。来源：[首次实现 CI](https://github.com/opendata-lab/opendataagent/actions/runs/41769122504)，见[报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
 
 - **OAuth 测试 helper 重复 Cookie（2026-11-03）**：远程 Python CI 发现传输配置用例曾先 authorize 再人工发 state，helper 未删除域 Cookie，同时发送两份不同 nonce。已仅修正测试构造，先清理同名 Cookie 再设置，并断言仅一份；生产 CSRF 校验保持原样。来源：[首次实现 CI](https://github.com/opendata-lab/opendataagent/actions/runs/41769122504)，结果见[运行时报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。

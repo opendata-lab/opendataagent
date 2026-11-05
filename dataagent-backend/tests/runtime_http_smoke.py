@@ -17,7 +17,8 @@ import httpx
 
 ROOT=Path(__file__).resolve().parents[2]
 BACKEND=ROOT/'dataagent-backend'
-BASE='http://127.0.0.1:8900'
+PORT=os.environ.get('DATAAGENT_SMOKE_PORT','8900')
+BASE='http://127.0.0.1:'+PORT
 API='/api/v1/nl2sql'
 ADMIN='/api/v1/nl2sql-admin'
 AGENTS='/api/v1/dataagent'
@@ -67,12 +68,12 @@ def start_backend():
     env=os.environ.copy()
     env.pop('DATAAGENT_CONFIG',None)
     env.update(MYSQL_HOST='127.0.0.1',MYSQL_PORT='3326',MYSQL_USER='dataagent',MYSQL_PASSWORD='dataagent123',
-        SESSION_MYSQL_DATABASE='dataagent',REDIS_HOST='127.0.0.1',REDIS_PORT='6379',
+        SESSION_MYSQL_DATABASE=os.environ.get('DATAAGENT_SMOKE_SCHEMA','dataagent'),REDIS_HOST='127.0.0.1',REDIS_PORT='6379',
         SKILLS_ROOT_DIR=str(ROOT/'.claude/skills'),DATAAGENT_HOST_ROOT=str(ROOT),
         DATAAGENT_RUNTIME_PI_DIR=str(ROOT/'dataagent-runtime-pi'),DATAAGENT_SANDBOX_IMAGE='oda-sandbox:test',
         DATAAGENT_NODE_BIN=os.environ.get('DATAAGENT_NODE_BIN',str(Path.home()/'.nvm/versions/node/v22.22.0/bin/node')),
         AGENT_BACKGROUND_TIMEOUT_SECONDS='60',AGENT_BACKGROUND_BASH_TIMEOUT_SECONDS='2',DATAAGENT_RUN_IDLE_TIMEOUT_SECONDS='5')
-    backend=spawn('backend',[sys.executable,'-m','uvicorn','main:app','--host','127.0.0.1','--port','8900'],env)
+    backend=spawn('backend',[sys.executable,'-m','uvicorn','main:app','--host','127.0.0.1','--port',PORT],env)
     wait_http(BASE+API+'/health')
 
 
@@ -156,7 +157,13 @@ def main():
     assert request('POST',API+f'/tasks/{task}/question-answer',json=reply)['accepted']
     assert request('POST',API+f'/tasks/{task}/question-answer',json=reply)['accepted']
     assert_finished(task,'resumed-ok');assert not (ROOT/topic/'workspace/after.txt').exists()
-    print('PASS question restart, slot release, duplicate answer, no batch replay',flush=True)
+    assistant=request('GET',API+f'/tasks/{task}/message')
+    attached={a['rel_path'] for a in assistant['attachments']}
+    assert {'output/before-card.txt','output/after-card.txt'} <= attached, attached
+    usage_events=[r['data']['usage'] for r in records(task) if r['event_type']=='usage.updated']
+    for field in ('input_tokens','output_tokens'):
+        assert assistant['usage'][field] == sum(u[field] for u in usage_events), (assistant['usage'],usage_events)
+    print('PASS question restart, slot release, duplicate answer, no batch replay, attachments and token totals across segments',flush=True)
     for scenario,decision in [('PLAN','allow'),('PLAN_REJECT','deny')]:
         topic,task=submit(scenario,'plan');wait_task(task,{'waiting_permission'})
         permission=card(task,'permission_request')
@@ -171,6 +178,13 @@ def main():
         request('POST',API+f'/tasks/{task}/permission-decision',json=reply)
         request('POST',API+f'/tasks/{task}/permission-decision',json=reply)
         assert_finished(task,'write-resumed-ok');assert write_count()==before+(decision=='allow')
+    _,task=submit('MCP_ERROR');wait_task(task,{'waiting_permission'})
+    permission=card(task,'permission_request')
+    request('POST',API+f'/tasks/{task}/permission-decision',json={'request_id':permission['request_id'],'decision':'allow'})
+    assert_finished(task,'write-error-reported')
+    error_tools=[r for r in records(task) if r['event_type']=='tool.completed' and r['data'].get('is_error')]
+    assert any('Validation rejected' in json.dumps(r['data']) for r in error_tools)
+    print('PASS explicit MCP server error acknowledged and reported without unknown result',flush=True)
     before=write_count();_,task=submit('MCP_UNKNOWN');wait_task(task,{'waiting_permission'})
     permission=card(task,'permission_request')
     request('POST',API+f'/tasks/{task}/permission-decision',json={'request_id':permission['request_id'],'decision':'allow'})

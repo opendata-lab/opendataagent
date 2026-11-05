@@ -14,7 +14,7 @@ from config import get_settings
 from core.task_control import PARKED_TASK_STATUSES, CancelReason
 from core.task_submission_service import compute_next_run_at, current_utc_naive, submit_message_task
 from core.task_executor import TaskExecutionInput, execute_task_stream
-from core.topic_files import diff_generated_files, snapshot_workspace_state
+from core.topic_files import MAX_RUN_ATTACHMENTS, diff_generated_files, snapshot_workspace_state
 from core.topic_task_store import TopicTaskStore, get_topic_task_store
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ class TaskCoordinator:
             self._redis = None
 
     async def submit_task(self, task_id: str) -> dict[str, Any] | None:
-        task = self.store.get_task(task_id)
+        task = await asyncio.to_thread(self.store.get_task, task_id)
         if not task:
             logger.warning("task.queue.missing task_id=%s", task_id)
             return None
@@ -110,7 +110,7 @@ class TaskCoordinator:
             str(task.get("model") or ""),
             str(task.get("agent_id") or ""),
         )
-        return self.store.get_task(task_id) or task
+        return await asyncio.to_thread(self.store.get_task, task_id) or task
 
     async def request_cancel(self, task_id: str) -> None:
         if self._redis is None:
@@ -130,7 +130,15 @@ class TaskCoordinator:
                 continue
             worker = asyncio.create_task(self._run_task(task_id), name=f"dataagent-task-{task_id}")
             self._active_tasks[task_id] = worker
-            worker.add_done_callback(lambda done, current_task_id=task_id: self._active_tasks.pop(current_task_id, None))
+            worker.add_done_callback(lambda done, current_task_id=task_id: self._task_done(current_task_id))
+
+    def _task_done(self, task_id: str) -> None:
+        self._active_tasks.pop(task_id, None)
+        # A fast card answer can arrive before the parked segment releases its
+        # lease. Queue it as soon as the preceding segment is fully gone.
+        if self._closing:
+            return
+        asyncio.create_task(self.submit_task(task_id), name=f"dataagent-task-resume-{task_id}")
 
     async def _run_task(self, task_id: str) -> None:
         topic_id = ""
@@ -212,11 +220,6 @@ class TaskCoordinator:
                         # recent choice. The mode is then stable for the whole run.
                         permission_mode=self.store.get_topic_permission_mode(topic_id),
                     ),
-                    emit=lambda record: self._persist_emitted_sdk_record(
-                        topic_id=topic_id,
-                        task_id=task_id,
-                        record=record,
-                    ),
                     is_cancel_requested=lambda: self._task_stop_reason(task_id, lease_lost),
                 )
                 logger.info(
@@ -231,7 +234,17 @@ class TaskCoordinator:
                     bool(result.session_id),
                     bool(result.usage),
                 )
-                if result.task_status == "parked":
+                previous_message = self.store.get_assistant_message(task_id) or {}
+                attachments_by_path = {item["rel_path"]: item for item in previous_message.get("attachments", [])}
+                attachments_by_path.update({item["rel_path"]: item for item in self._collect_generated_files(topic_id, task_id, workspace_before)})
+                attachments = list(attachments_by_path.values())[-MAX_RUN_ATTACHMENTS:]
+                parked = result.task_status == "parked"
+                self.store.update_assistant_message(
+                    topic_id=topic_id, task_id=task_id,
+                    status=str((self.store.get_task(task_id) or {}).get("task_status")) if parked else result.task_status,
+                    content=result.content, usage=result.usage, error=result.error, attachments=attachments,
+                )
+                if parked:
                     logger.info(
                         "task.run.left_parked task_id=%s topic_id=%s result_status=%s error_code=%s",
                         task_id,
@@ -240,16 +253,6 @@ class TaskCoordinator:
                         str((result.error or {}).get("code") or ""),
                     )
                     return
-                attachments = self._collect_generated_files(topic_id, task_id, workspace_before)
-                self.store.update_assistant_message(
-                    topic_id=topic_id,
-                    task_id=task_id,
-                    status=result.task_status,
-                    content=result.content,
-                    usage=result.usage,
-                    error=result.error,
-                    attachments=attachments,
-                )
                 logger.info(
                     "task.run.message_updated task_id=%s topic_id=%s status=%s content_len=%s attachments=%s error_code=%s",
                     task_id,
@@ -342,33 +345,6 @@ class TaskCoordinator:
                 "Generated-file diff failed topic_id=%s task_id=%s", topic_id, task_id, exc_info=True
             )
             return []
-
-    def _persist_emitted_sdk_record(self, *, topic_id: str, task_id: str, record: dict[str, Any]) -> None:
-        # This is the sandbox-runner protocol sink. The current local/child
-        # execution path also writes SDK rows directly through SdkBlockWriter, so
-        # this method is intentionally not the only da_agent_sdk_record writer.
-        if not isinstance(record, dict):
-            return
-        record_type = str(record.get("record_type") or "").strip()
-        if record_type not in {"stream", "tool_result", "done", "error"}:
-            return
-        try:
-            turn_index = int(record.get("turn_index") or 0)
-        except (TypeError, ValueError):
-            turn_index = 0
-        raw_event_type = record.get("event_type")
-        event_type = str(raw_event_type) if raw_event_type is not None else None
-        data = record.get("data")
-        if not isinstance(data, dict):
-            data = {"value": data}
-        self.store.append_sdk_record(
-            task_id=task_id,
-            topic_id=topic_id,
-            turn_index=turn_index,
-            record_type=record_type,
-            event_type=event_type,
-            data=data,
-        )
 
     async def _heartbeat_loop(
         self,

@@ -12,10 +12,27 @@ const FILE_TOOL = String.raw`
 import sys,json,pathlib,subprocess,fnmatch
 p=json.load(sys.stdin); name=sys.argv[1]; target=pathlib.Path(p.get('path','.') or '.')
 if name=='read':
-    lines=target.read_text(encoding='utf-8').splitlines(keepends=True)
-    start=max(0,int(p.get('offset',1))-1); limit=max(1,int(p.get('limit',2000)))
-    print(''.join(lines[start:start+limit]),end='')
-    if start+limit<len(lines): print('\n[More lines available; use offset/limit.]')
+    cap=min(int(p.get('_inlineBytes',16384)),int(p.get('byteLimit',p.get('_inlineBytes',16384))))
+    if 'byteOffset' in p:
+        start=int(p['byteOffset'])
+        with target.open('rb') as f:
+            f.seek(start); raw=f.read(cap+1)
+        text=raw[:cap].decode('utf-8',errors='ignore'); next_offset=start+len(text.encode('utf-8'))
+        print(text,end='')
+        if len(raw)>cap: print('\n[Next byteOffset: '+str(next_offset)+']')
+    else:
+        start=max(0,int(p.get('offset',1))-1); limit=max(1,int(p.get('limit',2000)))
+        byte_start=0; raw=b''
+        with target.open('rb') as f:
+            for _ in range(start): byte_start+=len(f.readline())
+            for _ in range(limit):
+                line=f.readline(cap+1-len(raw)); raw+=line
+                if len(raw)>cap or not line: break
+            more=bool(f.read(1))
+        text=raw[:cap].decode('utf-8',errors='ignore')
+        print(text,end='')
+        if len(raw)>cap: print('\n[Next byteOffset: '+str(byte_start+len(text.encode('utf-8')))+']')
+        elif more: print('\n[More lines available; use offset/limit or byteOffset.]')
 elif name=='write':
     target.parent.mkdir(parents=True,exist_ok=True); target.write_text(p['content'],encoding='utf-8'); print('File written')
 elif name=='edit':
@@ -54,7 +71,7 @@ export function createSandboxTools(manager: DockerSandboxManager, options: {
   const location = { path: Type.Optional(Type.String()) };
   const schemas = {
     bash: Type.Object({ command: Type.String() }),
-    read: Type.Object({ path: Type.String(), offset: Type.Optional(Type.Integer({ minimum: 1 })), limit: Type.Optional(Type.Integer({ minimum: 1 })) }),
+    read: Type.Object({ path: Type.String(), offset: Type.Optional(Type.Integer({ minimum: 1 })), limit: Type.Optional(Type.Integer({ minimum: 1 })), byteOffset: Type.Optional(Type.Integer({ minimum: 0 })), byteLimit: Type.Optional(Type.Integer({ minimum: 4 })) }),
     write: Type.Object({ path: Type.String(), content: Type.String() }),
     edit: Type.Object({ path: Type.String(), edits: Type.Array(Type.Object({ oldText: Type.String(), newText: Type.String() }), { minItems: 1 }) }),
     ls: Type.Object({ ...location, limit: Type.Optional(Type.Integer({ minimum: 1 })) }),
@@ -62,14 +79,17 @@ export function createSandboxTools(manager: DockerSandboxManager, options: {
     grep: Type.Object({ ...location, pattern: Type.String(), glob: Type.Optional(Type.String()), ignoreCase: Type.Optional(Type.Boolean()), literal: Type.Optional(Type.Boolean()), context: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1 })) }),
   };
   return Object.entries(schemas).map(([name, parameters]) => ({
-    name, label: name, description: `${name} in the isolated sandbox. Paths are relative to /mnt/workspace; results are at /mnt/results.`, parameters,
+    name, label: name, description: `${name} in the isolated sandbox. Paths are relative to /mnt/workspace; results are at /mnt/results.` +
+      (name === "read" ? " For long single-line files use byteOffset/byteLimit, continuing at the returned Next byteOffset." : ""), parameters,
     execute: async (id, raw, signal) => {
       const params = raw as Record<string, unknown>;
       const filename = `res_${randomUUID().replace(/-/g, "")}.txt`;
-      let output;
+      let output: fs.FileHandle | undefined;
       try {
-        await fs.mkdir(options.resultsDir, { recursive: true });
-        output = await fs.open(path.join(options.resultsDir, filename), "wx");
+        if (name !== "read") {
+          await fs.mkdir(options.resultsDir, { recursive: true });
+          output = await fs.open(path.join(options.resultsDir, filename), "wx");
+        }
       } catch (cause) {
         await manager.close();
         const error = `RESULT_STORAGE_FAILED: ${String(cause)}`;
@@ -87,27 +107,31 @@ export function createSandboxTools(manager: DockerSandboxManager, options: {
         exitCode = await manager.execute(name === "bash"
           ? ["bash", "-o", "pipefail", "-c", String(params.command)]
           : ["python", "-c", FILE_TOOL, name], {
-          input: name === "bash" ? undefined : JSON.stringify(params),
+          input: name === "bash" ? undefined : JSON.stringify({ ...params, _inlineBytes: options.inlineBytes }),
           timeoutMs: options.timeoutMs, signal,
           onData: chunk => {
             bytes += chunk.length;
-            const remaining = Math.max(0, options.inlineBytes - previewBytes);
+            // read already bounds file bytes and adds a small continuation marker.
+            const remaining = Math.max(0, options.inlineBytes + (name === "read" ? 256 : 0) - previewBytes);
             if (remaining) { const part = chunk.subarray(0, remaining); preview.push(part); previewBytes += part.length; }
-            writeChain = writeChain.then(async () => { if (!writeError) { await output.writeFile(chunk); storedBytes += chunk.length; } }).catch(e => { writeError = e; });
+            if (!output) return;
+            const destination = output;
+            writeChain = writeChain.then(async () => { if (!writeError) { await destination.writeFile(chunk); storedBytes += chunk.length; } }).catch(e => { writeError = e; });
             return writeChain;
           },
         });
       } catch (cause) { error = String(cause); }
-      finally { await writeChain; try { await output.close(); } catch (cause) { writeError = cause; } }
+      finally { await writeChain; try { await output?.close(); } catch (cause) { writeError = cause; } }
       if (writeError) {
         await manager.close();
         error = `RESULT_STORAGE_FAILED: saved ${storedBytes} of ${bytes} received bytes. ${String(writeError)}`;
       }
-      const file = `/mnt/results/${filename}`;
+      const file = name === "read" ? path.posix.resolve("/mnt/workspace", String(params.path)) : `/mnt/results/${filename}`;
       const text = Buffer.concat(preview).toString("utf8");
-      const saved = bytes > options.inlineBytes || Boolean(error) || exitCode !== 0;
-      if (!saved) await fs.unlink(path.join(options.resultsDir, filename));
-      const details = { exit_code: exitCode, byte_count: bytes, ...(saved ? { storage_path: file, format: "text",
+      const existingFile = name === "read" && !error && exitCode === 0;
+      const saved = name !== "read" && bytes > options.inlineBytes;
+      if (!saved && output) await fs.unlink(path.join(options.resultsDir, filename));
+      const details = { exit_code: exitCode, byte_count: bytes, ...(existingFile ? { storage_path: file, format: "text" } : {}), ...(saved ? { storage_path: file, format: "text",
           dataagent_fold: { storage_path: file, original_bytes: bytes, stored_bytes: storedBytes,
             result_ref: filename.replace(/\.txt$/, "") } } : {}), ...(error ? { error, segment_failed: true } : {}) };
       // Preserve bounded structured UI payloads without sending their full data
@@ -117,7 +141,7 @@ export function createSandboxTools(manager: DockerSandboxManager, options: {
         if (isRenderableStructuredOutput(complete)) options.onUiResult(id, { content: [{ type: "text", text: complete }], details });
       }
       return {
-        content: [{ type: "text", text: text + (saved ? `\nOutput saved: ${file} (${storedBytes} bytes, UTF-8 text).` : "") + (error ? `\n${error}` : "") }],
+        content: [{ type: "text", text: text + (saved ? `\nOutput saved: ${file} (${storedBytes} bytes, UTF-8 text).` : "") + (existingFile ? `\nSource file: ${file}. Continue with byteOffset/byteLimit or process it with bash.` : "") + (error ? `\n${error}` : "") }],
         details, isError: Boolean(error) || exitCode !== 0,
       };
     },

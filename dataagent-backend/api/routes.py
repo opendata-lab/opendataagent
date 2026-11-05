@@ -705,10 +705,10 @@ async def api_cancel_task(task_id: str, request: Request):
 
 
 @task_router.post("/{task_id}/permission-decision", response_model=PermissionDecisionResponse)
-def api_submit_permission_decision(task_id: str, payload: PermissionDecisionRequest, request: Request):
-    store = _get_store()
-    context = _request_context(request)
-    task = store.get_task(task_id, context=context)
+async def api_submit_permission_decision(task_id: str, payload: PermissionDecisionRequest, request: Request):
+    store = await asyncio.to_thread(_get_store)
+    context = await asyncio.to_thread(_request_context, request)
+    task = await asyncio.to_thread(store.get_task, task_id, context=context)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     request_id = str(payload.request_id or "").strip()
@@ -717,11 +717,11 @@ def api_submit_permission_decision(task_id: str, payload: PermissionDecisionRequ
     decision = str(payload.decision or "").strip().lower()
     if decision not in {"allow", "deny"}:
         raise HTTPException(status_code=400, detail="decision must be allow or deny")
-    current = store.get_current_permission_interaction(task_id=task_id, request_id=request_id)
+    current = await asyncio.to_thread(store.get_current_permission_interaction, task_id=task_id, request_id=request_id)
     if current and str(current.get("status") or "") == "resolved":
         effective = str(current.get("decision") or decision)
     else:
-        append_result = store.append_permission_decision_if_waiting(
+        append_result = await asyncio.to_thread(store.append_permission_decision_if_waiting,
             task_id=task_id,
             request_id=request_id,
             decision=decision,
@@ -734,7 +734,9 @@ def api_submit_permission_decision(task_id: str, payload: PermissionDecisionRequ
                 else "failed to record permission decision"
             )
             raise HTTPException(status_code=409, detail=detail)
-        resolved = store.get_current_permission_interaction(task_id=task_id, request_id=request_id)
+        if append_result == "appended":
+            await get_task_coordinator().submit_task(task_id)
+        resolved = await asyncio.to_thread(store.get_current_permission_interaction, task_id=task_id, request_id=request_id)
         effective = str((resolved or {}).get("decision") or decision)
 
     return PermissionDecisionResponse.model_validate(
@@ -743,19 +745,19 @@ def api_submit_permission_decision(task_id: str, payload: PermissionDecisionRequ
 
 
 @task_router.post("/{task_id}/question-answer", response_model=QuestionAnswerResponse)
-def api_submit_question_answer(task_id: str, payload: QuestionAnswerRequest, request: Request):
-    store = _get_store()
-    context = _request_context(request)
-    task = store.get_task(task_id, context=context)
+async def api_submit_question_answer(task_id: str, payload: QuestionAnswerRequest, request: Request):
+    store = await asyncio.to_thread(_get_store)
+    context = await asyncio.to_thread(_request_context, request)
+    task = await asyncio.to_thread(store.get_task, task_id, context=context)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     request_id = str(payload.request_id or "").strip()
     if not request_id:
         raise HTTPException(status_code=400, detail="request_id is required")
     answers = [a for a in (payload.answers or []) if isinstance(a, dict)]
-    current = store.get_current_question_interaction(task_id=task_id, request_id=request_id)
+    current = await asyncio.to_thread(store.get_current_question_interaction, task_id=task_id, request_id=request_id)
     if not current or str(current.get("status") or "") != "resolved":
-        append_result = store.append_question_answer_if_waiting(
+        append_result = await asyncio.to_thread(store.append_question_answer_if_waiting,
             task_id=task_id,
             request_id=request_id,
             answers=answers,
@@ -767,6 +769,8 @@ def api_submit_question_answer(task_id: str, payload: QuestionAnswerRequest, req
                 else "failed to record user answer"
             )
             raise HTTPException(status_code=409, detail=detail)
+        if append_result == "appended":
+            await get_task_coordinator().submit_task(task_id)
     return QuestionAnswerResponse.model_validate(
         {"task_id": task_id, "request_id": request_id, "accepted": True}
     )

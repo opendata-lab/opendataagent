@@ -63,6 +63,15 @@ export class EventNormalizer {
     turnOffset = 0
   ) { this.turnCounter = turnOffset; }
 
+  private nextTurnReserved = false;
+
+  /** Approved operations run before prompt(), but belong to its first turn. */
+  public reserveNextTurn(): NeutralAgentEvent[] {
+    const events = this.normalize({ type: "turn_start" } as PiAgentEvent);
+    this.nextTurnReserved = true;
+    return events;
+  }
+
   public get turnId(): string {
     return this.currentTurnId;
   }
@@ -72,6 +81,10 @@ export class EventNormalizer {
 
     switch (piEvent.type) {
       case "turn_start": {
+        if (this.nextTurnReserved) {
+          this.nextTurnReserved = false;
+          break;
+        }
         this.turnCounter += 1;
         this.currentTurnId = `turn-${this.turnCounter}`;
         this.contentCounter = 0;

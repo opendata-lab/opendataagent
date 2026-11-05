@@ -19,7 +19,7 @@ import { RunStateMachine } from "./run-state-machine.js";
 import { EventNormalizer, unwrapToolResult } from "./event-normalizer.js";
 
 
-import { connectMcpServers, type McpBridgeResult } from "../mcp/mcp-client.js";
+import { connectMcpServers, McpToolError, type McpBridgeResult } from "../mcp/mcp-client.js";
 import { logDiagnostic } from "../protocol/channel.js";
 import { saveResult } from "../context/result-files.js";
 import {
@@ -159,7 +159,7 @@ export class Cell {
         init.model.context_window
       );
       if (!init.sandbox || !init.results_dir) throw new Error("Protocol v2 requires sandbox and results_dir");
-      sandbox = new DockerSandboxManager({ ...init.sandbox, env: { ...init.sandbox.env, DATAAGENT_PLAN_STATE: planApproved || !planMode ? "approved" : "pending" } });
+      sandbox = new DockerSandboxManager({ ...init.sandbox, env: { ...init.sandbox.env, DATAAGENT_PLAN_STATE: planApproved || !planMode ? "approved" : "pending" } }, state => heartbeat({ sandbox_state: state }));
       const baseTools = createSandboxTools(sandbox, { resultsDir: init.results_dir,
         timeoutMs: init.limits.bash_timeout_seconds * 1000,
         inlineBytes: init.governance_settings?.max_inline_result_bytes ?? DEFAULT_FOLD_THRESHOLD_BYTES,
@@ -400,17 +400,27 @@ export class Cell {
           const tool: any = mcpBridge.tools.find((tool: any) => tool.name === operation.payload.tool_name &&
             tool.mcpServerName === operation.payload.server_name && tool.mcpServerIdentity === operation.payload.server_identity);
           if (!tool) throw new Error("Approved MCP tool is no longer available");
-          emit(sm.createEvent("tool.started", { tool_call_id: operation.request_id,
+          toolCalls += 1;
+          for (const event of normalizer.reserveNextTurn()) emit(event);
+          const turn_id = normalizer.turnId;
+          emit(sm.createEvent("tool.started", { turn_id, tool_call_id: operation.request_id,
             tool_name: tool.name, input: operation.payload.arguments }));
-          result = await tool.execute(operation.request_id, operation.payload.arguments, this.cancellation.signal);
+          try {
+            result = await tool.execute(operation.request_id, operation.payload.arguments, this.cancellation.signal);
+          } catch (error) {
+            // A server error is a known outcome; a lost transport is not.
+            if (!(error instanceof McpToolError)) throw error;
+            result = { content: [{ type: "text", text: error.message }], isError: true };
+          }
           const resultText = JSON.stringify(result);
           if (Buffer.byteLength(resultText) > STRUCTURED_OUTPUT_MAX_BYTES) {
             const stored = await saveResult(init.results_dir!, resultText);
             result = { content: [{ type: "text", text: `Approved operation result saved: ${stored.relative_path} (${stored.byte_size} bytes).` }],
-              details: { storage_path: stored.relative_path, byte_count: stored.byte_size, preview_truncated: true } };
+              details: { storage_path: stored.relative_path, byte_count: stored.byte_size, preview_truncated: true },
+              isError: Boolean((result as any)?.isError) };
           }
           await onOperationResult(operation.request_id, result);
-          emit(sm.createEvent("tool.completed", { tool_call_id: operation.request_id,
+          emit(sm.createEvent("tool.completed", { turn_id, tool_call_id: operation.request_id,
             tool_name: tool.name, output: (result as any)?.content, is_error: Boolean((result as any)?.isError) }));
         }
         const raw = JSON.stringify(result);
