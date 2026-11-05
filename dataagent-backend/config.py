@@ -120,6 +120,11 @@ class Settings(BaseSettings):
     # trusted deployments whose skills call internal services may name a
     # network such as "bridge" (2026-11-05).
     dataagent_sandbox_network: str = "none"
+    # Package index for pip installs inside a running sandbox. The image's
+    # PIP_INDEX_URL build arg only covers build time; networks that cannot
+    # reach PyPI set a mirror here. Empty keeps pip's default.
+    dataagent_sandbox_pip_index_url: str = ""
+    dataagent_sandbox_pip_trusted_host: str = ""
 
     # ---- 运行策略 ----
     max_few_shot_examples: int = 5

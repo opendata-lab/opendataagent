@@ -93,3 +93,19 @@ def test_in_container_path_without_host_mount_is_refused(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match='No daemon-visible mount source'):
         sandbox.build_sandbox_config(cfg, run_id='r', workspace=tmp_path / 'workspace',
                                      enabled_roots={}, lifetime=60, env={})
+
+
+def test_sandbox_gets_runtime_pip_index_only_when_set(monkeypatch, tmp_path):
+    monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/usr/bin/docker')
+    monkeypatch.setattr(sandbox, 'backend_mounts', lambda: [])
+    base = dict(dataagent_sandbox_image='img', dataagent_sandbox_memory='1g', dataagent_sandbox_cpus='1',
+                dataagent_sandbox_pids_limit=64, dataagent_sandbox_network='bridge')
+    mirror = SimpleNamespace(**base, dataagent_sandbox_pip_index_url='http://mirror.local/simple',
+                             dataagent_sandbox_pip_trusted_host='mirror.local')
+    config, _ = sandbox.build_sandbox_config(mirror, run_id='r', workspace=tmp_path / 'a' / 'workspace',
+                                             enabled_roots={}, lifetime=60, env={'X': '1'})
+    assert config['env'] == {'PIP_INDEX_URL': 'http://mirror.local/simple', 'PIP_TRUSTED_HOST': 'mirror.local', 'X': '1'}
+    plain = SimpleNamespace(**base, dataagent_sandbox_pip_index_url='', dataagent_sandbox_pip_trusted_host='')
+    config, _ = sandbox.build_sandbox_config(plain, run_id='r', workspace=tmp_path / 'b' / 'workspace',
+                                             enabled_roots={}, lifetime=60, env={'X': '1'})
+    assert config['env'] == {'X': '1'}
