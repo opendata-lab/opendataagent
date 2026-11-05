@@ -181,6 +181,7 @@
 - 采用一个明确的终止路径：任何沙箱命令超时或本段取消时，终止本执行段并执行 `docker rm -f`，销毁容器内全部进程，原任务落入既有失败或取消终态；不自动新开执行段重试，不继续复用超时后的容器，不用环境变量匹配 `pkill` 清理进程。不能仅终止宿主 Docker CLI 就声称命令已停止。单命令超时从容器就绪后开始计时：容器启动另有 Docker CLI 超时，取消信号仍覆盖启动阶段，避免守护进程较慢时把命令预算耗在启动上（2026-11-04 CI 发现）。
 - backend 的超时/取消清理也应能按本段容器标识删除容器，覆盖 Pi Cell 被强杀、未执行 finally 的情况；`--rm` 和 `sleep <run_timeout>` 作为进程异常退出后的有界寿命保障，不设置暖池或后台回收器。
 - 容器资源上限（2026-11-04 评审补充）：每个执行段容器带 `--memory`/`--memory-swap`（同值，不用 swap）、`--cpus`、`--pids-limit`，默认 `2g`/`2`/`512`，由 `DATAAGENT_SANDBOX_MEMORY`、`DATAAGENT_SANDBOX_CPUS`、`DATAAGENT_SANDBOX_PIDS_LIMIT` 配置；Pi 侧在调用 Docker 前校验格式。超限由内核 OOM/fork 失败体现为命令非零退出，不另设恢复路径。
+- 轮数上限（2026-11-05 补充）：达到 `agent_max_turns` 时若模型仍要调用工具，本次运行以 `PI_LIMIT_EXCEEDED` 失败结束（与工具调用上限一致），不再显示为正常完成；最后一轮正好给出最终回答时仍为完成。起因：OntoFoundry 端到端测试中建模在批准计划后用满 40 轮，界面显示完成但没有产出。
 - 统一任务预算：`agent_timeout_seconds=1800`、`agent_idle_timeout_seconds=300`、`agent_bash_timeout_seconds=600`、`agent_max_turns=40`、`agent_max_tool_calls=200`。MCP SQL 读/写预算分别保留 300s/60s。
 - 单一预算档（2026-11-04 补充）：删除请求字段 `execution_mode` 与 interactive/background 两档配置。现状是所有真实调用方（前端、管理端试运行、定时与队列重投）都已走长档；只有漏传字段的 API 调用会落到 interactive 档，而该档只影响提交时写入的总超时和 SQL 读超时，执行期轮次、工具次数和 Bash 超时仍按 background 档，形成未经设计的组合。改为上面一组 `agent_*` 配置加 `agent_sql_read_timeout_seconds=300`。Pydantic 请求模型忽略未知字段，旧客户端继续发送 `execution_mode` 不受影响；`DATAAGENT_SETTINGS` 里的旧配置名会在启动时按未知字段报错，需要改名，环境变量形式的旧名会被忽略。不保留兼容分支。
 - `bash_timeout < total_timeout`；MCP 已在控制面执行，SQL/MCP 超时独立受剩余任务预算约束，不再要求它包含在 Bash 超时中。等待卡片不消耗执行预算，跨段累计遵循 3.4.3。

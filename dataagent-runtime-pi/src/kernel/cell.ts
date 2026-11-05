@@ -369,7 +369,13 @@ export class Cell {
           if (init.limits.max_turns <= 0) {
             return undefined;
           }
-          return sm.lastSequence > 0 && turnCount >= init.limits.max_turns ? { action: "end" } : undefined;
+          if (!(sm.lastSequence > 0 && turnCount >= init.limits.max_turns)) return undefined;
+          // Cut off while it still wanted tools: the task is unfinished, so the
+          // run fails like the tool-call ceiling instead of reading as done.
+          if (turn.message.stopReason === "toolUse") {
+            limitDenial = `已达到本次任务轮数上限 ${init.limits.max_turns}，任务未完成`;
+          }
+          return { action: "end" };
         };
 
       this.agent = agent;
