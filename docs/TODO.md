@@ -53,6 +53,13 @@
   4. 补往返测试（导出→导入不带缓存且判为相同）与超限测试。
 - 来源：PR #8 合并前的导出验证与导入代码核对。
 
+### 图表不支持超过三个系列
+
+- **现状**（2026-11-05 核实）：上限在两处。图表模板 `.claude/skills/chart-visualization/assets/chart-template/line.json`、`area.json`、`scatter.json`、`radar.json` 写死 `"max_series": 3`，模型按模板只准备 3 个系列；即使传入更多，图表技能脚本 `.claude/skills/chart-visualization/scripts/build_chart_spec.py` 的 `choose_chart()` 对折线、柱状、面积、散点、组合、雷达图都用 `numeric_fields[: min(3, ...)]` 截取，最多 3 个系列；第 4 个及以后的数值列被静默丢弃，图上不提示，模型和用户都不知道数据少了，与系统提示“不得只截取部分数据”的要求冲突。另外两处相关限制：
+  - 命令行只有 `--value-field` 用来把一个字段排到最前，没有参数指定要画哪些系列；
+  - 只支持宽表（每个系列一列），不支持长表按某个维度列拆分系列（例如“各区域每月销售额”以 区域、月份、销售额 三列返回时，无法按区域画多条线）。
+- **要做**：同时去掉模板的 `max_series: 3` 和脚本里固定的 3 个上限（或改为可配置的较大上限），超出时明确报错或提示而不是静默丢弃；增加指定系列字段的参数和按维度拆分系列（长表透视）的能力；同步 `SKILL.md`、`reference/10-chart-spec-contract.md`、前端渲染（系列多时的配色与图例）和回归测试。来源：用户 2026-11-05 提出。
+
 ### 系统提示落库的后续
 
 - 管理端查看页面（接口 `GET /api/v1/dataagent/tasks/{task_id}/system-prompt` 已有）。
