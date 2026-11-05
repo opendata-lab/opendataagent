@@ -32,12 +32,18 @@
    - 修改 `scripts/load-images.sh`：
      - 同步移除对历史 `mysql-8.0.tar`、`docker-27.5.1-cli.tar` 的强制依赖检查。
 
-5. **本地验证与回归测试**：
+5. **依赖修剪与运行时动态 Pip**：
+   - 修剪 `dataagent-backend/requirements-sandbox.txt`：仅保留 `pandas>=2.1.0` 与 `openpyxl>=3.1.0`，移除 `duckdb`、`matplotlib` 等重型依赖；
+   - 修剪 `dataagent-backend/requirements.txt`：移除后端未直接引用的 `jieba`、`numpy`、`pandas`、`openpyxl`；
+   - 依赖项通过沙箱运行时的 `PIP_INDEX_URL` 按需下载。
+   - 保留 `redis:7.2-alpine` 作为默认协调依赖。
+
+6. **本地验证与回归测试**：
    - 验证 `dataagent-runtime-pi` 构建与测试；
    - 验证 `dataagent-backend` 启动契约测试；
    - 本地构建 `oda-backend` 镜像，运行端到端 Smoke 检查：启动服务、提交任务、验证回复与消息持久化。
 
-6. **上线与回滚**：
+7. **上线与回滚**：
    - 提交并通过 CI；推送至 main 分支触发 GitHub Release 构建；
    - 校验远程 Release 的 `oda-deployment-latest.tar.xz` 文件大小，确认缩减至 150MB 左右；
    - 回滚方式：通过 `git revert` 恢复构建与 Compose 配置，无破坏性数据库 Schema 变更。

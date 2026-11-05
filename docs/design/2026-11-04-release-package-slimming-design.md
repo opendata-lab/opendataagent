@@ -52,6 +52,16 @@
 - 移除 `create-offline-package.sh` 中的 `docker:27.5.1-cli` 打包项。
 - 各服务统一采用 Docker 原生 `json-file` 日志驱动配置（如 `max-size: "50m"`, `max-file: "5"`），零侵入且不占用额外内存与镜像体积。
 
+### 4. 沙箱镜像与后端依赖精简，结合运行时动态 Pip 安装
+
+- `oda-sandbox` 原先在 `requirements-sandbox.txt` 中预装了大量重型科学计算库：`duckdb` (100MB+)、`matplotlib` (50MB+)、`reportlab`、`pillow`、`pypdf`、`python-docx`。
+- `dataagent-backend/requirements.txt` 中也冗余声明了未被后端直接引用的 `jieba`、`numpy`、`pandas`、`openpyxl`。
+- DataAgent 已原生支持通过 `PIP_INDEX_URL` 在沙箱运行时按需执行 `pip install`，无须将所有偶发依赖打入基础镜像。
+- 精简策略：
+  - 后端 `requirements.txt` 仅保留服务端核心 Web 与调度依赖，剔除 `jieba`、`numpy`、`pandas`、`openpyxl`。
+  - 沙箱 `requirements-sandbox.txt` 仅保留内置技能 `generate_report.py` 开箱即用的 `pandas` 与 `openpyxl`，移除其余重型库。
+  - `Redis:7.2-alpine` 作为异步任务协调的核心依赖持续保留。
+
 ## 边界与取舍
 
 - **向后兼容**：保留 `dataagent-backend/config.py` 对 `SESSION_MYSQL_DATABASE` 的别名支持，旧环境升级不受影响。
