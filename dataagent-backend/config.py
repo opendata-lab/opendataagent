@@ -4,11 +4,21 @@ DataAgent Backend 配置管理
 """
 from __future__ import annotations
 
+import logging
+import os
 import threading
+from functools import lru_cache
 
-from pydantic import Field, model_validator, AliasChoices
+from pydantic import Field, field_validator, model_validator, AliasChoices
 from typing import Literal
 from pydantic_settings import BaseSettings
+
+
+@lru_cache(maxsize=1)
+def _warn_legacy_sandbox_network() -> None:
+    logging.getLogger(__name__).warning(
+        "DATAAGENT_SANDBOX_NETWORK is ignored; use DATAAGENT_SANDBOX_NETWORK_ENABLED instead"
+    )
 
 
 class Settings(BaseSettings):
@@ -116,10 +126,8 @@ class Settings(BaseSettings):
     dataagent_sandbox_memory: str = "2g"
     dataagent_sandbox_cpus: str = "2"
     dataagent_sandbox_pids_limit: int = 512
-    # Docker network for sandbox containers. "none" (default) isolates tools;
-    # trusted deployments whose skills call internal services may name a
-    # network such as "bridge" (2026-11-05).
-    dataagent_sandbox_network: str = "none"
+    # Trusted deployments may enable Docker's default bridge network.
+    dataagent_sandbox_network_enabled: bool = False
     # Package index for pip installs inside a running sandbox. The image's
     # PIP_INDEX_URL build arg only covers build time; networks that cannot
     # reach PyPI set a mirror here. Empty keeps pip's default.
@@ -131,6 +139,31 @@ class Settings(BaseSettings):
     max_schema_tables: int = 10
     max_business_rules: int = 5
     query_result_limit: int = 1000
+
+    @model_validator(mode="before")
+    @classmethod
+    def warn_legacy_sandbox_network(cls, values):
+        # Removed fields still appear here when loaded from a dotenv file.
+        if any(key.lower() == "dataagent_sandbox_network" for key in os.environ) or (
+            isinstance(values, dict) and any(key.lower() == "dataagent_sandbox_network" for key in values)
+        ):
+            _warn_legacy_sandbox_network()
+        return values
+
+    @field_validator("dataagent_sandbox_network_enabled", mode="before")
+    @classmethod
+    def validate_sandbox_network_enabled(cls, value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.lower()
+            if normalized in {"true", "1", "yes"}:
+                return True
+            if normalized in {"false", "0", "no"}:
+                return False
+        if type(value) is int and value in (0, 1):
+            return bool(value)
+        raise ValueError("DATAAGENT_SANDBOX_NETWORK_ENABLED must be true/false/1/0/yes/no (case-insensitive)")
 
     @model_validator(mode="after")
     def validate_execution_timeouts(self):

@@ -65,7 +65,7 @@ def build_sandbox_config(cfg: Any, *, run_id: str, workspace: Path,
             "uid": os.getuid(), "gid": os.getgid(), "lifetimeSeconds": lifetime,
             "memory": cfg.dataagent_sandbox_memory, "cpus": cfg.dataagent_sandbox_cpus,
             "pidsLimit": cfg.dataagent_sandbox_pids_limit,
-            "network": cfg.dataagent_sandbox_network,
+            "networkEnabled": cfg.dataagent_sandbox_network_enabled,
             "workspaceSource": source(workspace), "resultsSource": source(results),
             "skills": [{"folder": name, "source": source(Path(root))} for name, root in enabled_roots.items()],
             "env": {**pip_env(cfg), **env}}, results

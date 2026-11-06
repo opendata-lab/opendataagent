@@ -3,7 +3,7 @@ FROM python:3.13-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     DATAAGENT_PYTHON_BIN=/usr/local/bin/python SKILLS_ROOT_DIR=/opt/skills \
     HOME=/tmp \
-    # Runtime `pip install` (needs DATAAGENT_SANDBOX_NETWORK) falls back to a user
+    # Runtime `pip install` (needs DATAAGENT_SANDBOX_NETWORK_ENABLED=true) falls back to a user
     # install. Keep it in the topic workspace so it survives across execution
     # segments of the session; /tmp is per container and 256 MB.
     PYTHONUSERBASE=/mnt/workspace/.dataagent/python \

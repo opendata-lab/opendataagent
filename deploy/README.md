@@ -93,7 +93,7 @@ SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。反向�
 - 运行时安装：沙箱镜像把 `PYTHONUSERBASE` 指向 `/mnt/workspace/.dataagent/python`。开启网络后，技能或模型在沙箱里 `pip install` 的包写入本话题工作区，同一会话的后续执行段（含卡片等待后恢复）仍可用，不影响其他话题；系统 Python 保持只读。包随话题工作区保留和删除。常用依赖仍应放进 `requirements-sandbox.txt`。
   - 包索引：镜像构建参数 `PIP_INDEX_URL` 只影响构建。运行中的沙箱用 `DATAAGENT_SANDBOX_PIP_INDEX_URL`（及 `DATAAGENT_SANDBOX_PIP_TRUSTED_HOST`）指定镜像源；不设时用 pip 默认的 PyPI，访问不到时安装失败。
   - 耗时：安装在任务执行中进行，计入 `agent_timeout_seconds`，单条命令受 `agent_bash_timeout_seconds` 限制。常用或较大的依赖放进 `requirements-sandbox.txt`，不要依赖运行时安装。
-- 沙箱网络由 `DATAAGENT_SANDBOX_NETWORK` 配置，默认 `none`（断网）。可信环境中技能需要访问内部服务（如调用业务平台接口）时设为 `bridge` 或自建网络名；开启后沙箱内由模型生成的代码能访问该网络可达的所有服务，只在可信部署中使用。
+- 沙箱网络由布尔开关 `DATAAGENT_SANDBOX_NETWORK_ENABLED` 配置，默认 `false`（`--network=none`，断网），`true` 使用 Docker 默认 `bridge` 网络，不支持自建网络名。接受 `true/false/1/0/yes/no`（大小写不敏感），其他值阻止启动。旧变量 `DATAAGENT_SANDBOX_NETWORK` 被忽略，启动时仅告警一次并提示新变量。可信环境中技能需要访问内部服务（如调用业务平台接口）时可开启；开启后沙箱内由模型生成的代码能访问该网络可达的所有服务，只在可信部署中使用。
 - `DATAAGENT_DOCKER_SOCKET` 只挂到 backend。Pi/MCP/模型编排在控制面；沙箱没有凭据或 socket，默认没有网络。第一次基础工具调用创建容器，同段复用，卡片、结束、取消及命令超时均销毁。不支持宿主工具执行回退。
 - `ODA_SANDBOX_IMAGE` 必须预先拉取/加载，`scripts/start.sh` 不会为按需容器拉取镜像。在线升级除 Compose pull 外须执行 `docker pull <配置的 oda-sandbox 镜像>`。
 - Skill 存放在命名卷 `opendataagent_dataagent-skills`，入口按内置技能内容版本同步通用技能，管理员导入的其它技能保留。新事件存于 MySQL，旧 home/logs 文件保留供回退。

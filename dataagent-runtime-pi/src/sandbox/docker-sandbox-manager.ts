@@ -11,8 +11,8 @@ export interface SandboxConfig {
   memory: string;
   cpus: string;
   pidsLimit: number;
-  /** Docker network name; "none" isolates the sandbox (default). */
-  network?: string;
+  /** Enable Docker's default bridge network; false isolates the sandbox. */
+  networkEnabled?: boolean;
   workspaceSource: string;
   resultsSource: string;
   skills: Array<{ source: string; folder: string }>;
@@ -39,9 +39,8 @@ export class DockerSandboxManager {
       !Number.isInteger(config.pidsLimit) || config.pidsLimit <= 0) {
       throw new Error("Invalid sandbox resource limits");
     }
-    // A plain network name only: no "container:<id>" joins and no option injection.
-    if (config.network !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(config.network)) {
-      throw new Error("Invalid sandbox network");
+    if (config.networkEnabled !== undefined && typeof config.networkEnabled !== "boolean") {
+      throw new Error("Invalid sandbox networkEnabled: expected a boolean");
     }
     for (const skill of config.skills) {
       if (!/^[\w-]+$/.test(skill.folder)) throw new Error("Invalid skill folder");
@@ -76,7 +75,7 @@ export class DockerSandboxManager {
     this.startPromise ??= (async () => {
       const c = this.config;
       const args = ["run", "-d", "--rm", "--pull=never", "--name", this.containerName,
-        `--network=${c.network ?? "none"}`, "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+        `--network=${c.networkEnabled === true ? "bridge" : "none"}`, "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
         `--memory=${c.memory}`, `--memory-swap=${c.memory}`, `--cpus=${c.cpus}`, `--pids-limit=${c.pidsLimit}`,
         "--user", `${c.uid}:${c.gid}`,
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777", "--workdir", "/mnt/workspace",
