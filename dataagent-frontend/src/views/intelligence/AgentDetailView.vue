@@ -233,12 +233,12 @@
                   </button>
                 </div>
               </section>
-              <details class="config-section advanced-details">
+              <details v-if="canManage" class="config-section advanced-details">
                 <summary>
-                  <h3><Icon name="database" />数据与权限</h3>
+                  <h3><Icon name="lock" />可见范围</h3>
+                  <Icon name="chevron" class="small" />
                 </summary>
-                <template v-if="canManage"
-                  ><label class="field-label" for="visibility">可见范围</label
+                <label class="field-label" for="visibility">谁可以使用</label
                   ><select id="visibility" v-model="form.visibility.mode">
                     <option value="all">全部用户</option>
                     <option value="authenticated">仅登录用户</option>
@@ -265,7 +265,6 @@
                         :value="user.user_id"
                         :label="authUserLabel(user)" /></el-select
                   ></template>
-                </template>
               </details>
               <details class="config-section advanced-details">
                 <summary>
