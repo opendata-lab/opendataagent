@@ -58,7 +58,7 @@ def test_offline_package_carries_template_but_not_runtime_env(tmp_path: Path):
     paths = [Path(name) for name in names]
     assert not any(path.name == ".env" for path in paths)
     for script in ("start.sh", "stop.sh", "restart.sh", "dump-logs.sh", "load-images.sh",
-                   "load-package-and-start.sh", "lib/container-runtime.sh"):
+                   "load-package-and-start.sh", "migrate-from-opendataworks.sh", "lib/container-runtime.sh"):
         assert any(name.endswith(f"/scripts/{script}") for name in names), script
     assert not any("/scripts/run-dataagent" in name for name in names)
     for image in ("oda-frontend", "oda-backend", "oda-sandbox"):

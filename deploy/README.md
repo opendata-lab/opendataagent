@@ -157,6 +157,16 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint pyth
 
 ## 从 OpenDataWorks 内置部署迁移
 
+同一台机器上可以用脚本完成下面的配置和复制步骤（不改动旧部署的文件、容器和数据库；先加 `--dry-run` 看一遍）：
+
+```sh
+scripts/migrate-from-opendataworks.sh --old-root <旧 OpenDataWorks 目录> --mysql-host <本机 IP> [--dry-run]
+```
+
+它把会话库连接（沿用原来的 `dataagent` 库）和 `DATAAGENT_HOST_ROOT` 写进 `deploy/.env`（先备份），复制登录配置，
+并把自己导入的 Skill 复制进新 Skill 卷；最后列出需要人工处理的事项（停旧容器、启动、MCP 地址与 Token、重新导入平台 Skill）。
+离线发布包里也带有这个脚本。下面是脚本所做步骤的手工版本。
+
 以前 DataAgent 跟随 OpenDataWorks 的 `deploy/docker-compose.*.yml` 部署，数据在三处：
 
 - OpenDataWorks MySQL 里的 `dataagent` 库（会话、智能体、模型、MCP、Skill 记录）；
