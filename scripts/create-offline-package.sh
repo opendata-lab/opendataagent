@@ -134,7 +134,7 @@ tar -C "$REPO_ROOT/deploy" \
 
 # 2. 复制部署控制脚本（评测脚本走独立的评测离线包）
 log "Copying deployment scripts to package scripts/"
-for script in start.sh stop.sh restart.sh dump-logs.sh load-images.sh load-package-and-start.sh; do
+for script in start.sh stop.sh restart.sh dump-logs.sh load-images.sh load-package-and-start.sh migrate-from-opendataworks.sh; do
     cp "$REPO_ROOT/scripts/$script" "$PACKAGED_SCRIPTS_DIR/"
 done
 tar -C "$REPO_ROOT/scripts" -cf - lib | tar -C "$PACKAGED_SCRIPTS_DIR" -xf -

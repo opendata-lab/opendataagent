@@ -157,6 +157,17 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint pyth
 
 ## 从 OpenDataWorks 内置部署迁移
 
+同一台机器上可以用脚本完成下面的配置和复制步骤。先停掉旧的 DataAgent 容器，再加 `--dry-run` 看一遍：
+
+```sh
+scripts/migrate-from-opendataworks.sh --old-root <旧 OpenDataWorks 目录> --mysql-host <本机 IP> [--dry-run]
+```
+
+它把会话库连接（沿用原来的 `dataagent` 库）写进 `deploy/.env`（先备份），复制登录配置，把自己导入的 Skill 复制进新 Skill 卷，
+再把旧运行时目录里的 `topic_*` 复制到新部署的 `DATAAGENT_HOST_ROOT`；最后列出需要人工处理的事项（启动、MCP 地址与 Token、重新导入平台 Skill）。
+脚本只读旧部署，新部署也不引用旧目录，迁移确认无误后旧目录可以单独清理。
+离线发布包里也带有这个脚本。下面是脚本所做步骤的手工版本。
+
 以前 DataAgent 跟随 OpenDataWorks 的 `deploy/docker-compose.*.yml` 部署，数据在三处：
 
 - OpenDataWorks MySQL 里的 `dataagent` 库（会话、智能体、模型、MCP、Skill 记录）；
@@ -181,7 +192,11 @@ docker stop opendataworks-dataagent-frontend opendataworks-dataagent-backend ope
 docker exec opendataworks-mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --routines --triggers --databases dataagent' > dataagent.sql
 mysql -h <新 MySQL 主机> -P <端口> -uroot -p < dataagent.sql
 
-# 3. 在 deploy/.env 配置 MYSQL_*；DATAAGENT_HOST_ROOT 填旧部署的同一个绝对路径，topic 工作区直接沿用
+# 3. 在 deploy/.env 配置 MYSQL_*，再把旧运行时目录里的 topic 工作区复制到新部署的 DATAAGENT_HOST_ROOT
+#    （新部署不要直接指向旧部署目录里的路径，否则清理旧目录会连带删掉数据）
+NEW_ROOT=/dataagent_runtime                      # 与 deploy/.env 的 DATAAGENT_HOST_ROOT 一致
+OLD_ROOT=<旧部署的 DATAAGENT_HOST_ROOT 绝对路径>
+mkdir -p "$NEW_ROOT" && for t in "$OLD_ROOT"/topic_*; do [ -e "$NEW_ROOT/$(basename "$t")" ] || cp -a "$t" "$NEW_ROOT/"; done
 
 # 4. 初始化新 Skill 卷（首次挂载时带入镜像里的通用 Skill），再复制自己导入或放入的 Skill。
 #    旧版本随仓库发布的 Skill 不复制：通用的 chart-visualization、report-generation 以镜像里的新版为准；
@@ -202,7 +217,7 @@ scripts/start.sh
 ```
 
 - 第 4 步只用本部署的 `dataagent-backend` 服务（覆盖入口执行复制，下一次正常启动初始化权限），离线环境不需要额外镜像。
-- 同一台机器且 `DATAAGENT_HOST_ROOT` 不变时，topic 工作区直接沿用；换机器时用 `rsync -a` 把该目录复制到新机器的同一路径，Skill 目录同样先复制过去。
+- 旧部署用的就是默认的 `/dataagent_runtime`、新部署也用它时，第 3 步的复制可以跳过；换机器时用 `rsync -a` 把 `topic_*` 复制到新机器的 `DATAAGENT_HOST_ROOT`，Skill 目录同样先复制过去。
 - backend 连接 MySQL 只用 `.env` 的 `MYSQL_*`。
 - Redis 只保存任务协调状态，不需要迁移。
 - 迁移版本 `20261027_000031` 会把旧的平台 MCP 记录和平台内置智能体转为普通可编辑记录，管理员随后在 MCP 管理页修改：
