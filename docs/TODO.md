@@ -12,6 +12,18 @@
 
 ### 插件管理与导入（暂缓，后续专门实施）
 
+- **新需求：整包安装插件**（2026-11-05 用户提出）：DataAgent 能直接导入一个插件 ZIP，不再靠管理员手工拼装。第一个真实用例是 OntoFoundry v0.2.7 的 `ontofoundry-dataagent-plugin.zip`。
+  - **现状**：它的 `plugin.json` 写明 `installation: manual-admin`、限制“DataAgent 暂不支持整包原生加载”。管理员现在要手工完成五步：运行 `install.sh` 把三个技能复制到 `SKILLS_ROOT_DIR`；按 `plugin.json` 的 `mcp_services` 登记 OntoFoundry MCP 并录入凭据；把 `agents/*.md` 的提示词同步到两个已有 Agent，按清单挂载技能、设 `max_turns`；停用旧技能目录；重启 DataAgent。
+  - **要做**：上传插件 ZIP 后依次完成以下步骤：
+    - 校验清单与 `minimum_platform_version`；
+    - 安装或升级其中的技能；
+    - 按 `mcp_services` 生成 MCP 登记（凭据由管理员填写，不随包分发）；
+    - 按 `agents` 给出挂载建议，由管理员确认后应用到已有 Agent（不自动新建或改写 Agent）；
+    - 升级、停用、回滚都不用重启；
+    - 列表里显示插件版本、来源和所含技能与工具。
+  - **验收**：用该 ZIP 在一台干净的 DataAgent 上走完安装，不手工复制文件、不重启；再装下一个版本，验证升级和回滚。
+  - 实施前沿用下面的设计并先定“版本目录”方案。清单字段以 OntoFoundry 仓库 `integrations/dataagent/plugin.json` 为参考，两边需约定插件清单格式。
+
 - **现状**（2026-10-23）：只有设计和计划，没有代码改动。见 [插件管理设计](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-22-dataagent-plugin-management-design.md) 和 [计划](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/plans/2026-10-22-dataagent-plugin-management-plan.md)。已拍板：skill folder 加 `<plugin_id>__` 前缀；升级立即生效；第一阶段拒绝引用 `${CLAUDE_PLUGIN_ROOT}` 的 MCP；认证关闭的部署照常允许导入。
 - **评审结论**：codex 两轮评审都是"需要修改后定稿"。第二轮复核第一轮的 14 项：6 项已解决、8 项部分解决；新发现 6 项 Critical，都和"原地替换 skill 目录"这条路有关：
   1. 替换目录的各步之间存在无法可靠恢复的中断窗口（需要按 folder 记录交换意图并做幂等恢复）；
@@ -89,7 +101,7 @@
 
 ## Plugin 打包与导入
 
-2026-10-27：本次只使用已有 MCP 新增和 Skill 导入。Plugin 的打包、导入、接口与页面另行设计，见 docs/migration.md。
+2026-10-27：本次只使用已有 MCP 新增和 Skill 导入。Plugin 的打包、导入、接口与页面另行设计，见 docs/migration.md。待办统一记在上方“插件管理与导入”。
 
 ## 测试与工程卫生（迁自来源仓库，2026-10-27）
 
@@ -98,6 +110,7 @@
 
 - `da_agent_draft` 表的排序规则是 `utf8mb4_0900_ai_ci`，与其他 `da_*` 表的 `utf8mb4_unicode_ci` 不一致，以后与其他表做字符串关联时会报错。
 - README 还没有界面截图；前端图标文件仍沿用 `opendataworks-icon-*` 命名。来源：2026-10-28 README 整理。
+- **未被调用的 `cleanup_orphan_topic_workspaces` 会删除运行时根目录下的非 topic 目录**（来源：2026-11-06 编写 OpenDataWorks 迁移脚本时发现）：`dataagent-backend/core/topic_workspace.py` 中该函数对 `DATAAGENT_HOST_ROOT` 下每个不在活跃 topic 列表里的子目录执行 `shutil.rmtree`，不区分是不是 `topic_*`。旧部署有把 Skill 目录放在运行时目录下的（如 `dataagent_runtime/skills`），一旦接入调用就会被删。目前只有 `tests/test_topic_workspace.py` 调用它，生产路径未使用。要做：删除该函数及测试；若以后需要清理孤儿工作区，只处理 `topic_*` 且先确认不是活跃 topic。
 
 ## 本轮验证补充（2026-10-27）
 
