@@ -109,22 +109,3 @@ def delete_topic_workspace(topic_id: str, *, runtime_root: str | Path | None = N
         return False
     shutil.rmtree(topic_root)
     return True
-
-
-def cleanup_orphan_topic_workspaces(
-    active_topic_ids: set[str] | list[str] | tuple[str, ...],
-    *,
-    runtime_root: str | Path | None = None,
-) -> list[str]:
-    root = Path(runtime_root).expanduser().resolve() if runtime_root else _resolve_runtime_root()
-    if not root.is_dir():
-        return []
-
-    active = {_safe_topic_id(str(topic_id)) for topic_id in active_topic_ids if str(topic_id or "").strip()}
-    removed: list[str] = []
-    for child in root.iterdir():
-        if not child.is_dir() or child.name in active:
-            continue
-        shutil.rmtree(child)
-        removed.append(child.name)
-    return sorted(removed)

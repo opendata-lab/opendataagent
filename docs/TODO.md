@@ -110,7 +110,6 @@
 
 - `da_agent_draft` 表的排序规则是 `utf8mb4_0900_ai_ci`，与其他 `da_*` 表的 `utf8mb4_unicode_ci` 不一致，以后与其他表做字符串关联时会报错。
 - README 还没有界面截图；前端图标文件仍沿用 `opendataworks-icon-*` 命名。来源：2026-10-28 README 整理。
-- **未被调用的 `cleanup_orphan_topic_workspaces` 会删除运行时根目录下的非 topic 目录**（来源：2026-11-06 编写 OpenDataWorks 迁移脚本时发现）：`dataagent-backend/core/topic_workspace.py` 中该函数对 `DATAAGENT_HOST_ROOT` 下每个不在活跃 topic 列表里的子目录执行 `shutil.rmtree`，不区分是不是 `topic_*`。旧部署有把 Skill 目录放在运行时目录下的（如 `dataagent_runtime/skills`），一旦接入调用就会被删。目前只有 `tests/test_topic_workspace.py` 调用它，生产路径未使用。要做：删除该函数及测试；若以后需要清理孤儿工作区，只处理 `topic_*` 且先确认不是活跃 topic。
 
 ## 本轮验证补充（2026-10-27）
 
@@ -159,6 +158,8 @@
 - **前端依赖审计**：2026-11-03 全新 npm ci 报告 29 项漏洞（10 moderate、17 high、2 critical）；需单独核对并升级传递依赖，本次未执行强制修复。来源：本次本地工具链安装；关联[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)，前端生产构建通过。
 
 ## 已完成
+
+- **删除未被调用的 `cleanup_orphan_topic_workspaces`（2026-11-06）**：该函数会对 `DATAAGENT_HOST_ROOT` 下所有非活跃子目录执行 `rmtree`（包括放在运行时目录里的 Skill 目录），生产路径从未调用，连同测试一并删除；删除单个 topic 仍用 `delete_topic_workspace`。来源：编写 OpenDataWorks 迁移脚本时发现。
 
 - **运行时实现收敛 / Podman 验证范围（2026-11-04）**：移除未验证的 Podman sandbox 分支，正式只提供 Docker，原“Podman 实机覆盖”不再作为当前实现的缺失验收。简化生命周期、读取、轮次和用量；用任务起始快照保留终态附件，用接单前预热消除每段线程调用，卡片数据库操作整体在线程执行。来源：用户后续简化评审；结果见[收敛报告](reports/2026-11-04-agent-runtime-simplification.md)。
 
