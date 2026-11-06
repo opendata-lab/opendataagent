@@ -158,21 +158,6 @@ class ProviderSettingsUpdate(BaseModel):
     models: Optional[List[Any]] = None
 
 
-class SettingsUpdateRequest(BaseModel):
-    provider_id: Optional[str] = None
-    model: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-    anthropic_auth_token: Optional[str] = None
-    anthropic_base_url: Optional[str] = None
-    mysql_host: Optional[str] = None
-    mysql_port: Optional[int] = None
-    mysql_user: Optional[str] = None
-    mysql_password: Optional[str] = None
-    mysql_database: Optional[str] = None
-    skills_output_dir: Optional[str] = None
-    providers: Optional[List[ProviderSettingsUpdate]] = None
-
-
 class ModelDetectionState(BaseModel):
     status: str = "unverified"
     message: str = ""
@@ -371,18 +356,7 @@ class AdminSettingsResponse(BaseModel):
     model: str
     providers: List[ProviderConfig] = Field(default_factory=list)
     widget_allowed_sites: List[WidgetAllowedSite] = Field(default_factory=list)
-    anthropic_api_key: str = ""
-    anthropic_auth_token: str = ""
-    anthropic_base_url: str = ""
-    mysql_host: str = ""
-    mysql_port: int = 3306
-    mysql_user: str = ""
-    mysql_password: str = ""
-    mysql_database: str = ""
     skills_output_dir: str = ""
-    session_mysql_database: str = ""
-    settings_file_path: str = ""
-    settings_local_file_path: str = ""
     skills_root_dir: str = ""
     updated_at: str = ""
 
@@ -390,14 +364,6 @@ class AdminSettingsResponse(BaseModel):
 class AdminSettingsUpdateRequest(BaseModel):
     provider_id: Optional[str] = None
     model: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-    anthropic_auth_token: Optional[str] = None
-    anthropic_base_url: Optional[str] = None
-    mysql_host: Optional[str] = None
-    mysql_port: Optional[int] = None
-    mysql_user: Optional[str] = None
-    mysql_password: Optional[str] = None
-    mysql_database: Optional[str] = None
     skills_output_dir: Optional[str] = None
     providers: Optional[List[ProviderSettingsUpdate]] = None
     widget_allowed_sites: Optional[List[WidgetAllowedSite]] = None

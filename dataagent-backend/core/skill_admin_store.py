@@ -32,22 +32,6 @@ def _sha256(content: str) -> str:
     return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
 
 
-def _normalize_provider_settings_blob(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return dict(value)
-    if isinstance(value, list):
-        normalized: dict[str, Any] = {}
-        for entry in value:
-            if not isinstance(entry, dict):
-                continue
-            provider_id = str(entry.get("provider_id") or "").strip()
-            if not provider_id:
-                continue
-            normalized[provider_id] = dict(entry)
-        return normalized
-    return {}
-
-
 def _normalize_skill_runtime_blob(value: Any) -> dict[str, dict[str, bool]]:
     if not isinstance(value, dict):
         return {}
@@ -88,6 +72,16 @@ def _category_for_path(relative_path: str) -> str:
         return parts[1]
     return "root"
 
+
+
+def _normalize_settings_blob(data: dict[str, Any]) -> dict[str, Any]:
+    blob: dict[str, Any] = {}
+    if "skill_runtime" in data:
+        blob["skill_runtime"] = _normalize_skill_runtime_blob(data.get("skill_runtime"))
+    if "widget_allowed_sites" in data:
+        value = data.get("widget_allowed_sites")
+        blob["widget_allowed_sites"] = value if isinstance(value, list) else []
+    return blob
 
 class SkillAdminStore:
     def __init__(self):
@@ -131,9 +125,7 @@ class SkillAdminStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT settings_key, provider_id, model_name, anthropic_api_key, anthropic_auth_token,
-                           anthropic_base_url, mysql_host, mysql_port, mysql_user, mysql_password,
-                        mysql_database, skills_output_dir, raw_json
+                    SELECT settings_key, provider_id, model_name, skills_output_dir, raw_json, updated_at
                     FROM da_agent_settings
                     WHERE settings_key = 'default'
                     LIMIT 1
@@ -155,23 +147,13 @@ class SkillAdminStore:
                 cur.execute(
                     """
                     INSERT INTO da_agent_settings (
-                        settings_key, provider_id, model_name, anthropic_api_key, anthropic_auth_token,
-                        anthropic_base_url, mysql_host, mysql_port, mysql_user, mysql_password,
-                        mysql_database, skills_output_dir, raw_json
+                        settings_key, provider_id, model_name, skills_output_dir, raw_json
                     ) VALUES (
-                        'default', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        'default', %s, %s, %s, %s
                     )
                     ON DUPLICATE KEY UPDATE
                         provider_id = VALUES(provider_id),
                         model_name = VALUES(model_name),
-                        anthropic_api_key = VALUES(anthropic_api_key),
-                        anthropic_auth_token = VALUES(anthropic_auth_token),
-                        anthropic_base_url = VALUES(anthropic_base_url),
-                        mysql_host = VALUES(mysql_host),
-                        mysql_port = VALUES(mysql_port),
-                        mysql_user = VALUES(mysql_user),
-                        mysql_password = VALUES(mysql_password),
-                        mysql_database = VALUES(mysql_database),
                         skills_output_dir = VALUES(skills_output_dir),
                         raw_json = VALUES(raw_json),
                         updated_at = CURRENT_TIMESTAMP
@@ -179,14 +161,6 @@ class SkillAdminStore:
                     (
                         normalized["provider_id"],
                         normalized["model"],
-                        normalized["anthropic_api_key"],
-                        normalized["anthropic_auth_token"],
-                        normalized["anthropic_base_url"],
-                        normalized["mysql_host"],
-                        normalized["mysql_port"],
-                        normalized["mysql_user"],
-                        normalized["mysql_password"],
-                        normalized["mysql_database"],
                         normalized["skills_output_dir"],
                         raw_json,
                     ),
@@ -500,42 +474,17 @@ class SkillAdminStore:
         return self.get_document(document_id) or {}
 
     def _normalize_settings_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # Only settings without another source are stored here: the default
+        # provider/model selection, the skill runtime and the widget allowlist.
+        # Provider definitions live in the registry tables; database
+        # connections come from deployment config.
         data = dict(payload or {})
         normalized = {
             "provider_id": str(data.get("provider_id") or "").strip(),
             "model": str(data.get("model") or "").strip(),
-            "anthropic_api_key": str(data.get("anthropic_api_key") or ""),
-            "anthropic_auth_token": str(data.get("anthropic_auth_token") or ""),
-            "anthropic_base_url": str(data.get("anthropic_base_url") or ""),
-            "mysql_host": str(data.get("mysql_host") or ""),
-            "mysql_port": int(data.get("mysql_port") or 3306),
-            "mysql_user": str(data.get("mysql_user") or ""),
-            "mysql_password": str(data.get("mysql_password") or ""),
-            "mysql_database": str(data.get("mysql_database") or ""),
             "skills_output_dir": str(data.get("skills_output_dir") or ""),
         }
-        extra_keys = {
-            "validated_provider_id",
-            "validated_model",
-            "provider_validation_status",
-            "provider_validation_message",
-            "provider_validated_at",
-            "provider_settings",
-            "providers",
-            "skill_runtime",
-            "widget_allowed_sites",
-        }
-        for key in extra_keys:
-            if key in data:
-                if key in {"provider_settings", "providers"}:
-                    normalized["provider_settings"] = _normalize_provider_settings_blob(data.get(key))
-                elif key == "skill_runtime":
-                    normalized["skill_runtime"] = _normalize_skill_runtime_blob(data.get(key))
-                elif key == "widget_allowed_sites":
-                    value = data.get(key)
-                    normalized["widget_allowed_sites"] = value if isinstance(value, list) else []
-                else:
-                    normalized[key] = str(data.get(key) or "")
+        normalized.update(_normalize_settings_blob(data))
         return normalized
 
     def _normalize_settings_row(self, row: dict[str, Any] | None) -> dict[str, Any]:
@@ -544,14 +493,6 @@ class SkillAdminStore:
         normalized = {
             "provider_id": str(row.get("provider_id") or ""),
             "model": str(row.get("model_name") or ""),
-            "anthropic_api_key": str(row.get("anthropic_api_key") or ""),
-            "anthropic_auth_token": str(row.get("anthropic_auth_token") or ""),
-            "anthropic_base_url": str(row.get("anthropic_base_url") or ""),
-            "mysql_host": str(row.get("mysql_host") or ""),
-            "mysql_port": int(row.get("mysql_port") or 3306),
-            "mysql_user": str(row.get("mysql_user") or ""),
-            "mysql_password": str(row.get("mysql_password") or ""),
-            "mysql_database": str(row.get("mysql_database") or ""),
             "skills_output_dir": str(row.get("skills_output_dir") or ""),
             "updated_at": _to_iso(row.get("updated_at")),
         }
@@ -559,30 +500,11 @@ class SkillAdminStore:
         if raw_json:
             try:
                 payload = json.loads(str(raw_json))
-                if isinstance(payload, dict):
-                    for key in {
-                        "validated_provider_id",
-                        "validated_model",
-                        "provider_validation_status",
-                        "provider_validation_message",
-                        "provider_validated_at",
-                        "provider_settings",
-                        "providers",
-                        "skill_runtime",
-                        "widget_allowed_sites",
-                    }:
-                        if key in payload:
-                            if key in {"provider_settings", "providers"}:
-                                normalized["provider_settings"] = _normalize_provider_settings_blob(payload.get(key))
-                            elif key == "skill_runtime":
-                                normalized["skill_runtime"] = _normalize_skill_runtime_blob(payload.get(key))
-                            elif key == "widget_allowed_sites":
-                                value = payload.get(key)
-                                normalized["widget_allowed_sites"] = value if isinstance(value, list) else []
-                            else:
-                                normalized[key] = str(payload.get(key) or "")
-            except Exception:
+            except ValueError:
                 logger.warning("Failed to parse da_agent_settings.raw_json")
+                payload = None
+            if isinstance(payload, dict):
+                normalized.update(_normalize_settings_blob(payload))
         return normalized
 
     def _normalize_document_row(self, row: dict[str, Any] | None, *, include_content: bool = False) -> dict[str, Any]:

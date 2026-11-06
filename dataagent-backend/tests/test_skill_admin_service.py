@@ -427,18 +427,7 @@ def test_bootstrap_admin_settings_persists_blank_provider_and_model(monkeypatch)
             anthropic_api_key="",
             anthropic_auth_token="",
             anthropic_base_url="",
-            mysql_host="",
-            mysql_port=3306,
-            mysql_user="",
-            mysql_password="",
-            mysql_database="",
-            doris_host="",
-            doris_port=9030,
-            doris_user="",
-            doris_password="",
-            doris_database="",
             skills_output_dir=f"../.claude/skills/{BUSINESS_SKILL}",
-            session_mysql_database="dataagent",
         ),
     )
     monkeypatch.setattr(skill_admin_service, "update_settings", lambda patch: patch)
@@ -449,6 +438,60 @@ def test_bootstrap_admin_settings_persists_blank_provider_and_model(monkeypatch)
     assert captured["saved"]["model"] == ""
     assert resolved["provider_id"] == ""
     assert resolved["model"] == ""
+
+
+def test_bootstrap_never_overrides_database_connection_from_stored_settings(monkeypatch):
+    # 2026-11-06: a settings row copied from an older deployment carried
+    # mysql_host/port; bootstrap applied it over the env and every later
+    # connection hit a MySQL without the session schema (1049).
+    applied = {}
+
+    class FakeStore:
+        def init_schema(self):
+            return None
+
+        def load_settings_record(self):
+            return {
+                "provider_id": "openrouter",
+                "model": "anthropic/claude-sonnet-4.5",
+                "mysql_host": "old-mysql",
+                "mysql_port": 3316,
+                "mysql_user": "old",
+                "mysql_password": "old",
+                "mysql_database": "other",
+                "session_mysql_database": "other",
+            }
+
+        def save_settings_record(self, payload):
+            return dict(payload)
+
+    class FakeRegistry:
+        def init_schema(self):
+            return None
+
+        def list_providers(self):
+            return [{"provider_id": "openrouter", "enabled": True, "enabled_models": ["anthropic/claude-sonnet-4.5"]}]
+
+    monkeypatch.setattr(skill_admin_service, "get_skill_admin_store", lambda: FakeStore())
+    monkeypatch.setattr(skill_admin_service, "get_runtime_registry_store", lambda: FakeRegistry())
+    monkeypatch.setattr(
+        skill_admin_service,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            llm_provider="",
+            claude_model="",
+            anthropic_api_key="",
+            anthropic_auth_token="",
+            anthropic_base_url="",
+            skills_output_dir=f"../.claude/skills/{BUSINESS_SKILL}",
+        ),
+    )
+    monkeypatch.setattr(skill_admin_service, "update_settings", lambda patch: applied.update(patch))
+
+    skill_admin_service.bootstrap_admin_settings()
+
+    assert applied["llm_provider"] == "openrouter"
+    assert not {key for key in applied if key.startswith("mysql_") or key == "session_mysql_database"}
 
 
 def test_current_settings_does_not_fallback_when_provider_registry_is_unavailable(monkeypatch):
