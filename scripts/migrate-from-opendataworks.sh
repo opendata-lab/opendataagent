@@ -2,10 +2,12 @@
 # 从 OpenDataWorks 内置的 DataAgent 部署迁移到本仓库的独立部署（同一台机器）。
 #
 # 自动完成：
-#   1. 把会话库连接（沿用原来的 dataagent 库）、运行时目录写进 deploy/.env（先备份）；
+#   1. 把会话库连接（沿用原来的 dataagent 库）写进 deploy/.env（先备份）；
 #   2. 复制登录配置 dataagent_config_docker.py / custom_sso_user_info.py（新部署已有的不覆盖）；
-#   3. 把旧 Skill 目录里自己导入的 Skill 复制进新的 Skill 卷（跳过镜像自带和需要重新导入的平台 Skill）。
-# 不会删除或修改旧部署的任何文件、容器和数据库。需要人工处理的事项在最后列出。
+#   3. 把旧 Skill 目录里自己导入的 Skill 复制进新的 Skill 卷（跳过镜像自带和需要重新导入的平台 Skill）；
+#   4. 把旧运行时目录里的 topic 工作区复制到新部署的 DATAAGENT_HOST_ROOT（已存在的不覆盖）。
+# 只读旧部署，不删除或修改它的任何文件、容器和数据库；新部署不引用旧目录，迁移后旧目录可以单独清理。
+# 运行前先停掉旧的 DataAgent 容器，避免复制时还有写入。需要人工处理的事项在最后列出。
 #
 # 用法：scripts/migrate-from-opendataworks.sh --old-root <旧 OpenDataWorks 目录> [--mysql-host <IP>] [--dry-run]
 
@@ -105,6 +107,11 @@ set_env_value() {
     rm -f "$tmp"
 }
 
+if [ "$DRY_RUN" = false ] && command -v docker >/dev/null 2>&1; then
+    running="$(docker ps --format '{{.Names}}' | grep -E '^opendataworks-dataagent-' || true)"
+    [ -z "$running" ] || die "旧的 DataAgent 容器仍在运行（$(echo $running)），先停掉再迁移：docker stop $(echo $running)"
+fi
+
 echo "旧部署: $OLD_ROOT"
 echo "新部署: $REPO_ROOT"
 [ "$DRY_RUN" = true ] && echo "（dry-run：只显示将要做的事，不做任何修改）"
@@ -140,13 +147,6 @@ else
     esac
 fi
 
-old_host_root="$(read_env_value DATAAGENT_HOST_ROOT "$OLD_ENV")"
-old_host_root="$(resolve_old_path "${old_host_root:-/dataagent_runtime}")"
-if [ -d "$old_host_root" ]; then
-    set_env_value DATAAGENT_HOST_ROOT "$old_host_root"
-else
-    echo "  旧运行时目录 $old_host_root 不存在，DATAAGENT_HOST_ROOT 不改"
-fi
 for key in DATAAGENT_RUNTIME_UID DATAAGENT_RUNTIME_GID DATAAGENT_DOCKER_SOCKET; do
     value="$(read_env_value "$key" "$OLD_ENV")"
     [ -n "$value" ] && set_env_value "$key" "$value"
@@ -219,10 +219,49 @@ else
         sh "${copy_list[@]}"
 fi
 
+# ---------------------------------------------------------------- 4. topic 工作区
+step "4. 复制 topic 工作区"
+old_host_root="$(read_env_value DATAAGENT_HOST_ROOT "$OLD_ENV")"
+old_host_root="$(resolve_old_path "${old_host_root:-/dataagent_runtime}")"
+new_host_root="$(read_env_value DATAAGENT_HOST_ROOT "$ENV_FILE")"
+new_host_root="${new_host_root:-/dataagent_runtime}"
+case "$new_host_root" in /*) ;; *) new_host_root="$DEPLOY_DIR/$new_host_root" ;; esac
+[ -d "$new_host_root" ] && new_host_root="$(cd "$new_host_root" && pwd)"
+echo "  旧运行时目录: $old_host_root"
+echo "  新运行时目录: ${new_host_root}（deploy/.env 的 DATAAGENT_HOST_ROOT）"
+if [ ! -d "$old_host_root" ]; then
+    echo "  旧运行时目录不存在，跳过"
+elif [ "$old_host_root" = "$new_host_root" ]; then
+    echo "  新旧是同一个目录，topic 工作区直接沿用"
+else
+    topics=()
+    for dir in "$old_host_root"/topic_*/; do
+        [ -d "$dir" ] || continue
+        name="$(basename "$dir")"
+        if [ -e "$new_host_root/$name" ]; then
+            echo "  跳过 ${name}（新目录已存在）"
+        else
+            topics+=("$name")
+        fi
+    done
+    others="$(find "$old_host_root" -mindepth 1 -maxdepth 1 ! -name 'topic_*' -exec basename {} \; | tr '\n' ' ')"
+    [ -n "$others" ] && echo "  不复制非 topic 内容: ${others}"
+    if [ "${#topics[@]}" -eq 0 ]; then
+        echo "  没有需要复制的 topic"
+    else
+        size="$(cd "$old_host_root" && du -sch "${topics[@]}" 2>/dev/null | tail -n 1 | cut -f1)"
+        echo "  将复制 ${#topics[@]} 个 topic（约 ${size}）"
+        run mkdir -p "$new_host_root"
+        for name in "${topics[@]}"; do
+            run cp -a "$old_host_root/$name" "$new_host_root/"
+        done
+        echo "  已复制 ${#topics[@]} 个 topic"
+    fi
+fi
+
 # ---------------------------------------------------------------- 人工事项
 HUMAN_TODO+=(
     "确认 MySQL 上 da_agent_settings 里保存的 mysql_host/mysql_port 与 deploy/.env 一致或已清空（旧版本启动时会用它覆盖 .env，表现为 1049 Unknown database；新版本已修复，见 PR #14）。"
-    "停掉旧容器：docker stop opendataworks-dataagent-frontend opendataworks-dataagent-backend opendataworks-dataagent-sandbox-runner"
     "启动新部署：scripts/start.sh，然后检查 docker logs dataagent-backend 无报错、技能管理页能看到复制的 Skill。"
     "在 MCP 管理页把平台 MCP 地址改为 http://<OpenDataWorks 主机 IP>:8080/api/mcp/，删除 X-ODW-MCP-Token 头，改用 Authorization: Bearer <服务账号 Token>（OpenDataWorks「管理中心 → 账号管理」生成），保存后刷新工具列表。"
     "检查智能体提示词中的工具名是否为 odw_*。"
