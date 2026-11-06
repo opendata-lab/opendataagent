@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { DockerSandboxManager } from "../src/sandbox/docker-sandbox-manager.js";
+import { DockerSandboxManager, type SandboxConfig } from "../src/sandbox/docker-sandbox-manager.js";
 import { createSandboxTools } from "../src/sandbox/sandbox-tools.js";
 
 const image = process.env.DATAAGENT_SANDBOX_TEST_IMAGE;
@@ -31,16 +31,32 @@ test("sandbox rejects malformed resource limits before any docker call", () => {
   }
 });
 
-test("sandbox network is a plain docker network name", () => {
-  const base = { runId: "r", image: "img", cli: "docker" as const, uid: 1000, gid: 1000, lifetimeSeconds: 60,
+test("sandbox network switch rejects non-boolean values", () => {
+  const base: SandboxConfig = { runId: "r", image: "img", cli: "docker", uid: 1000, gid: 1000, lifetimeSeconds: 60,
     memory: "2g", cpus: "2", pidsLimit: 512, workspaceSource: "/w", resultsSource: "/r", skills: [] };
-  for (const network of [undefined, "none", "bridge", "oda_trusted-net.1"]) {
-    assert.doesNotThrow(() => new DockerSandboxManager({ ...base, network }));
-  }
-  for (const network of ["", "container:abc", "bridge --privileged", "-x"]) {
-    assert.throws(() => new DockerSandboxManager({ ...base, network }), /Invalid sandbox network/);
+  for (const networkEnabled of ["true", "false", "bridge", "none", 1, 0, null]) {
+    assert.throws(() => new DockerSandboxManager({ ...base, networkEnabled } as unknown as SandboxConfig),
+      /Invalid sandbox networkEnabled: expected a boolean/);
   }
 });
+
+for (const networkEnabled of [undefined, false, true]) {
+  test(`sandbox network switch ${networkEnabled} selects the expected docker argument`, async () => {
+    const manager = new DockerSandboxManager({ runId: "r", image: "img", cli: "docker", uid: 1000, gid: 1000,
+      lifetimeSeconds: 60, memory: "2g", cpus: "2", pidsLimit: 512, workspaceSource: "/w", resultsSource: "/r",
+      skills: [], networkEnabled });
+    const commands: string[][] = [];
+    // Capture the CLI boundary without invoking Docker.
+    const internals = manager as unknown as { command: (args: string[]) => Promise<number> };
+    internals.command = async args => { commands.push(args); return 0; };
+    try {
+      assert.equal(await manager.execute(["true"], { timeoutMs: 1000, onData: () => {} }), 0);
+      assert.equal(commands[0][0], "run");
+      assert.deepEqual(commands[0].filter(arg => arg.startsWith("--network=")),
+        [networkEnabled === true ? "--network=bridge" : "--network=none"]);
+    } finally { await manager.close(); }
+  });
+}
 
 test("real sandbox reuses one container and enforces readonly mounts and no network", { skip: !image }, async () => {
   const { root, dirs, manager } = fixture();

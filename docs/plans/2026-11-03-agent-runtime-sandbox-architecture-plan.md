@@ -156,3 +156,14 @@
 4. 更新 smoke 脚本、live 校验脚本和后端测试；部署示例配置与 AGENTS.md 中的模式说明同步改为单档。
 5. 验证：后端全量 pytest、前端定向 spec 与构建、本地 HTTP 与取消 smoke（fixture，无模型额度）。
 6. 回退：恢复本次提交即可；无数据迁移。若部署在 `DATAAGENT_SETTINGS` 中改了新配置名，回退时需改回旧名。
+
+
+### 2026-11-06 沙箱网络布尔开关
+
+对应[架构设计](../design/2026-11-03-agent-runtime-sandbox-architecture-design.md)中的同日决定。影响栈：后端配置与沙箱契约、Pi 容器参数、部署文档；无前端或数据库变更。
+
+1. 后端严格解析 `DATAAGENT_SANDBOX_NETWORK_ENABLED`（默认 false），旧变量被忽略并仅告警一次；通过 `networkEnabled` 传递布尔值。
+2. Pi 移除网络名与其校验，仅根据布尔值选择 `none/bridge`；拒绝错误类型。
+3. 更新部署示例、安全警告及现存文档引用。
+4. 所有编辑完成后各运行一次 `tests/test_sandbox_config.py` 与 `docker_sandbox.test.ts` 中的非 Docker 单元测试；覆盖布尔解析、默认值、非法值、旧变量告警及容器参数。不运行全量或 Docker 测试（本次任务限定），不声称完成端到端验证。
+5. 部署时将旧变量替换为新布尔变量并重建 Pi；回退时恢复原代码和配置名，无数据迁移。
