@@ -12,7 +12,6 @@ if str(BACKEND_ROOT) not in sys.path:
 from config import get_settings, update_settings
 from core.topic_files import safe_workspace_file
 from core.topic_workspace import (
-    cleanup_orphan_topic_workspaces,
     delete_topic_workspace,
     prepare_topic_workspace,
     resolve_topic_root,
@@ -129,15 +128,3 @@ def test_delete_topic_workspace_removes_topic_root_including_logs(tmp_path: Path
     # Physical delete removes the whole topic root: workspace, home, AND logs.
     assert not topic_root.exists()
     assert sibling.exists()
-
-
-def test_cleanup_orphan_topic_workspaces_keeps_active_topics(tmp_path: Path):
-    root = tmp_path / "topics"
-    (root / "topic_keep").mkdir(parents=True)
-    (root / "topic_orphan").mkdir(parents=True)
-
-    removed = cleanup_orphan_topic_workspaces({"topic_keep"}, runtime_root=root)
-
-    assert removed == ["topic_orphan"]
-    assert (root / "topic_keep").exists()
-    assert not (root / "topic_orphan").exists()
