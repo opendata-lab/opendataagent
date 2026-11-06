@@ -96,7 +96,7 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
 
 ### Intelligent Query local smoke method
 
-- Use the local Docker MySQL as the default smoke database when it is available. In this repo, `deploy/docker-compose.yml` publishes MySQL on `127.0.0.1:3326` and Redis on `127.0.0.1:6389`, so it can run next to an OpenDataWorks deployment on the same host.
+- Use the local Docker MySQL as the default smoke database when it is available: a standalone container `dataagent-mysql` published on `127.0.0.1:3326` (`deploy/docker-compose.yml` no longer includes MySQL). If it is missing, start one with `docker run -d --name dataagent-mysql -p 3326:3306 -e MYSQL_ROOT_PASSWORD=root123 -v "$PWD/deploy/database/mysql:/docker-entrypoint-initdb.d:ro" mysql:8.0`, which creates the `dataagent` schema and user. The compose Redis is published on `127.0.0.1:6389`, so the stack can run next to an OpenDataWorks deployment on the same host.
 - Use local Docker Redis as the default task-coordination backend when it is available. Prefer publishing it on `127.0.0.1:6379`.
 - Treat local Docker MySQL as the default first assumption for intelligent-query validation. Do not ask the user to restate this setup unless connection checks against the expected local ports have already failed.
 - Treat local Docker Redis as the default first assumption for intelligent-query validation. Do not ask the user to restate this setup unless connection checks against `127.0.0.1:6379` or Docker availability have already failed.
@@ -125,7 +125,7 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
   - install `dataagent-backend/requirements.txt` and `dataagent-backend/requirements-sandbox.txt` (skill-script tests run the bundled skills with this interpreter)
   - set runtime env to local MySQL:
     - `MYSQL_HOST=127.0.0.1`
-    - `MYSQL_PORT=3326` when using `deploy/docker-compose.yml` (or the actual published port in your local setup)
+    - `MYSQL_PORT=3326` when using the `dataagent-mysql` container (or the actual published port in your local setup)
     - `MYSQL_USER=dataagent`
     - `MYSQL_PASSWORD=dataagent123`
     - `SESSION_MYSQL_DATABASE=dataagent`

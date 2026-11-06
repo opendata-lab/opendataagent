@@ -18,9 +18,20 @@ scripts/start.sh                         # 启动；另有 stop.sh、restart.sh�
 | dataagent-backend | 8900 | `/api/v1/nl2sql/*`、`/api/v1/dataagent/*`、`/api/v1/nl2sql-admin/*` |
 | redis | 6389 | 任务协调 |
 
-DataAgent 采用自备外部 MySQL 数据库架构（在 `.env` 中配置 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`，支持云 RDS 或已有 MySQL 实例）。
+DataAgent 使用自备的 MySQL（云 RDS 或已有实例），在 `.env` 中配置 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`。
+
+- `MYSQL_HOST` 填 backend 容器能访问的地址。backend 不使用 host 网络，`127.0.0.1` 指的是容器自己；
+  MySQL 在宿主机上时，Linux 填宿主机 IP，macOS/Windows 可填 `host.docker.internal`。
+- 库和用户需要先建好，compose 不再自带 MySQL，也不会执行初始化脚本。用 root 执行
+  [`deploy/database/mysql/01-init-database.sql`](database/mysql/01-init-database.sql)（库 `dataagent`、用户 `dataagent`，密码按 `.env` 修改）：
+
+  ```sh
+  mysql -h <MySQL 主机> -P <端口> -uroot -p < deploy/database/mysql/01-init-database.sql
+  ```
+
+- 表结构不需要手工创建：backend 容器启动时先执行 `alembic upgrade head`，再启动服务。
+
 宿主机端口避开了 OpenDataWorks 默认使用的 3306/3316/6379，可以和它部署在同一台机器上。
-backend 容器启动时先执行 `alembic upgrade head`，再启动服务。
 
 ## 离线部署
 
@@ -150,11 +161,14 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint pyth
 
 - OpenDataWorks MySQL 里的 `dataagent` 库（会话、智能体、模型、MCP、Skill 记录）；
 - Skill 目录：旧 compose 把宿主机目录 `${DATAAGENT_SKILLS_DIR:-../dataagent/.claude/skills}`（相对旧部署的 `deploy/`，
-  即 `<旧 OpenDataWorks 目录>/dataagent/.claude/skills`）绑定挂载到容器，导入的 Skill 也写在这里；
-- 宿主机目录 `DATAAGENT_HOST_ROOT`（默认 `/dataagent_runtime`，topic 工作区）。
+  即 `<旧 OpenDataWorks 目录>/dataagent/.claude/skills`）绑定挂载到容器，导入的 Skill 也写在这里。
+  旧 `.env` 改过 `DATAAGENT_SKILLS_DIR` 的，以它为准；
+- 宿主机目录 `DATAAGENT_HOST_ROOT`（默认 `/dataagent_runtime`，topic 工作区）。旧 `.env` 改过它的，以它为准。
 
-升级 OpenDataWorks 不会删除这三处数据：MySQL 初始化脚本只在空卷上执行，宿主目录也不会被自动清理。
-新部署使用自己的空库和 Skill 卷，需要迁移一次。在没有运行中任务时、于本仓库根目录逐条执行，任一步失败就停下处理：
+升级 OpenDataWorks 不会删除这三处数据，宿主目录也不会被自动清理。
+会话库可以直接沿用：`.env` 的 `MYSQL_*` 指向原来那台 MySQL 和 `dataagent` 库即可，不需要导出导入；
+要换到另一台 MySQL 时才执行第 2 步。Skill 卷是新的，需要复制一次。
+在没有运行中任务时、于本仓库根目录逐条执行，任一步失败就停下处理：
 
 ```sh
 # 1. 记下旧 Skill 目录的真实位置，再停掉旧的 DataAgent 容器（升级 OpenDataWorks 之前做）
@@ -163,13 +177,11 @@ OLD_SKILLS=$(docker inspect opendataworks-dataagent-backend \
 echo "$OLD_SKILLS" && ls "$OLD_SKILLS"            # 必须是非空目录
 docker stop opendataworks-dataagent-frontend opendataworks-dataagent-backend opendataworks-dataagent-sandbox-runner
 
-# 2. 导出旧会话库（密码取旧部署 .env 的 MYSQL_ROOT_PASSWORD，容器内已有该变量）
+# 2. （仅换 MySQL 时）导出旧会话库，导入新 MySQL；新库的用户按上文“数据库”一节创建
 docker exec opendataworks-mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --routines --triggers --databases dataagent' > dataagent.sql
+mysql -h <新 MySQL 主机> -P <端口> -uroot -p < dataagent.sql
 
-# 3. 启动新 MySQL，等首次初始化完成（日志出现 3306 端口的就绪行）后再导入
-docker compose -f deploy/docker-compose.yml up -d mysql
-until docker logs dataagent-mysql 2>&1 | grep -q 'ready for connections.*port: 3306'; do sleep 3; done
-docker exec -i dataagent-mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot' < dataagent.sql
+# 3. 在 deploy/.env 配置 MYSQL_*；DATAAGENT_HOST_ROOT 填旧部署的同一个绝对路径，topic 工作区直接沿用
 
 # 4. 初始化新 Skill 卷（首次挂载时带入镜像里的通用 Skill），再复制自己导入或放入的 Skill。
 #    旧版本随仓库发布的 Skill 不复制：通用的 chart-visualization、report-generation 以镜像里的新版为准；
@@ -185,21 +197,25 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps -v "$OLD_SKILLS":
 cp <旧 OpenDataWorks 目录>/deploy/docker/dataagent/dataagent_config_docker.py deploy/docker/dataagent/
 cp <旧 OpenDataWorks 目录>/deploy/docker/dataagent/custom_sso_user_info.py deploy/docker/dataagent/   # 如有
 
-# 6. 启动全部服务；backend 启动时把导入的库升级到最新 Alembic 版本
+# 6. 启动全部服务；backend 启动时把沿用或导入的库升级到最新 Alembic 版本
 scripts/start.sh
 ```
 
 - 第 4 步只用本部署的 `dataagent-backend` 服务（覆盖入口执行复制，下一次正常启动初始化权限），离线环境不需要额外镜像。
 - 同一台机器且 `DATAAGENT_HOST_ROOT` 不变时，topic 工作区直接沿用；换机器时用 `rsync -a` 把该目录复制到新机器的同一路径，Skill 目录同样先复制过去。
-- 新部署的 `dataagent` 用户密码由本目录 `.env` 的 `DATAAGENT_MYSQL_PASSWORD` 决定。
+- backend 连接 MySQL 只用 `.env` 的 `MYSQL_*`。
 - Redis 只保存任务协调状态，不需要迁移。
-- 迁移版本 `20261027_000031` 会把旧的平台 MCP 记录和平台内置智能体转为普通可编辑记录；
-  管理员随后更新 MCP 地址、`X-ODW-MCP-Token` 头和提示词中的 `odw_*` 工具名，并按上面第 4 步重新导入平台 Skill。
+- 迁移版本 `20261027_000031` 会把旧的平台 MCP 记录和平台内置智能体转为普通可编辑记录，管理员随后在 MCP 管理页修改：
+  - 地址改为 OpenDataWorks 后端的 `http://<OpenDataWorks 主机>:8080/api/mcp/`（宿主机 IP，不能填 `localhost`；门户 Nginx 不代理此入口）；
+  - 删除旧的 `X-ODW-MCP-Token` 头，改为 `Authorization: Bearer <服务账号 Token>`，Token 在 OpenDataWorks「管理中心 → 账号管理」生成，问数只需只读角色；
+  - 保存后刷新工具列表；提示词中的工具名使用 `odw_*`。
+  
+  然后按上面第 4 步的说明重新导入平台 Skill。
 - 2026-10-28 之前的镜像在升级到 `20261027_000031` 时会把会话、任务的 `updated_at` 全部改成迁移时刻，会话列表因此都显示同一个时间。
   已经这样迁移过的库，用下面的语句按最后一条消息和任务的结束时间恢复（智能体草稿与 MCP 记录的修改时间无法恢复）：
 
   ```sh
-  docker exec -i dataagent-mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot dataagent' <<'SQL'
+  mysql -h <MySQL 主机> -P <端口> -uroot -p dataagent <<'SQL'
   UPDATE da_agent_topic t
   LEFT JOIN (SELECT topic_id, MAX(updated_at) last_at FROM da_agent_message GROUP BY topic_id) m ON m.topic_id = t.topic_id
   SET t.updated_at = GREATEST(t.created_at, COALESCE(m.last_at, t.created_at));
