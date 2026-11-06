@@ -57,21 +57,6 @@ DEFAULT_ENABLED_BUILTIN_SKILL_FOLDERS = (
 SKILL_FOLDER_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 PROVIDER_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
-RUNTIME_SETTING_KEYS = {
-    "provider_id",
-    "model",
-    "anthropic_api_key",
-    "anthropic_auth_token",
-    "anthropic_base_url",
-    "mysql_host",
-    "mysql_port",
-    "mysql_user",
-    "mysql_password",
-    "mysql_database",
-    "skills_output_dir",
-    "session_mysql_database",
-}
-
 
 def _backend_root() -> Path:
     return Path(__file__).resolve().parent.parent
@@ -86,10 +71,10 @@ def current_settings_payload() -> dict[str, Any]:
     except Exception as exc:
         logger.warning("Failed to load admin settings from store: %s", exc)
         db_payload = {}
+    # Provider definitions live only in the registry; da_agent_settings keeps
+    # the default selection, skill runtime and widget allowlist.
     provider_rows = get_runtime_registry_store().list_providers()
     if provider_rows:
-        # Registry rows are authoritative. The copy in raw_json is retained only
-        # as rollback data for versions predating the registry migration.
         db_payload["provider_settings"] = {
             str(row.get("provider_id") or ""): row for row in provider_rows if row.get("provider_id")
         }
@@ -104,13 +89,7 @@ def _runtime_settings_payload() -> dict[str, Any]:
         "anthropic_api_key": cfg.anthropic_api_key,
         "anthropic_auth_token": cfg.anthropic_auth_token,
         "anthropic_base_url": cfg.anthropic_base_url,
-        "mysql_host": cfg.mysql_host,
-        "mysql_port": cfg.mysql_port,
-        "mysql_user": cfg.mysql_user,
-        "mysql_password": cfg.mysql_password,
-        "mysql_database": cfg.mysql_database,
         "skills_output_dir": cfg.skills_output_dir,
-        "session_mysql_database": cfg.session_mysql_database,
         # Widget allowlist is managed exclusively from the settings page and
         # persisted in da_agent_settings; there is no env-var source.
         "widget_allowed_sites": [],
@@ -542,7 +521,7 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
     for key, value in update.items():
         if key in {"provider_settings", "providers", "skill_runtime"} or value is None:
             continue
-        if key in {"anthropic_api_key", "anthropic_auth_token", "mysql_password"} and not str(value or "").strip():
+        if key in {"anthropic_api_key", "anthropic_auth_token"} and not str(value or "").strip():
             continue
         base[key] = value
 
@@ -598,13 +577,7 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
         "anthropic_api_key": str(runtime_provider.get("api_key") or base.get("anthropic_api_key") or ""),
         "anthropic_auth_token": str(runtime_provider.get("auth_token") or base.get("anthropic_auth_token") or ""),
         "anthropic_base_url": str(runtime_provider.get("base_url") or base.get("anthropic_base_url") or ""),
-        "mysql_host": str(base.get("mysql_host") or ""),
-        "mysql_port": int(base.get("mysql_port") or 3306),
-        "mysql_user": str(base.get("mysql_user") or ""),
-        "mysql_password": str(base.get("mysql_password") or ""),
-        "mysql_database": str(base.get("mysql_database") or ""),
         "skills_output_dir": normalized_skills_output_dir,
-        "session_mysql_database": str(base.get("session_mysql_database") or ""),
         "provider_settings": provider_settings,
         "skill_runtime": skill_runtime,
         "widget_allowed_sites": widget_allowed_sites,
@@ -623,17 +596,12 @@ def runtime_patch_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         patch["llm_provider"] = payload.get("provider_id")
     if "model" in payload:
         patch["claude_model"] = payload.get("model")
+    # Database connections come only from deployment config, never from stored settings.
     passthrough = {
         "anthropic_api_key",
         "anthropic_auth_token",
         "anthropic_base_url",
-        "mysql_host",
-        "mysql_port",
-        "mysql_user",
-        "mysql_password",
-        "mysql_database",
         "skills_output_dir",
-        "session_mysql_database",
     }
     for key in passthrough:
         if key in payload:
@@ -881,9 +849,6 @@ def resolved_chat_settings_payload() -> dict[str, Any]:
         "default_model": default_model,
         "providers": providers,
         "skills_output_dir": str(resolved.get("skills_output_dir") or ""),
-        "mysql_host": str(resolved.get("mysql_host") or ""),
-        "mysql_port": int(resolved.get("mysql_port") or 3306),
-        "mysql_database": str(resolved.get("mysql_database") or ""),
     }
 
 

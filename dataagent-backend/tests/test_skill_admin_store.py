@@ -11,42 +11,39 @@ if str(BACKEND_ROOT) not in sys.path:
 from core.skill_admin_store import SkillAdminStore
 
 
-def test_normalize_settings_payload_keeps_provider_settings_dict():
+LEGACY_ROW_COLUMNS = {
+    "anthropic_api_key": "sk-old",
+    "mysql_host": "old-mysql",
+    "mysql_port": 3316,
+    "mysql_database": "dataagent",
+}
+
+
+def test_normalize_settings_payload_stores_only_owned_settings():
     store = SkillAdminStore()
     normalized = store._normalize_settings_payload(
         {
             "provider_id": "openrouter",
             "model": "anthropic/claude-sonnet-4.5",
-            "provider_settings": {
-                "openrouter": {
-                    "provider_id": "openrouter",
-                    "enabled_models": ["anthropic/claude-sonnet-4.5"],
-                }
-            },
+            "skills_output_dir": "../.claude/skills/example",
+            "skill_runtime": {"example": {"enabled": True}},
+            "widget_allowed_sites": [{"website_id": "site-a"}],
+            "provider_settings": {"openrouter": {"api_key": "sk-copy"}},
+            "anthropic_api_key": "sk-copy",
+            "mysql_host": "old-mysql",
+            "session_mysql_database": "dataagent",
+            "validated_model": "anthropic/claude-sonnet-4.5",
         }
     )
 
-    assert isinstance(normalized["provider_settings"], dict)
-    assert normalized["provider_settings"]["openrouter"]["enabled_models"] == ["anthropic/claude-sonnet-4.5"]
-
-
-def test_normalize_settings_payload_accepts_legacy_providers_list():
-    store = SkillAdminStore()
-    normalized = store._normalize_settings_payload(
-        {
-            "provider_id": "openrouter",
-            "model": "anthropic/claude-sonnet-4.5",
-            "providers": [
-                {
-                    "provider_id": "openrouter",
-                    "enabled_models": ["anthropic/claude-sonnet-4.5"],
-                }
-            ],
-        }
-    )
-
-    assert isinstance(normalized["provider_settings"], dict)
-    assert normalized["provider_settings"]["openrouter"]["enabled_models"] == ["anthropic/claude-sonnet-4.5"]
+    assert set(normalized) == {
+        "provider_id",
+        "model",
+        "skills_output_dir",
+        "skill_runtime",
+        "widget_allowed_sites",
+    }
+    assert normalized["widget_allowed_sites"] == [{"website_id": "site-a"}]
 
 
 def test_normalize_settings_payload_keeps_blank_provider_and_model():
@@ -62,62 +59,26 @@ def test_normalize_settings_payload_keeps_blank_provider_and_model():
     assert normalized["model"] == ""
 
 
-def test_normalize_settings_row_keeps_provider_settings_dict():
+def test_normalize_settings_row_ignores_legacy_connection_and_provider_copies():
     store = SkillAdminStore()
     normalized = store._normalize_settings_row(
         {
             "provider_id": "openrouter",
             "model_name": "anthropic/claude-sonnet-4.5",
-            "anthropic_api_key": "",
-            "anthropic_auth_token": "",
-            "anthropic_base_url": "",
-            "mysql_host": "",
-            "mysql_port": 3306,
-            "mysql_user": "",
-            "mysql_password": "",
-            "mysql_database": "example",
-            "doris_host": "",
-            "doris_port": 9030,
-            "doris_user": "",
-            "doris_password": "",
-            "doris_database": "",
+            **LEGACY_ROW_COLUMNS,
             "skills_output_dir": "../.claude/skills/example-business-knowledge",
             "updated_at": None,
-            "raw_json": "{\"provider_settings\":{\"openrouter\":{\"provider_id\":\"openrouter\",\"enabled_models\":[\"anthropic/claude-sonnet-4.5\"]}}}",
+            "raw_json": (
+                '{"provider_settings":{"openrouter":{"provider_id":"openrouter"}},'
+                '"mysql_host":"old-mysql","widget_allowed_sites":[{"website_id":"site-a"}]}'
+            ),
         }
     )
 
-    assert isinstance(normalized["provider_settings"], dict)
-    assert normalized["provider_settings"]["openrouter"]["provider_id"] == "openrouter"
-
-
-def test_normalize_settings_row_accepts_legacy_providers_list():
-    store = SkillAdminStore()
-    normalized = store._normalize_settings_row(
-        {
-            "provider_id": "openrouter",
-            "model_name": "anthropic/claude-sonnet-4.5",
-            "anthropic_api_key": "",
-            "anthropic_auth_token": "",
-            "anthropic_base_url": "",
-            "mysql_host": "",
-            "mysql_port": 3306,
-            "mysql_user": "",
-            "mysql_password": "",
-            "mysql_database": "example",
-            "doris_host": "",
-            "doris_port": 9030,
-            "doris_user": "",
-            "doris_password": "",
-            "doris_database": "",
-            "skills_output_dir": "../.claude/skills/example-business-knowledge",
-            "updated_at": None,
-            "raw_json": "{\"providers\":[{\"provider_id\":\"openrouter\",\"enabled_models\":[\"anthropic/claude-sonnet-4.5\"]}]}",
-        }
-    )
-
-    assert isinstance(normalized["provider_settings"], dict)
-    assert normalized["provider_settings"]["openrouter"]["provider_id"] == "openrouter"
+    assert "provider_settings" not in normalized
+    assert "mysql_host" not in normalized
+    assert "anthropic_api_key" not in normalized
+    assert normalized["widget_allowed_sites"] == [{"website_id": "site-a"}]
 
 
 def test_normalize_settings_row_keeps_blank_provider_and_model():
@@ -126,19 +87,6 @@ def test_normalize_settings_row_keeps_blank_provider_and_model():
         {
             "provider_id": "",
             "model_name": "",
-            "anthropic_api_key": "",
-            "anthropic_auth_token": "",
-            "anthropic_base_url": "",
-            "mysql_host": "",
-            "mysql_port": 3306,
-            "mysql_user": "",
-            "mysql_password": "",
-            "mysql_database": "example",
-            "doris_host": "",
-            "doris_port": 9030,
-            "doris_user": "",
-            "doris_password": "",
-            "doris_database": "",
             "skills_output_dir": "../.claude/skills/example-business-knowledge",
             "updated_at": None,
             "raw_json": None,
