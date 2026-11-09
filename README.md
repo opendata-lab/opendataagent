@@ -39,8 +39,8 @@ OpenDataAgent（DataAgent）是一个独立的智能体平台：管理员配置�
 ## 核心能力
 
 - **智能体编排**：在管理台组合模型、系统提示、MCP、Skill 与运行预算，草稿与发布分离。
-- **双运行时**：默认 Pi（`pi_agent_core`），也可切换到 Claude Agent SDK；事件统一落库、通过 SSE 实时推送。
-- **沙箱隔离**：容器模式下每个任务一个一次性 child 容器，只挂当前会话的工作区。
+- **Pi 运行时**：智能体运行在 Pi（`pi_agent_core`）上，事件统一落库、通过 SSE 实时推送。
+- **沙箱隔离**：工具在按需启动的一次性沙箱容器中执行，只挂当前会话的工作区，不含凭据，默认不联网。
 - **MCP 与身份**：管理员显式添加的 HTTP MCP，后端为每次调用附加 `X-Agent-User-Id` / `X-Agent-Id`，是否据此授权由各 MCP 决定（OpenDataWorks 只按 MCP 记录里的服务账号 Token 授权，这两个头仅记审计）。
 - **Skill 管理**：内置图表与报告 Skill，支持导入、版本记录与在线编辑。
 - **可嵌入**：一行脚本嵌入 widget，或用 npm 包 [`@opendataagent/agent-conversation`](dataagent-frontend/packages/agent-conversation/README.md) 自建对话界面。
