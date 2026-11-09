@@ -19,8 +19,8 @@ dataagent-backend（FastAPI :8900）
 ```
 
 DataAgent 不内置任何数据平台。访问外部系统只通过智能体显式绑定的 MCP；对每个 HTTP MCP，后端都附加
-执行身份头 `X-Agent-User-Id`（带来源前缀的登录用户，`local:<用户名>` 或 `<provider>:<sub>`）和
-`X-Agent-Id`（当前智能体）。这两个头由后端从会话填写，不来自模型参数（独立前端的会话用 DataAgent 登录用户，宿主内嵌的 widget 会话用宿主上报的用户）；MCP 自身的访问凭证是 MCP 记录里管理员配置的普通 header。
+标识头 `X-Agent-User-Id`（带来源前缀的登录用户，`local:<用户名>` 或 `<provider>:<sub>`）和
+`X-Agent-Id`（当前智能体）。这两个头由后端从会话填写，不来自模型参数（独立前端的会话用 DataAgent 登录用户，宿主内嵌的 widget 会话用宿主上报的用户）；MCP 自身的访问凭证是 MCP 记录里管理员配置的普通 header。是否按标识头授权由各 MCP 决定：OpenDataWorks 只按凭证里的服务账号 Token 授权，标识头仅记审计，所以不同数据范围要用不同的服务账号和 MCP 记录。
 
 ## 核心流程
 

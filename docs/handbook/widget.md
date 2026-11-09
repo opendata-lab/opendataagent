@@ -35,7 +35,7 @@ Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入�
 | `data-project-name` | 否 | `智能问数` | 面板标题栏显示名称 |
 | `data-project-color` | 否 | `#4A90A4` | 主题色（十六进制） |
 | `data-container-id` | 否 | — | 内嵌模式下容器元素 ID（内嵌模式必填） |
-| `data-user-id` | 否 | — | 宿主上报的当前用户，用于关联会话和历史记录，并作为执行身份传给 MCP（`X-Agent-User-Id`）；宿主需保证格式为 `local:<用户名>` 或 `<来源>:<sub>` |
+| `data-user-id` | 否 | — | 宿主上报的当前用户，用于关联会话和历史记录，并作为 `X-Agent-User-Id` 上报给 MCP（OpenDataWorks 只记审计，不据此授权）；宿主需保证格式为 `local:<用户名>` 或 `<来源>:<sub>` |
 | `data-login-url` | 否 | — | 未提供用户身份时的登录跳转地址 |
 | `data-allow-anonymous` | 否 | `false` | 客户端匿名开关，还需在管理端为该站点开启匿名访问 |
 | `data-fullscreen-url` | 否 | — | 全屏按钮打开的完整页面地址，支持宿主相对路由和 HTTP(S) 地址 |
