@@ -41,7 +41,7 @@ It ships without any built-in data platform. External systems are reached only t
 - **Agent composition**: combine a model, system prompt, MCP servers, skills and run budgets in the admin console, with separate drafts and published versions.
 - **Two runtimes**: Pi (`pi_agent_core`) by default, or the Claude Agent SDK; events are persisted and streamed over SSE.
 - **Sandboxing**: in container mode each task runs in a one-off child container that mounts only its conversation workspace.
-- **MCP with identity**: HTTP MCP servers added by an administrator; the backend attaches `X-Agent-User-Id` / `X-Agent-Id` to every call.
+- **MCP with identity**: HTTP MCP servers added by an administrator; the backend attaches `X-Agent-User-Id` / `X-Agent-Id` to every call, and each MCP server decides whether to use them (OpenDataWorks authorizes by the service-account token in the MCP record and records these headers for audit only).
 - **Skills**: built-in chart and report skills, plus import, version history and in-browser editing.
 - **Embeddable**: one script tag for the widget, or the npm package [`@opendataagent/agent-conversation`](dataagent-frontend/packages/agent-conversation/README.md) to build your own chat UI.
 - **Interaction cards**: tool approvals, questions to the user and plan confirmation; the task suspends until the user decides.

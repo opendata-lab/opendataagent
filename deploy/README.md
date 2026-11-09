@@ -140,7 +140,7 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint pyth
 认证关闭时匿名聊天没有已验证的用户身份，不能经 MCP 访问需要用户身份的数据。
 
 宿主内嵌 widget 时，会话不经 DataAgent 登录：DataAgent 采信宿主通过 `X-DataAgent-User-Id`（widget 的 `userId`）上报的用户，
-并以它作为执行身份（MCP 的 `X-Agent-User-Id`）。这个值来自宿主页面，只在可信宿主、可信网络中使用，并保证 8900 端口不对外暴露。
+用它区分会话与历史记录，并作为 MCP 的 `X-Agent-User-Id` 上报（OpenDataWorks 只记审计，不据此授权）。这个值来自宿主页面，只在可信宿主、可信网络中使用，并保证 8900 端口不对外暴露。
 
 ## 被其他门户内嵌
 
@@ -222,7 +222,7 @@ scripts/start.sh
 - Redis 只保存任务协调状态，不需要迁移。
 - 迁移版本 `20261027_000031` 会把旧的平台 MCP 记录和平台内置智能体转为普通可编辑记录，管理员随后在 MCP 管理页修改：
   - 地址改为 OpenDataWorks 后端的 `http://<OpenDataWorks 主机>:8080/api/mcp/`（宿主机 IP，不能填 `localhost`；门户 Nginx 不代理此入口）；
-  - 删除旧的 `X-ODW-MCP-Token` 头，改为 `Authorization: Bearer <服务账号 Token>`，Token 在 OpenDataWorks「管理中心 → 账号管理」生成，问数只需只读角色；
+  - 删除旧的 `X-ODW-MCP-Token` 头，改为 `Authorization: Bearer <服务账号 Token>`，Token 在 OpenDataWorks「管理中心 → 账号管理」生成，问数只需只读角色。OpenDataWorks 只按这个 Token 授权，使用该智能体的所有人看到同一范围；需要不同范围时，为每个范围建一个服务账号，在这里各配置一条 MCP 记录，并让对应智能体选择它；
   - 保存后刷新工具列表；提示词中的工具名使用 `odw_*`。
   
   然后按上面第 4 步的说明重新导入平台 Skill。

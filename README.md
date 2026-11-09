@@ -34,14 +34,14 @@
 
 OpenDataAgent（DataAgent）是一个独立的智能体平台：管理员配置模型、MCP 和 Skill，组装成智能体；用户在问答页或宿主系统内嵌的 widget 里用自然语言提问，智能体在隔离的沙箱中调用工具完成分析，并以图表、表格和报告呈现结果。
 
-它不内置任何数据平台。访问外部系统只通过智能体显式绑定的 MCP，每次调用都带上执行身份（用户与智能体），由 MCP 一侧决定能看哪些数据。[OpenDataWorks](https://github.com/opendata-lab/opendataworks) 就是这样接入的一个宿主。
+它不内置任何数据平台。访问外部系统只通过智能体显式绑定的 MCP，每次调用都带上用户与智能体标识，由 MCP 一侧决定能看哪些数据。[OpenDataWorks](https://github.com/opendata-lab/opendataworks) 就是这样接入的一个宿主。
 
 ## 核心能力
 
 - **智能体编排**：在管理台组合模型、系统提示、MCP、Skill 与运行预算，草稿与发布分离。
 - **双运行时**：默认 Pi（`pi_agent_core`），也可切换到 Claude Agent SDK；事件统一落库、通过 SSE 实时推送。
 - **沙箱隔离**：容器模式下每个任务一个一次性 child 容器，只挂当前会话的工作区。
-- **MCP 与身份**：管理员显式添加的 HTTP MCP，后端为每次调用附加 `X-Agent-User-Id` / `X-Agent-Id`。
+- **MCP 与身份**：管理员显式添加的 HTTP MCP，后端为每次调用附加 `X-Agent-User-Id` / `X-Agent-Id`，是否据此授权由各 MCP 决定（OpenDataWorks 只按 MCP 记录里的服务账号 Token 授权，这两个头仅记审计）。
 - **Skill 管理**：内置图表与报告 Skill，支持导入、版本记录与在线编辑。
 - **可嵌入**：一行脚本嵌入 widget，或用 npm 包 [`@opendataagent/agent-conversation`](dataagent-frontend/packages/agent-conversation/README.md) 自建对话界面。
 - **交互卡片**：工具调用审批、向用户提问、计划确认，任务挂起后由用户决定继续。
@@ -96,7 +96,7 @@ scripts/load-package-and-start.sh --package .
     ▼
 dataagent-backend（FastAPI）── MySQL / Redis
     ├── Pi SDK 子进程 ── 按执行段懒启动 oda-sandbox（7 个基础工具）
-    └── HTTP MCP（带执行身份头）── 外部系统（如 OpenDataWorks）
+    └── HTTP MCP（带用户/智能体标识头）── 外部系统（如 OpenDataWorks）
 ```
 
 详见 [架构文档](docs/handbook/architecture.md)。

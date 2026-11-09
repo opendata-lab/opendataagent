@@ -263,7 +263,7 @@ fi
 HUMAN_TODO+=(
     "确认 MySQL 上 da_agent_settings 里保存的 mysql_host/mysql_port 与 deploy/.env 一致或已清空（旧版本启动时会用它覆盖 .env，表现为 1049 Unknown database；新版本已修复，见 PR #14）。"
     "启动新部署：scripts/start.sh，然后检查 docker logs dataagent-backend 无报错、技能管理页能看到复制的 Skill。"
-    "在 MCP 管理页把平台 MCP 地址改为 http://<OpenDataWorks 主机 IP>:8080/api/mcp/，删除 X-ODW-MCP-Token 头，改用 Authorization: Bearer <服务账号 Token>（OpenDataWorks「管理中心 → 账号管理」生成），保存后刷新工具列表。"
+    "在 MCP 管理页把平台 MCP 地址改为 http://<OpenDataWorks 主机 IP>:8080/api/mcp/，删除 X-ODW-MCP-Token 头，改用 Authorization: Bearer <服务账号 Token>（OpenDataWorks「管理中心 → 账号管理」生成），保存后刷新工具列表。OpenDataWorks 只按该 Token 授权，不同数据范围需各建服务账号与 MCP 记录。"
     "检查智能体提示词中的工具名是否为 odw_*。"
     "新部署运行正常一段时间后，再自行备份并清理旧部署的目录。"
 )
