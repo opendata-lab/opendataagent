@@ -4,15 +4,36 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-10
+
+首个独立发布版本，配合 OpenDataWorks 1.6.0 使用。
+
 ### Added
 
 - 从 OpenDataWorks 迁入 DataAgent，作为独立仓库维护：后端、前端、Pi 运行时、契约、通用 Skill 与评测器。
 - 独立 Docker Compose 部署（项目名 `opendataagent`）、启停与日志脚本、离线部署包 `oda-deployment-*.tar.xz`。
-- 镜像统一为 `oda-frontend`、`oda-backend`、`oda-runner`、`oda-evals-*`。
-- Widget 会话在无 DataAgent 登录时以宿主上报的用户执行。
+- 镜像统一为 `oda-frontend`、`oda-backend`、`oda-sandbox`、`oda-evals-*`。
+- Pi 运行时：每个执行段独立 Pi 进程，工具在按需启动的一次性沙箱容器中执行，只挂当前会话工作区、不含凭据。
+- 沙箱网络开关 `DATAAGENT_SANDBOX_NETWORK_ENABLED`（默认关闭）与会话级 `pip install`；启动日志与每次启动沙箱时记录实际生效的网络模式。
+- 从 OpenDataWorks 内置部署迁移的脚本 `scripts/migrate-from-opendataworks.sh`（随发布包提供），见[部署指南](deploy/README.md)。
+- Widget 后台任务提醒：其他会话完成或需要处理时显示提示、历史列表标签；面板最小化时启动按钮显示红点与提示气泡，点击直达该会话。
 - CI：后端、Pi 运行时与前端测试；main 推送刷新 `latest` 离线包，`v*` tag 创建正式 Release。
 
 ### Changed
 
-- 不再内置任何数据平台；外部系统只通过智能体显式绑定的 MCP 访问。
-- 从 OpenDataWorks 内置部署迁移旧数据的步骤见 [部署指南](deploy/README.md)。
+- 不再内置任何数据平台；外部系统只通过智能体显式绑定的 MCP 访问。每次 MCP 调用附加 `X-Agent-User-Id`／`X-Agent-Id` 标识，是否据此授权由 MCP 决定（OpenDataWorks 只按服务账号 Token 授权，这两个头仅记审计）。
+- 只保留 Pi 运行时（`pi_agent_core`），Claude Agent SDK 路径与 `DATAAGENT_SANDBOX_MODE` 已删除；所有任务使用同一执行预算（`agent_timeout_seconds`），删除 `execution_mode`。
+- 数据库连接只来自环境变量：`da_agent_settings` 不再保存或覆盖 MySQL 连接，并删除无用列（迁移 `20261106_000033`）。
+- 智能体设置中的「数据与权限」改为「可见范围」。
+- 运行时失败码规范化：只保留已知错误码，其余为 `PI_EXECUTION_ERROR`；`CELL_LOSS` 区分内存不足、被系统强制终止与异常中断，并给出可读提示。
+
+### Removed
+
+- 未被调用的孤儿工作区清理函数（会误删运行时目录下的非话题目录）。
+
+### Fixed
+
+- 沙箱单命令超时从容器就绪后开始计时。
+- 达到轮次上限时任务正确失败；nginx 动态重新解析后端地址。
+- Pi 发布包内包含 MCP 探测入口。
+- Skill 导出按钮恢复；前端图标统一为 DataAgent 品牌图标。
