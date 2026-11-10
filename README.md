@@ -2,8 +2,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="dataagent-frontend/public/opendataworks-icon-dark.svg">
-    <img src="dataagent-frontend/public/opendataworks-icon-light.svg" alt="OpenDataAgent 图标" width="160">
+    <source media="(prefers-color-scheme: dark)" srcset="dataagent-frontend/public/dataagent-icon-dark.svg">
+    <img src="dataagent-frontend/public/dataagent-icon-light.svg" alt="OpenDataAgent 图标" width="160">
   </picture>
 </p>
 

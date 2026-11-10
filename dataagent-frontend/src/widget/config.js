@@ -18,6 +18,12 @@ const visitorStorageKey = (websiteId) => `example_widget_visitor_id_${websiteId 
 
 export const parseBooleanFlag = (value) => value === true || String(value || '').trim().toLowerCase() === 'true'
 
+const VALID_PERMISSION_MODES = new Set(['default', 'acceptEdits', 'plan', 'bypassPermissions'])
+export function normalizePermissionMode(value) {
+  const mode = String(value || '').trim()
+  return VALID_PERMISSION_MODES.has(mode) ? mode : 'default'
+}
+
 export function resolveFullscreenUrl(value) {
   const url = String(value || '').trim()
   if (!url) return ''
@@ -86,6 +92,7 @@ export function parseWidgetConfig(script = resolveCurrentScript()) {
     displayMode,
     panelMode: normalizePanelMode(dataset.panelMode),
     containerId,
+    permissionMode: normalizePermissionMode(dataset.permissionMode),
     fullscreenUrl: resolveFullscreenUrl(dataset.fullscreenUrl),
     headers
   }

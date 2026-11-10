@@ -304,6 +304,10 @@ describe('NL2SqlChatV2 URL location', () => {
     await nextTick()
 
     expect(wrapper.find('.v2-agent-welcome').exists()).toBe(true)
+    const logo = wrapper.find('.v2-agent-welcome-logo')
+    expect(logo.exists()).toBe(true)
+    expect(logo.attributes('src')).toBe('/dataagent-icon.svg')
+    expect(logo.attributes('alt')).toBe('DataAgent')
     expect(wrapper.text()).toContain('欢迎使用 DataAgent')
     expect(wrapper.text()).toContain('Default agent')
     expect(wrapper.find('textarea').exists()).toBe(false)

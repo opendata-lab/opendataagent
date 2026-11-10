@@ -82,8 +82,8 @@ scripts/load-package-and-start.sh --package .   # 加载镜像；deploy/.env 不
 
 旧的 `agent_interactive_*`／`agent_background_*` 配置名已删除：写在 `DATAAGENT_SETTINGS` 中会启动失败，写成
 环境变量会被忽略，升级时改成上表名称。Pi 无活动超时 `dataagent_run_idle_timeout_seconds` 为 300 秒。
-SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。反向代理的读写超时必须大于总超时（1800 秒），
-前端镜像内置 nginx 为 1860 秒。
+SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。反向代理的读写超时必须大于总超时（1800 秒）。
+`deploy/docker-compose.yml` 将宿主机 `deploy/docker/nginx/default.conf` 挂载到前端容器 `/etc/nginx/conf.d/default.conf:ro`（读写超时默认 1860 秒），方便现场直接按需调整反向代理路由、流式超时、域名或证书，修改后执行 `scripts/restart.sh` 即可生效，无需重新构建前端镜像。
 
 ## 运行时目录与沙箱
 

@@ -545,6 +545,19 @@ describe('WidgetChat history conversations', () => {
     }))
   })
 
+  it('initializes default permission mode from config when provided', async () => {
+    const { wrapper } = mountChat({ config: { displayMode: 'inline', permissionMode: 'bypassPermissions' } })
+    await flushPromises()
+
+    expect(wrapper.get('.query-permission-select').text()).toContain('Bypass permissions')
+
+    await wrapper.get('textarea').setValue('直接执行')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(apiMocks.topicApi.createTopic).toHaveBeenCalledWith('直接执行', { agent_id: 'agent_widget', permission_mode: 'bypassPermissions' })
+  })
+
   it('persists permission mode switches for an existing widget topic', async () => {
     const { wrapper } = mountChat({ config: { displayMode: 'inline' } })
     await flushPromises()
