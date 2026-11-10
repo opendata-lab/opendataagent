@@ -134,7 +134,6 @@
 
 - **失败段不保存会话快照**：`execute_pi_run` 只在 `run.completed`／`run.parked` 时调用 `commit_session_segment`。失败、超时或截断的执行段不写快照，下一条消息从更早的快照续聊，并忽略 `history`。界面能看到失败轮的问题和工具结果，模型却看不到。要做：决定失败段是否追加一条只含用户问题和失败摘要的条目，或在下一段的提示里说明上一轮失败；补跨段回归测试。来源：本次 PR 评审，关联[设计](design/2026-11-03-agent-runtime-sandbox-architecture-design.md) 3.4。
 - **协调器在事件循环里同步访问 MySQL**：`task_coordinator._run_task` 中的 `mark_task_running`、`ensure_assistant_message`、`get_session_checkpoint`、`update_assistant_message`、`finish_task` 以及 `_heartbeat_tick` 的 `heartbeat_task` 都直接在事件循环上执行。本次只把每帧都会触发的取消检查改成按间隔轮询并放进线程。要做：把其余调用整体放进 `asyncio.to_thread`，并在并发任务下验证 SSE 不卡顿。来源：本次 PR 评审。
-- **失败码直接使用异常文本**：`pi_runtime.execute_pi_run` 的兜底分支用 `str(exc)` 作为 `error_code`，像 `Stale session checkpoint` 这样的消息也会被当成错误码落库。要做：只保留已知的大写错误码（`CELL_LOSS`、`PI_RUN_TIMEOUT` 等），其余统一为 `PI_EXECUTION_ERROR`，原文放进 `message`；同步检查前端对错误码的展示。来源：本次 PR 评审。
 - **Pi 入口路径有两个配置来源**：`resolve_cell_command` 先读 settings，再读 `os.environ`。pydantic settings 已经读取同名环境变量，第二层兜底多余，还会让开发机 `.env` 覆盖测试中设置的环境变量（本次已把对应测试改为显式传入配置）。要做：只保留 settings 一个来源。来源：本次 PR 评审。
 
 - **沙箱输出把 stderr 合并进 stdout 结果**：`DockerSandboxManager.command` 把 stdout 和 stderr 交给同一个 `onData`。技能脚本输出 JSON 时，stderr 上的一条警告就会让 `isRenderableStructuredOutput` 判定失败，图表无法渲染。要做：分开收集 stderr，结构化判定只看 stdout，同时保持模型看到的错误信息不变。来源：本次 Gemini 评审（已核实）。
@@ -154,6 +153,8 @@
 - **前端依赖审计**：2026-11-03 全新 npm ci 报告 29 项漏洞（10 moderate、17 high、2 critical）；需单独核对并升级传递依赖，本次未执行强制修复。来源：本次本地工具链安装；关联[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)，前端生产构建通过。
 
 ## 已完成
+
+- **规范运行时失败码与异常文本展示（2026-11-10）**：在 `pi_runtime.execute_pi_run` 异常兜底分支中，只保留已知的标准错误码（`CELL_LOSS`、`PI_RUN_TIMEOUT`、`PI_RUN_IDLE_TIMEOUT` 等），未知错误归一为 `PI_EXECUTION_ERROR`；针对 `CELL_LOSS` 根据退出信号与 stderr 识别 OOM 等致命场景（如内存超限时明确提示“运行时子进程被系统强制终止（CELL_LOSS）：查询数据量或内存超出上限 (OOM Killed)，请联系管理员”，常规中断提示“运行时子进程异常中断（CELL_LOSS），请联系管理员”），并同步在前端 `reducer.js` 与 `message.js` 中增加友好展示映射与单元测试覆盖。来源：本次 PR 评审与用户反馈。
 
 - **统一 DataAgent 品牌图标资源与引用（2026-11-10）**：在 `dataagent-frontend/public` 中采用标准 `dataagent-icon*` 图标资产（包括 SVG/PNG/ICO），同步更新 `index.html` 的 favicon 链接、`NL2SqlChatV2.vue` 与 `IntelligentQueryView.vue` 中的品牌 logo 路径为 `${import.meta.env.BASE_URL}dataagent-icon.svg`，清理历史遗留的 `opendataworks-icon*` 与 `example-icon*` 文件，修复离线包与容器部署后 dataagent 图标 404 找不到的问题。来源：本轮 UI smoke，关联[验证报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
 

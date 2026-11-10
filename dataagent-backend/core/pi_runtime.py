@@ -228,7 +228,9 @@ class _CellChannel:
             return parsed
 
 
-async def _drain_stderr(process: asyncio.subprocess.Process, task_id: str) -> None:
+async def _drain_stderr(
+    process: asyncio.subprocess.Process, task_id: str, stderr_lines: list[str] | None = None
+) -> None:
     """Mirror the child's stderr into the task log; never touches the protocol."""
     stderr = process.stderr
     if stderr is None:
@@ -238,9 +240,26 @@ async def _drain_stderr(process: asyncio.subprocess.Process, task_id: str) -> No
             raw = await stderr.readline()
             if not raw:
                 return
-            logger.info("pi_cell.stderr task_id=%s %s", task_id, raw.decode("utf-8", errors="replace").rstrip())
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if stderr_lines is not None:
+                stderr_lines.append(line)
+                if len(stderr_lines) > 20:
+                    stderr_lines.pop(0)
+            logger.info("pi_cell.stderr task_id=%s %s", task_id, line)
     except Exception:
         logger.debug("pi_cell.stderr_reader_stopped task_id=%s", task_id, exc_info=True)
+
+
+def _format_cell_loss_message(process: asyncio.subprocess.Process, stderr_lines: list[str]) -> str:
+    stderr_text = "\n".join(stderr_lines).lower()
+    is_oom = (
+        process.returncode in (-9, 137)
+        or "heap out of memory" in stderr_text
+        or "allocation failed" in stderr_text
+    )
+    if is_oom:
+        return "运行时子进程被系统强制终止（CELL_LOSS）：查询数据量或内存超出上限 (OOM Killed)，请联系管理员"
+    return "运行时子进程异常中断（CELL_LOSS），请联系管理员"
 
 
 async def _terminate(process: asyncio.subprocess.Process, task_id: str) -> None:
@@ -326,7 +345,8 @@ async def execute_pi_run(
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         cwd=str(ctx.project_cwd), env=env, limit=_stdio_frame_limit())
     channel = _CellChannel(process, ctx.task_id)
-    stderr_task = asyncio.create_task(_drain_stderr(process, ctx.task_id))
+    stderr_lines: list[str] = []
+    stderr_task = asyncio.create_task(_drain_stderr(process, ctx.task_id, stderr_lines))
     started = time.monotonic()
     last_activity = started
     cancel_deadline = None
@@ -415,14 +435,34 @@ async def execute_pi_run(
         # ("no longer running"); that is still the user's cancel, not a failure.
         if cancel_deadline is None and cancel_reason and await cancel_reason():
             cancel_deadline = time.monotonic()
-        code = "task_cancelled" if cancel_deadline is not None else str(exc)
+        raw_exc = str(exc)
+        if cancel_deadline is not None:
+            code = "task_cancelled"
+            message = "任务已取消"
+        elif raw_exc == "CELL_LOSS":
+            code = "CELL_LOSS"
+            if process.returncode is None:
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=0.1)
+                except (asyncio.TimeoutError, Exception):
+                    pass
+            message = _format_cell_loss_message(process, stderr_lines)
+        elif raw_exc == "PI_RUN_TIMEOUT":
+            code = "PI_RUN_TIMEOUT"
+            message = "单轮执行超时"
+        elif raw_exc == "PI_RUN_IDLE_TIMEOUT":
+            code = "PI_RUN_IDLE_TIMEOUT"
+            message = "单轮等待超时"
+        else:
+            code = raw_exc if raw_exc.isupper() and "_" in raw_exc else "PI_EXECUTION_ERROR"
+            message = raw_exc
         run_id = ctx.run_id or ctx.task_id
         writer.ingest({"event_id": f"ev-{run_id}-terminal", "run_id":run_id,
             "task_id":ctx.task_id,"task_attempt_id":run_id,"sequence":highest_sequence+1,
             "type":"run.cancelled" if cancel_deadline is not None else "run.failed",
-            "payload":{"error_code":code,"message":str(exc)}})
+            "payload":{"error_code":code,"message":message}})
         return PiRunOutcome(terminal_status="cancelled" if cancel_deadline is not None else "failed",
-            answer="".join(answer_parts), error_code=code, error_message=str(exc), usage=usage,last_sequence=highest_sequence)
+            answer="".join(answer_parts), error_code=code, error_message=message, usage=usage,last_sequence=highest_sequence)
     finally:
         await _terminate(process,ctx.task_id)
         stderr_task.cancel()

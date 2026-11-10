@@ -82,8 +82,13 @@ describe('Pi agent event reducer', () => {
   })
 
   it('falls back to the error code when no message is present', () => {
+    const state = feed([piEvent(AgentEventType.RUN_FAILED, { error_code: 'SOME_UNKNOWN_ERROR' })])
+    expect(state.errorText).toBe('SOME_UNKNOWN_ERROR')
+  })
+
+  it('maps CELL_LOSS to diagnostic message when no message is present', () => {
     const state = feed([piEvent(AgentEventType.RUN_FAILED, { error_code: 'CELL_LOSS' })])
-    expect(state.errorText).toBe('CELL_LOSS')
+    expect(state.errorText).toBe('运行时子进程异常中断（CELL_LOSS），请联系管理员')
   })
 
   it('tolerates a missing turn.started rather than losing the answer', () => {

@@ -160,7 +160,12 @@ export function reducePiEvent(state, record) {
 
     case AgentEventType.RUN_FAILED: {
       state.status = 'error'
-      state.errorText = String(data.message || data.error_code || '执行出错')
+      const rawMessage = data.message || data.error_code || '执行出错'
+      if (rawMessage === 'CELL_LOSS' || (data.error_code === 'CELL_LOSS' && (!data.message || data.message === 'CELL_LOSS'))) {
+        state.errorText = '运行时子进程异常中断（CELL_LOSS），请联系管理员'
+      } else {
+        state.errorText = String(rawMessage)
+      }
       break
     }
 

@@ -71,6 +71,9 @@ describe('chatMessage helpers', () => {
 
   it('extractErrorText reads strings, objects, and falls back to empty', () => {
     expect(extractErrorText('boom')).toBe('boom')
+    expect(extractErrorText('CELL_LOSS')).toBe('运行时子进程异常中断（CELL_LOSS），请联系管理员')
+    expect(extractErrorText({ code: 'CELL_LOSS' })).toBe('运行时子进程异常中断（CELL_LOSS），请联系管理员')
+    expect(extractErrorText({ message: 'CELL_LOSS' })).toBe('运行时子进程异常中断（CELL_LOSS），请联系管理员')
     expect(extractErrorText({ message: 'm' })).toBe('m')
     expect(extractErrorText({ detail: 'd' })).toBe('d')
     expect(extractErrorText({ code: 'c' })).toBe('c')

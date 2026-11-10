@@ -208,11 +208,13 @@ async def test_child_exit_without_terminal_event_yields_cell_loss(tmp_path: Path
 
     assert outcome.terminal_status == "failed"
     assert outcome.error_code == "CELL_LOSS"
+    assert outcome.error_message == "运行时子进程异常中断（CELL_LOSS），请联系管理员"
     assert outcome.answer == "partial"
     # The record stream must still be terminated, or history replay shows a
     # turn that never ends.
     assert writer.events[-1]["type"] == "run.failed"
     assert writer.events[-1]["payload"]["error_code"] == "CELL_LOSS"
+    assert writer.events[-1]["payload"]["message"] == "运行时子进程异常中断（CELL_LOSS），请联系管理员"
 
 
 @pytest.mark.asyncio
@@ -545,4 +547,5 @@ async def test_killed_cell_is_lost_even_if_a_grandchild_holds_stdout(tmp_path: P
 
     assert outcome.terminal_status == "failed"
     assert outcome.error_code == "CELL_LOSS"
+    assert outcome.error_message == "运行时子进程被系统强制终止（CELL_LOSS）：查询数据量或内存超出上限 (OOM Killed)，请联系管理员"
     assert elapsed < 10, f"loss detected after {elapsed:.1f}s"
