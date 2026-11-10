@@ -1233,6 +1233,15 @@ watch(
   }
 )
 
+// The panel is hidden, not unmounted, while minimized: reload the list on reopen as
+// a fresh mount used to.
+watch(
+  () => props.state.isOpen,
+  (open, wasOpen) => {
+    if (open && wasOpen === false && !loginRequired.value) void refreshTopics()
+  }
+)
+
 watch(
   () => props.state.selectConversationSignal,
   (value) => {

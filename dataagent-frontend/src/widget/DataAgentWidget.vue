@@ -36,7 +36,9 @@
       </button>
     </div>
 
-    <section v-else ref="panelEl" class="odw-panel" :style="panelStyle" aria-label="DataAgent intelligent query widget">
+    <!-- Once opened, the panel stays mounted while minimized so background tasks keep
+         being tracked and the launcher can show their notices. -->
+    <section v-if="isInline || state.isOpen || panelMounted" v-show="isInline || state.isOpen" ref="panelEl" class="odw-panel" :style="panelStyle" aria-label="DataAgent intelligent query widget">
       <header v-if="!isInline" class="odw-panel__header" @pointerdown="startDrag">
         <div class="odw-panel__heading">
           <div class="odw-panel__title">{{ config.projectName }}</div>
@@ -179,6 +181,9 @@ const dismissLayoutMenu = (event) => {
   if (!event.composedPath().includes(layoutMenuEl.value)) layoutMenuOpen.value = false
 }
 watch(() => props.state.isOpen, value => { if (!value) layoutMenuOpen.value = false })
+// Nothing loads until the first open; after that the chat stays alive in the background.
+const panelMounted = ref(false)
+watch(() => props.state.isOpen, value => { if (value) panelMounted.value = true }, { immediate: true })
 const hasFullscreenCallback = computed(() => typeof props.config.onFullscreen === 'function')
 const hasFullscreenAction = computed(() => hasFullscreenCallback.value || Boolean(props.config.fullscreenUrl))
 
