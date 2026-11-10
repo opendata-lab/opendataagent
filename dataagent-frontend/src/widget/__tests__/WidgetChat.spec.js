@@ -306,6 +306,50 @@ describe('WidgetChat history conversations', () => {
 
       expect(apiMocks.topicApi.listTopics).toHaveBeenCalledTimes(2)
       expect(wrapper.find('[data-testid="history-topic-topic-bg"] .query-session-loading').exists()).toBe(false)
+      expect(wrapper.find('.query-notice-capsule').exists()).toBe(true)
+      expect(wrapper.find('.query-notice-capsule').text()).toContain('后台运行会话')
+      expect(wrapper.find('.query-notice-capsule').text()).toContain('分析已完成')
+      expect(wrapper.find('[data-testid="history-topic-topic-bg"] .query-session-tag.is-completed').exists()).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('notifies and switches when clicking the background completion capsule action', async () => {
+    vi.useFakeTimers()
+    apiMocks.topicApi.listTopics
+      .mockResolvedValueOnce([
+        topic('topic-bg', '数据趋势分析', {
+          current_task_id: 'task-bg',
+          current_task_status: 'running'
+        })
+      ])
+      .mockResolvedValueOnce([
+        topic('topic-bg', '数据趋势分析', {
+          current_task_id: 'task-bg',
+          current_task_status: 'finished'
+        })
+      ])
+
+    try {
+      const { wrapper, state } = mountChat({ config: { displayMode: 'inline' } })
+      await flushPromises()
+      expect(wrapper.find('.query-notice-capsule').exists()).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(3000)
+      await flushPromises()
+
+      const capsule = wrapper.find('.query-notice-capsule')
+      expect(capsule.exists()).toBe(true)
+      expect(capsule.text()).toContain('数据趋势分析')
+      expect(state.unreadNoticeCount).toBe(1)
+
+      await wrapper.get('.query-notice-action').trigger('click')
+      await flushPromises()
+
+      expect(state.topicId).toBe('topic-bg')
+      expect(wrapper.find('.query-notice-capsule').exists()).toBe(false)
+      expect(state.unreadNoticeCount).toBe(0)
     } finally {
       vi.useRealTimers()
     }

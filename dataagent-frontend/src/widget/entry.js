@@ -647,7 +647,10 @@ export function installWidget(scriptOrConfig = resolveCurrentScript()) {
     deleteConversationSignal: 0,
     requestedTopicId: '',
     deleteRequestedTopicId: '',
-    track: tracker.track
+    track: tracker.track,
+    unreadNoticeCount: 0,
+    workingCount: 0,
+    activeLauncherNotice: null
   })
   const listeners = new Map()
 

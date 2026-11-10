@@ -5,9 +5,36 @@
     :style="[themeStyle, rootStyle]"
     :class="[positionClass, modeClass, dockClass, state.historyOpen ? 'is-history-open' : '', isDragged ? 'is-dragged' : '', isInteracting ? 'is-interacting' : '']"
   >
-    <button v-if="!isInline && !state.isOpen" class="odw-launcher" type="button" :aria-label="`打开 ${config.projectName}`" @pointerdown="startLauncherDrag" @click.stop.prevent="openIfNotDragged">
-      <img class="odw-launcher__icon" :src="assistantIcon" alt="" aria-hidden="true">
-    </button>
+    <div v-if="!isInline && !state.isOpen" class="odw-launcher-wrap">
+      <transition name="odw-bubble-fade">
+        <div
+          v-if="state.activeLauncherNotice"
+          class="odw-launcher-bubble"
+          role="status"
+          @click.stop="openFromLauncherNotice"
+        >
+          <div class="odw-launcher-bubble__icon">{{ state.activeLauncherNotice.icon || '✨' }}</div>
+          <div class="odw-launcher-bubble__content">
+            <div class="odw-launcher-bubble__title">{{ state.activeLauncherNotice.title }}</div>
+            <div class="odw-launcher-bubble__desc">{{ state.activeLauncherNotice.desc || '分析已完成，点击查看' }}</div>
+          </div>
+          <button
+            class="odw-launcher-bubble__close"
+            type="button"
+            aria-label="关闭提示"
+            @click.stop="state.activeLauncherNotice = null"
+          >
+            &times;
+          </button>
+        </div>
+      </transition>
+
+      <button class="odw-launcher" type="button" :aria-label="`打开 ${config.projectName}`" @pointerdown="startLauncherDrag" @click.stop.prevent="openIfNotDragged">
+        <img class="odw-launcher__icon" :src="assistantIcon" alt="" aria-hidden="true">
+        <span v-if="state.unreadNoticeCount > 0" class="odw-launcher__badge" title="有后台任务已完成"></span>
+        <span v-else-if="state.workingCount > 0" class="odw-launcher__working" title="后台任务进行中"></span>
+      </button>
+    </div>
 
     <section v-else ref="panelEl" class="odw-panel" :style="panelStyle" aria-label="DataAgent intelligent query widget">
       <header v-if="!isInline" class="odw-panel__header" @pointerdown="startDrag">
@@ -24,6 +51,8 @@
               <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
               <path d="M12 7v5l4 2" />
             </svg>
+            <span v-if="state.unreadNoticeCount > 0" class="odw-badge-dot is-completed" title="有后台会话已完成"></span>
+            <span v-else-if="state.workingCount > 0" class="odw-badge-dot is-working" title="后台任务进行中"></span>
           </button>
           <div ref="layoutMenuEl" class="odw-layout-control" @pointerdown.stop @keydown="onMenuKeydown" @focusout="onMenuFocusout">
             <button ref="layoutButton" class="odw-icon-button" type="button" aria-label="面板布局" title="面板布局" aria-haspopup="menu" :aria-expanded="layoutMenuOpen" @click="toggleLayoutMenu">
@@ -210,6 +239,16 @@ const open = () => {
 const openIfNotDragged = () => {
   if (isLauncherDragMoved()) return
   open()
+}
+
+const openFromLauncherNotice = () => {
+  const notice = props.state.activeLauncherNotice
+  open()
+  if (notice?.topicId) {
+    props.state.requestedTopicId = notice.topicId
+    props.state.selectConversationSignal += 1
+  }
+  props.state.activeLauncherNotice = null
 }
 
 const close = () => {
