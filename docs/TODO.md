@@ -7,7 +7,7 @@
 ### 定时消息（会话定时任务）功能完善
 
 - **现状**（2026-10-27 核实）：只有后端。`/message-schedule` 接口（增删改查、执行日志）和协调器里的定时循环都在，数据存于 `da_agent_message_schedule`；前端 `dataagent-frontend/src/api/nl2sql.js` 封装了 `scheduleApi`，但没有任何页面或菜单调用，用户无入口。来源：2026-03-23 提交 `8bb5d774`。
-- **身份**：定时消息以所属会话的所有者（`da_agent_topic.auth_user_id`）身份执行，和手动发消息走同一条"人 EXPLAIN → 智能体执行"路径；[身份设计](https://github.com/opendata-lab/opendataworks/blob/828eb2f8/docs/design/2026-10-26-dataagent-datasource-identity-design.md)。
+- **身份**：定时消息以所属会话的所有者（`da_agent_topic.auth_user_id`）身份执行，和手动发消息走同一条路径。2026-11-10 起 OpenDataWorks MCP 只按服务账号 Token 授权，用户标识只记审计，不再有"人 EXPLAIN"检查（[服务令牌模式设计](https://github.com/opendata-lab/opendataworks/blob/main/docs/design/2026-11-09-mcp-service-token-mode-design.md)）。
 - **要做**：决定是否正式提供定时任务。若提供，需要单独的定时任务菜单（列表、创建/编辑 cron、启停、执行记录），并按中大型变更先写设计和计划；若不提供，删除后端接口、定时循环、两张表和前端封装。
 
 ### 插件管理与导入（暂缓，后续专门实施）
@@ -87,13 +87,13 @@
 ## 部署
 
 - **旧数据迁移未演练**（2026-10-27 拆分复核）：`deploy/README.md` 的“从 OpenDataWorks 内置部署迁移”是手工命令，尚未在真实旧部署上执行；首次正式迁移时按步骤演练并修正文档。
-- **离线包未在真实镜像上跑过**（2026-10-27）：打包与加载脚本只用伪造的 docker 验证；`oda-*` 镜像首次发布后，在一台无外网机器上完整跑一次 `create-offline-package.sh` → `load-package-and-start.sh`。
+- **离线包未在无外网机器上跑过**（2026-10-27，2026-11-10 更新）：`oda-*` 镜像已发布，`v0.1.0` 与 `latest` 离线包已由 CI 生成；2026-11-10 下载 `latest` 核对过包内镜像（`oda-backend`、`oda-sandbox`、`oda-frontend`、`redis`）及其代码版本，但仍未在一台无外网机器上完整跑 `load-package-and-start.sh` 并完成一次问数。
 
 ## 内嵌身份
 
-- **签名用户上下文与Portal委托接入延期（2026-11-01用户决定）**：DataAgent 当前仍会注入`X-Agent-User-Id`和`X-Agent-Id`；OpenDataWorks 最新接入使用服务账号 Bearer Token，MCP 只转发可选用户头，不再使用调用方`X-Agent-Id`认证。不实现新的OAuth／JWT委托或每智能体Portal Token，也不增加缺用户时的默认账号。本机定向测试允许显式指定已登记用户，不能把固定身份部署为全部用户的身份。后续参考[Aily自定义MCP](https://aily.feishu.cn/hc/1u7kleqg_73ahi33a)的签名用户上下文：先验证宿主用户来源，再由后端逐请求注入可信身份，Portal验签并校验调用方绑定；独立登录需统一登录或明确账号绑定。凭证只发目标MCP、不进入模型环境，并覆盖会话归属／撤销／并发不串权。关联 OpenDataWorks [主体映射设计](https://github.com/opendata-lab/opendataworks/blob/main/docs/design/2026-10-26-dataagent-datasource-identity-design.md)第9.15节（当前委托限制）与第11节（服务账号接入）；当前未实现，多用户可信身份缺口保持开放。
+- **签名用户上下文与Portal委托接入延期（2026-11-01用户决定，2026-11-10 更新）**：DataAgent 仍为每次 MCP 调用附加`X-Agent-User-Id`和`X-Agent-Id`；OpenDataWorks 自 1.6.0 起只按服务账号 Bearer Token 授权，这两个头只记审计（opendataworks#511），按人隔离留待其 OAuth 访问令牌模式。不实现新的OAuth／JWT委托或每智能体Portal Token，也不增加缺用户时的默认账号。本机定向测试允许显式指定已登记用户，不能把固定身份部署为全部用户的身份。后续参考[Aily自定义MCP](https://aily.feishu.cn/hc/1u7kleqg_73ahi33a)的签名用户上下文：先验证宿主用户来源，再由后端逐请求注入可信身份，Portal验签并校验调用方绑定；独立登录需统一登录或明确账号绑定。凭证只发目标MCP、不进入模型环境，并覆盖会话归属／撤销／并发不串权。关联 OpenDataWorks [主体映射设计](https://github.com/opendata-lab/opendataworks/blob/main/docs/design/2026-10-26-dataagent-datasource-identity-design.md)第9.15节（当前委托限制）与第11节（服务账号接入）；当前未实现，多用户可信身份缺口保持开放。
 
-- **宿主上报的用户可被冒充**（2026-10-27，用户决定先简单化）：widget 会话以 `X-DataAgent-User-Id` 作为执行身份，该值来自宿主页面，可被篡改或直连伪造。需要一种可验证的宿主身份（例如只信任带内部令牌、由宿主反向代理写入的用户头）。
+- **宿主上报的用户可被冒充**（2026-10-27，用户决定先简单化；2026-11-10 更新）：widget 会话以 `X-DataAgent-User-Id` 区分会话与历史记录，并作为 `X-Agent-User-Id` 上报给 MCP。OpenDataWorks 已不再据此授权，因此改写它不能扩大查数范围，但仍可能看到他人的问数会话。该值来自宿主页面，可被篡改或直连伪造。需要一种可验证的宿主身份（例如只信任带内部令牌、由宿主反向代理写入的用户头）。
 
 ## 评测
 
