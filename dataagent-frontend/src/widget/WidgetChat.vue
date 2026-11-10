@@ -494,7 +494,6 @@ const {
   appendUserMessage, appendAssistantMessage,
   toggleThinking, isThinkingExpanded, isActiveTask,
   loadConfig: loadRuntimeConfig, loadTopics, refreshTopics,
-  resumeActiveTopicTask,
   send: sendReal, cancel,
   selectTopic: selectTopicEngine, newConversation: newConversationEngine, deleteConversation,
 } = chat
@@ -691,9 +690,6 @@ const handlePermissionDecision = async (msg, payload) => {
   if (!taskId || !requestId || (decision !== 'allow' && decision !== 'deny')) return
   try {
     await api.taskApi.submitPermissionDecision(taskId, requestId, decision, String(payload?.note || ""))
-    if (!activeTaskId.value || activeTaskId.value !== taskId) {
-      resumeActiveTopicTask(topicId.value)
-    }
   } catch (_err) {
     const block = (msg?._v2state?.blocks || []).find(
       (b) => b.type === 'permission_request' && b.requestId === requestId,
@@ -712,9 +708,6 @@ const handleQuestionAnswer = async (msg, payload) => {
   if (!taskId || !requestId) return
   try {
     await api.taskApi.submitQuestionAnswer(taskId, requestId, payload.answers || [])
-    if (!activeTaskId.value || activeTaskId.value !== taskId) {
-      resumeActiveTopicTask(topicId.value)
-    }
   } catch (_err) {
     const block = (msg?._v2state?.blocks || []).find(
       (b) => b.type === 'question_request' && b.requestId === requestId,
