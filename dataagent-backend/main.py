@@ -95,6 +95,13 @@ async def startup():
         cfg.llm_provider,
         cfg.claude_model,
     )
+    # Effective values after env, DATAAGENT_SETTINGS and stored settings; a fresh
+    # `python -c` only sees the environment.
+    logger.info(
+        "Sandbox image=%s network_enabled=%s",
+        cfg.dataagent_sandbox_image,
+        cfg.dataagent_sandbox_network_enabled,
+    )
 
     try:
         skills_root = resolve_skills_root_dir()
