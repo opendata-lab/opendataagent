@@ -103,8 +103,17 @@ export function isPlainEnterSubmit(event) {
 
 export function extractErrorText(error) {
   if (!error) return ''
-  if (typeof error === 'string') return error
-  if (typeof error === 'object') return String(error.message || error.detail || error.code || '')
+  if (typeof error === 'string') {
+    if (error === 'CELL_LOSS') return '运行时子进程异常中断（CELL_LOSS），请联系管理员'
+    return error
+  }
+  if (typeof error === 'object') {
+    const text = String(error.message || error.detail || error.code || '')
+    if (text === 'CELL_LOSS' || (error.code === 'CELL_LOSS' && (!error.message || error.message === 'CELL_LOSS'))) {
+      return '运行时子进程异常中断（CELL_LOSS），请联系管理员'
+    }
+    return text
+  }
   return String(error)
 }
 

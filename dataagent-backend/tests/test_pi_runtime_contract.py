@@ -208,11 +208,54 @@ async def test_child_exit_without_terminal_event_yields_cell_loss(tmp_path: Path
 
     assert outcome.terminal_status == "failed"
     assert outcome.error_code == "CELL_LOSS"
+    assert outcome.error_message == "运行时子进程异常中断（CELL_LOSS），请联系管理员"
     assert outcome.answer == "partial"
     # The record stream must still be terminated, or history replay shows a
     # turn that never ends.
     assert writer.events[-1]["type"] == "run.failed"
     assert writer.events[-1]["payload"]["error_code"] == "CELL_LOSS"
+    assert writer.events[-1]["payload"]["message"] == "运行时子进程异常中断（CELL_LOSS），请联系管理员"
+
+
+@pytest.mark.asyncio
+async def test_node_heap_oom_is_reported_even_after_a_long_stack_trace(tmp_path: Path):
+    """Real Node heap OOM: the marker line, ~45 native stack lines, then SIGABRT (-6)."""
+    writer = _RecordingWriter()
+    cell = _stub_cell(
+        """
+        import os
+        read()
+        event(1, "run.started")
+        sys.stderr.write("FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n")
+        for i in range(46):
+            sys.stderr.write(" %d: 0x10529 v8::internal::Heap::CollectGarbage\\n" % i)
+        sys.stderr.flush()
+        os.abort()
+        """
+    )
+
+    outcome = await execute_pi_run(_context(tmp_path), writer=writer, cell_command=cell)
+
+    assert outcome.error_code == "CELL_LOSS"
+    assert outcome.error_message.startswith("运行时子进程内存不足退出（CELL_LOSS）")
+    assert writer.events[-1]["payload"]["message"] == outcome.error_message
+
+
+@pytest.mark.asyncio
+async def test_unknown_exception_text_is_not_stored_as_an_error_code(tmp_path: Path):
+    writer = _RecordingWriter()
+    cell = _stub_cell(
+        """
+        read()
+        send("protocol.error", {"error": "UNSUPPORTED_THING_X"})
+        time.sleep(5)
+        """
+    )
+
+    outcome = await execute_pi_run(_context(tmp_path), writer=writer, cell_command=cell)
+
+    assert outcome.error_code == "PI_EXECUTION_ERROR"
+    assert outcome.error_message == "UNSUPPORTED_THING_X"
 
 
 @pytest.mark.asyncio
@@ -545,4 +588,5 @@ async def test_killed_cell_is_lost_even_if_a_grandchild_holds_stdout(tmp_path: P
 
     assert outcome.terminal_status == "failed"
     assert outcome.error_code == "CELL_LOSS"
+    assert outcome.error_message.startswith("运行时子进程被系统强制终止（CELL_LOSS），可能是内存超出上限")
     assert elapsed < 10, f"loss detected after {elapsed:.1f}s"
