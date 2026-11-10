@@ -50,6 +50,7 @@ Widget 会自动初始化并在页面右下角显示一个悬浮按钮。
 | `data-user-id` | 否 | — | 当前用户标识；未开启匿名访问时必须由宿主系统提供 |
 | `data-login-url` | 否 | — | 未提供用户身份时“前往登录”按钮的跳转地址 |
 | `data-allow-anonymous` | 否 | `'false'` | 是否允许客户端生成访客 ID；还需在管理端为该站点开启匿名访问 |
+| `data-permission-mode` | 否 | `'default'` | 初始默认权限模式：`'default'`（写操作确认） / `'acceptEdits'`（仅高危确认） / `'plan'`（规划模式） / `'bypassPermissions'`（跳过权限确认直接执行） |
 | `data-fullscreen-url` | 否 | — | 悬浮窗口右上角全屏入口的目标地址，通常指向父应用的内嵌 Widget 菜单页 |
 
 ## 身份与匿名访问

@@ -88,6 +88,19 @@ describe('parseWidgetConfig', () => {
     expect(resolveFullscreenUrl('https://app.example.com/chat')).toBe('https://app.example.com/chat')
   })
 
+  it('reads permission mode from dataset and falls back to default', () => {
+    const script = document.createElement('script')
+    script.dataset.websiteId = 'demo'
+    script.dataset.permissionMode = 'bypassPermissions'
+    expect(parseWidgetConfig(script).permissionMode).toBe('bypassPermissions')
+
+    script.dataset.permissionMode = 'invalid-mode'
+    expect(parseWidgetConfig(script).permissionMode).toBe('default')
+
+    delete script.dataset.permissionMode
+    expect(parseWidgetConfig(script).permissionMode).toBe('default')
+  })
+
   it.each(['javascript:alert(1)', 'data:text/html,test', 'file:///tmp/page.html', 'http://[', ''])('rejects invalid fullscreen target %s', (value) => {
     expect(resolveFullscreenUrl(value)).toBe('')
   })

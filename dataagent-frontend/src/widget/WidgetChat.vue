@@ -372,7 +372,7 @@ import { createNl2SqlTransport } from '@/views/intelligence/nl2sqlTransport'
 import { useChatMessageActions } from '@/views/intelligence/useChatMessageActions'
 import SlashCommandMenu from '@/views/intelligence/SlashCommandMenu.vue'
 import { useSlashCommands, buildCommands } from '@/views/intelligence/useSlashCommands'
-import { isWidgetLoginRequired } from './config'
+import { isWidgetLoginRequired, normalizePermissionMode } from './config'
 
 const props = defineProps({
   config: {
@@ -414,7 +414,7 @@ const agentPresetQuestions = ref([])
 const slashCommandNames = ref([])
 const agentName = ref('智能数据助手')
 const suggestions = computed(() => agentPresetQuestions.value.length ? agentPresetQuestions.value : DEFAULT_SUGGESTIONS)
-const permissionMode = ref('default')
+const permissionMode = ref(normalizePermissionMode(props.config?.permissionMode))
 const PERMISSION_MODE_OPTIONS = [
   { value: 'default', label: 'Default' },
   { value: 'acceptEdits', label: 'Accept edits' },
@@ -494,6 +494,7 @@ const {
   appendUserMessage, appendAssistantMessage,
   toggleThinking, isThinkingExpanded, isActiveTask,
   loadConfig: loadRuntimeConfig, loadTopics, refreshTopics,
+  resumeActiveTopicTask,
   send: sendReal, cancel,
   selectTopic: selectTopicEngine, newConversation: newConversationEngine, deleteConversation,
 } = chat
@@ -690,6 +691,9 @@ const handlePermissionDecision = async (msg, payload) => {
   if (!taskId || !requestId || (decision !== 'allow' && decision !== 'deny')) return
   try {
     await api.taskApi.submitPermissionDecision(taskId, requestId, decision, String(payload?.note || ""))
+    if (!activeTaskId.value || activeTaskId.value !== taskId) {
+      resumeActiveTopicTask(topicId.value)
+    }
   } catch (_err) {
     const block = (msg?._v2state?.blocks || []).find(
       (b) => b.type === 'permission_request' && b.requestId === requestId,
@@ -708,6 +712,9 @@ const handleQuestionAnswer = async (msg, payload) => {
   if (!taskId || !requestId) return
   try {
     await api.taskApi.submitQuestionAnswer(taskId, requestId, payload.answers || [])
+    if (!activeTaskId.value || activeTaskId.value !== taskId) {
+      resumeActiveTopicTask(topicId.value)
+    }
   } catch (_err) {
     const block = (msg?._v2state?.blocks || []).find(
       (b) => b.type === 'question_request' && b.requestId === requestId,
@@ -750,6 +757,7 @@ const selectTopic = async (targetTopicId) => {
 
 const newConversation = async () => {
   await newConversationEngine()
+  permissionMode.value = normalizePermissionMode(props.config?.permissionMode)
   closeHistory()
 }
 
