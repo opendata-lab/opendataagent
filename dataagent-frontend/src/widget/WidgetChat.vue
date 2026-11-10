@@ -31,7 +31,12 @@
             :data-testid="`history-topic-${topic.topic_id}`"
             @click="selectTopic(topic.topic_id)"
           >
-            <div class="query-session-title">{{ truncate(topic.title || '新话题', 26) }}</div>
+            <div class="query-session-item-main">
+              <div class="query-session-title">{{ truncate(topic.title || '新话题', 26) }}</div>
+              <span v-if="unviewedFinishedTopicIds.has(topic.topic_id)" class="query-session-tag is-completed">已就绪</span>
+              <span v-else-if="topicBadgeKind(topic) === 'awaiting'" class="query-session-tag is-awaiting">待处理</span>
+              <span v-else-if="topicBadgeKind(topic) === 'awaiting_permission'" class="query-session-tag is-permission">待授权</span>
+            </div>
             <div v-if="isTopicWorking(topic)" class="query-session-loading" title="正在分析中...">
               <svg class="query-session-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <circle class="query-session-spinner-track" cx="12" cy="12" r="10" stroke-width="3" />
@@ -50,6 +55,36 @@
     </aside>
 
     <main class="query-main">
+      <transition name="odw-capsule-anim">
+        <div
+          v-if="activeCapsuleNotice && !loginRequired"
+          class="query-notice-capsule"
+          :class="`is-${activeCapsuleNotice.kind}`"
+          role="status"
+        >
+          <span class="query-notice-icon">{{ activeCapsuleNotice.icon }}</span>
+          <div class="query-notice-info">
+            <strong class="query-notice-title">{{ activeCapsuleNotice.title }}</strong>
+            <span class="query-notice-desc">{{ activeCapsuleNotice.desc }}</span>
+          </div>
+          <button
+            type="button"
+            class="query-notice-action"
+            @click="handleViewCapsule(activeCapsuleNotice.topicId)"
+          >
+            {{ activeCapsuleNotice.actionText || '查看' }}
+          </button>
+          <button
+            type="button"
+            class="query-notice-close"
+            aria-label="关闭通知"
+            @click="dismissCapsule"
+          >
+            &times;
+          </button>
+        </div>
+      </transition>
+
       <div v-if="loginRequired" class="query-login-required" data-testid="widget-login-required">
         <Lock class="query-login-required-icon" aria-hidden="true" />
         <div class="query-login-required-title">请先登录</div>
@@ -741,9 +776,63 @@ const closeHistory = () => {
   props.state.historyOpen = false
 }
 
+const prevTopicStatusMap = new Map()
+const unviewedFinishedTopicIds = ref(new Set())
+const activeCapsuleNotice = ref(null)
+let capsuleTimer = null
+
+const dismissCapsule = () => {
+  activeCapsuleNotice.value = null
+  if (capsuleTimer) {
+    clearTimeout(capsuleTimer)
+    capsuleTimer = null
+  }
+}
+
+const showCapsule = (notice) => {
+  dismissCapsule()
+  activeCapsuleNotice.value = notice
+  if (!props.state.isOpen) {
+    props.state.activeLauncherNotice = {
+      topicId: notice.topicId,
+      icon: notice.icon,
+      title: notice.title,
+      desc: notice.desc,
+    }
+  }
+  capsuleTimer = setTimeout(() => {
+    activeCapsuleNotice.value = null
+    capsuleTimer = null
+  }, 8000)
+}
+
+const syncNoticeCounts = () => {
+  props.state.unreadNoticeCount = unviewedFinishedTopicIds.value.size
+}
+
+const handleViewCapsule = async (targetTopicId) => {
+  if (!targetTopicId) return
+  dismissCapsule()
+  if (props.state.activeLauncherNotice?.topicId === targetTopicId) {
+    props.state.activeLauncherNotice = null
+  }
+  unviewedFinishedTopicIds.value.delete(targetTopicId)
+  syncNoticeCounts()
+  await selectTopicEngine(targetTopicId)
+  closeHistory()
+}
+
 // Engine navigation, plus closing the floating history drawer.
 const selectTopic = async (targetTopicId) => {
   if (!targetTopicId || targetTopicId === topicId.value) return
+  unviewedFinishedTopicIds.value.delete(targetTopicId)
+  if (activeCapsuleNotice.value?.topicId === targetTopicId) {
+    dismissCapsule()
+  }
+  if (props.state.activeLauncherNotice?.topicId === targetTopicId) {
+    props.state.activeLauncherNotice = null
+  }
+  syncNoticeCounts()
   await selectTopicEngine(targetTopicId)
   closeHistory()
 }
@@ -1050,6 +1139,85 @@ watch(
 )
 
 watch(
+  () => topics.value,
+  (newTopics) => {
+    let working = 0
+    if (!Array.isArray(newTopics)) return
+
+    for (const t of newTopics) {
+      const tid = t?.topic_id
+      if (!tid) continue
+      const currentKind = topicBadgeKind(t)
+      const isWorking = isTopicWorking(t)
+      const prev = prevTopicStatusMap.get(tid)
+
+      if (isWorking) {
+        working += 1
+      }
+
+      if (prev) {
+        const wasWorking = prev.isWorking
+        if (wasWorking && !isWorking) {
+          if (tid !== topicId.value || !props.state.isOpen) {
+            const shortTitle = truncate(t.title || '数据分析', 16)
+            if (currentKind === 'awaiting') {
+              unviewedFinishedTopicIds.value.add(tid)
+              showCapsule({
+                topicId: tid,
+                title: shortTitle,
+                desc: '需要您补充信息',
+                kind: 'awaiting',
+                icon: '💬',
+                actionText: '去处理'
+              })
+            } else if (currentKind === 'awaiting_permission') {
+              unviewedFinishedTopicIds.value.add(tid)
+              showCapsule({
+                topicId: tid,
+                title: shortTitle,
+                desc: '等待权限确认',
+                kind: 'permission',
+                icon: '🛡️',
+                actionText: '去授权'
+              })
+            } else if (currentKind === 'error') {
+              showCapsule({
+                topicId: tid,
+                title: shortTitle,
+                desc: '执行失败',
+                kind: 'error',
+                icon: '⚠️',
+                actionText: '查看'
+              })
+            } else {
+              unviewedFinishedTopicIds.value.add(tid)
+              showCapsule({
+                topicId: tid,
+                title: shortTitle,
+                desc: '分析已完成',
+                kind: 'success',
+                icon: '✨',
+                actionText: '查看'
+              })
+            }
+          }
+        }
+      }
+
+      prevTopicStatusMap.set(tid, {
+        kind: currentKind,
+        isWorking,
+        title: t.title
+      })
+    }
+
+    props.state.workingCount = working
+    syncNoticeCounts()
+  },
+  { deep: true, immediate: true }
+)
+
+watch(
   () => props.state.cancelSignal,
   (value) => {
     if (!value) return
@@ -1062,6 +1230,15 @@ watch(
   (value) => {
     if (!value) return
     void newConversation()
+  }
+)
+
+// The panel is hidden, not unmounted, while minimized: reload the list on reopen as
+// a fresh mount used to.
+watch(
+  () => props.state.isOpen,
+  (open, wasOpen) => {
+    if (open && wasOpen === false && !loginRequired.value) void refreshTopics()
   }
 )
 
@@ -1104,6 +1281,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleToolbarDropdownOutsideClick, true)
   stopTopicStatusRefresh()
   if (copyNoticeTimer) window.clearTimeout(copyNoticeTimer)
+  if (capsuleTimer) window.clearTimeout(capsuleTimer)
   abortController.value?.abort()
 })
 </script>
