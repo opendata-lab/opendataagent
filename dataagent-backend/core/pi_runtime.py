@@ -228,8 +228,28 @@ class _CellChannel:
             return parsed
 
 
+# Node prints this when the V8 heap is exhausted, then ~45 native stack lines and
+# aborts (SIGABRT, exit -6), so the marker must be caught as it streams past.
+_HEAP_OOM_MARKER = "heap out of memory"
+# Codes raised in this module; anything else is reported as PI_EXECUTION_ERROR
+# with the original text as the message.
+_KNOWN_ERROR_CODES = frozenset({
+    "CELL_LOSS", "PI_RUN_TIMEOUT", "PI_RUN_IDLE_TIMEOUT", "PI_PROTOCOL_VERSION_MISMATCH",
+    "PI_PROTOCOL_ERROR", "PI_SETTLED_WITHOUT_TERMINAL_EVENT",
+})
+_ERROR_MESSAGES = {
+    "PI_RUN_TIMEOUT": "单轮执行超时",
+    "PI_RUN_IDLE_TIMEOUT": "单轮等待超时",
+}
+
+
+@dataclass
+class _StderrDiagnostics:
+    heap_oom: bool = False
+
+
 async def _drain_stderr(
-    process: asyncio.subprocess.Process, task_id: str, stderr_lines: list[str] | None = None
+    process: asyncio.subprocess.Process, task_id: str, diagnostics: _StderrDiagnostics | None = None
 ) -> None:
     """Mirror the child's stderr into the task log; never touches the protocol."""
     stderr = process.stderr
@@ -241,24 +261,19 @@ async def _drain_stderr(
             if not raw:
                 return
             line = raw.decode("utf-8", errors="replace").rstrip()
-            if stderr_lines is not None:
-                stderr_lines.append(line)
-                if len(stderr_lines) > 20:
-                    stderr_lines.pop(0)
+            if diagnostics is not None and _HEAP_OOM_MARKER in line.lower():
+                diagnostics.heap_oom = True
             logger.info("pi_cell.stderr task_id=%s %s", task_id, line)
     except Exception:
         logger.debug("pi_cell.stderr_reader_stopped task_id=%s", task_id, exc_info=True)
 
 
-def _format_cell_loss_message(process: asyncio.subprocess.Process, stderr_lines: list[str]) -> str:
-    stderr_text = "\n".join(stderr_lines).lower()
-    is_oom = (
-        process.returncode in (-9, 137)
-        or "heap out of memory" in stderr_text
-        or "allocation failed" in stderr_text
-    )
-    if is_oom:
-        return "运行时子进程被系统强制终止（CELL_LOSS）：查询数据量或内存超出上限 (OOM Killed)，请联系管理员"
+def _cell_loss_message(returncode: int | None, diagnostics: _StderrDiagnostics) -> str:
+    if diagnostics.heap_oom:
+        return "运行时子进程内存不足退出（CELL_LOSS）：本次处理的数据量过大，请缩小查询范围后重试，持续出现请联系管理员"
+    if returncode in (-9, 137):
+        # SIGKILL is usually the kernel OOM killer, but an operator can send it too.
+        return "运行时子进程被系统强制终止（CELL_LOSS），可能是内存超出上限，请缩小查询范围后重试或联系管理员"
     return "运行时子进程异常中断（CELL_LOSS），请联系管理员"
 
 
@@ -345,8 +360,8 @@ async def execute_pi_run(
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         cwd=str(ctx.project_cwd), env=env, limit=_stdio_frame_limit())
     channel = _CellChannel(process, ctx.task_id)
-    stderr_lines: list[str] = []
-    stderr_task = asyncio.create_task(_drain_stderr(process, ctx.task_id, stderr_lines))
+    stderr_diagnostics = _StderrDiagnostics()
+    stderr_task = asyncio.create_task(_drain_stderr(process, ctx.task_id, stderr_diagnostics))
     started = time.monotonic()
     last_activity = started
     cancel_deadline = None
@@ -441,20 +456,19 @@ async def execute_pi_run(
             message = "任务已取消"
         elif raw_exc == "CELL_LOSS":
             code = "CELL_LOSS"
-            if process.returncode is None:
+            # Wait briefly for the exit status and the last stderr lines; a
+            # grandchild may hold stderr open, so never wait unbounded.
+            for pending in (process.wait(), asyncio.shield(stderr_task)):
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=0.1)
-                except (asyncio.TimeoutError, Exception):
+                    await asyncio.wait_for(pending, timeout=1)
+                except Exception:
                     pass
-            message = _format_cell_loss_message(process, stderr_lines)
-        elif raw_exc == "PI_RUN_TIMEOUT":
-            code = "PI_RUN_TIMEOUT"
-            message = "单轮执行超时"
-        elif raw_exc == "PI_RUN_IDLE_TIMEOUT":
-            code = "PI_RUN_IDLE_TIMEOUT"
-            message = "单轮等待超时"
+            message = _cell_loss_message(process.returncode, stderr_diagnostics)
+        elif raw_exc in _KNOWN_ERROR_CODES:
+            code = raw_exc
+            message = _ERROR_MESSAGES.get(raw_exc, raw_exc)
         else:
-            code = raw_exc if raw_exc.isupper() and "_" in raw_exc else "PI_EXECUTION_ERROR"
+            code = "PI_EXECUTION_ERROR"
             message = raw_exc
         run_id = ctx.run_id or ctx.task_id
         writer.ingest({"event_id": f"ev-{run_id}-terminal", "run_id":run_id,

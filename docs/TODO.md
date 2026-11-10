@@ -154,7 +154,7 @@
 
 ## 已完成
 
-- **规范运行时失败码与异常文本展示（2026-11-10）**：在 `pi_runtime.execute_pi_run` 异常兜底分支中，只保留已知的标准错误码（`CELL_LOSS`、`PI_RUN_TIMEOUT`、`PI_RUN_IDLE_TIMEOUT` 等），未知错误归一为 `PI_EXECUTION_ERROR`；针对 `CELL_LOSS` 根据退出信号与 stderr 识别 OOM 等致命场景（如内存超限时明确提示“运行时子进程被系统强制终止（CELL_LOSS）：查询数据量或内存超出上限 (OOM Killed)，请联系管理员”，常规中断提示“运行时子进程异常中断（CELL_LOSS），请联系管理员”），并同步在前端 `reducer.js` 与 `message.js` 中增加友好展示映射与单元测试覆盖。来源：本次 PR 评审与用户反馈。
+- **规范运行时失败码与异常文本展示（2026-11-10）**：`pi_runtime.execute_pi_run` 只保留本模块抛出的已知错误码（`CELL_LOSS`、`PI_RUN_TIMEOUT`、`PI_RUN_IDLE_TIMEOUT`、协议类错误码），其余归一为 `PI_EXECUTION_ERROR`，原文放进 `message`。`CELL_LOSS` 区分三种情况：stderr 出现 Node 的 `heap out of memory`（随后约 45 行栈并以 -6 退出，因此逐行识别而非看末尾）为内存不足；退出码 -9/137 为被系统强制终止（可能是内存超限）；其余为异常中断。前端 `reducer.js`、`message.js` 为历史记录中只有 `CELL_LOSS` 的旧消息补友好文案。来源：PR #25 及其评审（OOM 实测：Node 22 堆耗尽退出码 -6、标记行后 46 行栈）。
 
 - **统一 DataAgent 品牌图标资源与引用（2026-11-10）**：在 `dataagent-frontend/public` 中采用标准 `dataagent-icon*` 图标资产（包括 SVG/PNG/ICO），同步更新 `index.html` 的 favicon 链接、`NL2SqlChatV2.vue` 与 `IntelligentQueryView.vue` 中的品牌 logo 路径为 `${import.meta.env.BASE_URL}dataagent-icon.svg`，清理历史遗留的 `opendataworks-icon*` 与 `example-icon*` 文件，修复离线包与容器部署后 dataagent 图标 404 找不到的问题。来源：本轮 UI smoke，关联[验证报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
 
