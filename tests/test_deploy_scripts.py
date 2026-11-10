@@ -35,6 +35,19 @@ def test_compose_project_does_not_collide_with_other_deploy_directories():
     assert "\nname: opendataagent\n" in compose
     # Offline hosts load images locally, so Compose must not force a registry pull.
     assert "pull_policy" not in compose
+    # Host-mounted nginx config allows field modification without rebuilding the image.
+    assert "./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro" in compose
+
+
+def test_nginx_deploy_config_synchronized_with_frontend():
+    frontend_conf = (REPO_ROOT / "dataagent-frontend" / "nginx.conf").read_text(encoding="utf-8")
+    deploy_conf = (REPO_ROOT / "deploy" / "docker" / "nginx" / "default.conf").read_text(encoding="utf-8")
+    assert frontend_conf == deploy_conf
+    # Must preserve streaming headers for SSE
+    for directive in ("proxy_buffering off", "chunked_transfer_encoding on",
+                      "proxy_read_timeout 1860s", "proxy_send_timeout 1860s",
+                      "add_header X-Accel-Buffering no"):
+        assert directive in deploy_conf
 
 
 def test_offline_package_carries_template_but_not_runtime_env(tmp_path: Path):
@@ -60,6 +73,7 @@ def test_offline_package_carries_template_but_not_runtime_env(tmp_path: Path):
     for script in ("start.sh", "stop.sh", "restart.sh", "dump-logs.sh", "load-images.sh",
                    "load-package-and-start.sh", "migrate-from-opendataworks.sh", "lib/container-runtime.sh"):
         assert any(name.endswith(f"/scripts/{script}") for name in names), script
+    assert any(name.endswith("/deploy/docker/nginx/default.conf") for name in names)
     assert not any("/scripts/run-dataagent" in name for name in names)
     for image in ("oda-frontend", "oda-backend", "oda-sandbox"):
         var = f"ODA_{image.split('-')[1].upper()}_IMAGE"
