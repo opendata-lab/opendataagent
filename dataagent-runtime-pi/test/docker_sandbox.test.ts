@@ -49,12 +49,17 @@ for (const networkEnabled of [undefined, false, true]) {
     // Capture the CLI boundary without invoking Docker.
     const internals = manager as unknown as { command: (args: string[]) => Promise<number> };
     internals.command = async args => { commands.push(args); return 0; };
+    const diagnostics: string[] = [];
+    const write = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => { diagnostics.push(String(chunk)); return true; }) as typeof process.stderr.write;
     try {
       assert.equal(await manager.execute(["true"], { timeoutMs: 1000, onData: () => {} }), 0);
       assert.equal(commands[0][0], "run");
-      assert.deepEqual(commands[0].filter(arg => arg.startsWith("--network=")),
-        [networkEnabled === true ? "--network=bridge" : "--network=none"]);
-    } finally { await manager.close(); }
+      const expected = networkEnabled === true ? "bridge" : "none";
+      assert.deepEqual(commands[0].filter(arg => arg.startsWith("--network=")), [`--network=${expected}`]);
+      // The effective value is logged so a deployment can see what docker actually received.
+      assert.ok(diagnostics.some(line => line.includes(`network=${expected} networkEnabled=${String(networkEnabled)}`)), diagnostics.join(""));
+    } finally { process.stderr.write = write; await manager.close(); }
   });
 }
 

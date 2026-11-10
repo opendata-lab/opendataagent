@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { logDiagnostic } from "../protocol/channel.js";
 
 export interface SandboxConfig {
   runId: string;
@@ -74,8 +75,11 @@ export class DockerSandboxManager {
     if (this.closed) throw new Error("SANDBOX_CLOSED");
     this.startPromise ??= (async () => {
       const c = this.config;
+      const network = c.networkEnabled === true ? "bridge" : "none";
+      // Lands in the backend log as pi_cell.stderr, so the effective network is never a guess.
+      logDiagnostic(`sandbox start name=${this.containerName} network=${network} networkEnabled=${String(c.networkEnabled)}`);
       const args = ["run", "-d", "--rm", "--pull=never", "--name", this.containerName,
-        `--network=${c.networkEnabled === true ? "bridge" : "none"}`, "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+        `--network=${network}`, "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
         `--memory=${c.memory}`, `--memory-swap=${c.memory}`, `--cpus=${c.cpus}`, `--pids-limit=${c.pidsLimit}`,
         "--user", `${c.uid}:${c.gid}`,
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777", "--workdir", "/mnt/workspace",
