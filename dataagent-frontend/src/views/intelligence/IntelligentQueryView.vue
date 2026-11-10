@@ -88,7 +88,7 @@ const MENU_TO_PATH = {
   'eval-results': '/evaluation-results'
 }
 
-const brandLogo = `${import.meta.env.BASE_URL}example-icon.svg`
+const brandLogo = `${import.meta.env.BASE_URL}dataagent-icon.svg`
 
 // The active menu follows the matched route's meta.tab, so it stays correct on
 // direct navigation and on refresh of detail routes (e.g. skill/agent detail).

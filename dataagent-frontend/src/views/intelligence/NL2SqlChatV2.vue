@@ -370,7 +370,7 @@ import { buildCommands } from '@opendataagent/agent-conversation'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const brandLogo = `${import.meta.env.BASE_URL}example-icon.svg`
+const brandLogo = `${import.meta.env.BASE_URL}dataagent-icon.svg`
 
 // SPA 调用点显式携带 dataagent 标记（auth 启用时后端据此消费会话 Cookie），
 // 401 统一跳登录。widget 走自己的入口，不经过这里。

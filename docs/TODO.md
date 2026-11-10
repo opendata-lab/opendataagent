@@ -109,7 +109,7 @@
 - **构建优化的最终双架构验收**（来源：2026-11-03 本地验证边界）：本机 pi-cell 的 Linux arm64 构建通过，但完整 amd64/arm64 后端与 sandbox 最终镜像、远程缓存和发布尚待本次远程工作流确认。通过后将结果移至已完成；见[设计](design/2026-11-03-ci-build-optimization-design.md)、[计划](plans/2026-11-03-ci-build-optimization-plan.md)与[验证报告](reports/2026-11-03-ci-build-optimization-verification.md)。
 
 - `da_agent_draft` 表的排序规则是 `utf8mb4_0900_ai_ci`，与其他 `da_*` 表的 `utf8mb4_unicode_ci` 不一致，以后与其他表做字符串关联时会报错。
-- README 还没有界面截图；前端图标文件仍沿用 `opendataworks-icon-*` 命名。来源：2026-10-28 README 整理。
+- README 还没有界面截图。来源：2026-10-28 README 整理。
 
 ## 本轮验证补充（2026-10-27）
 
@@ -149,15 +149,13 @@
 - **计划模式的 Bash 文件写入边界（2026-11-04 核实）**：当前 beforeToolCall 拦截 write/edit 与 MCP 写操作，但普通 Bash 仍可写 workspace；DATAAGENT_PLAN_STATE=pending 不等于文件系统只读。需要单独设计并验证执行层只读策略，或明确计划模式保证范围，不能声称已经按 output 路径全面禁写。本次仅收敛运行时实现，不扩展权限策略。来源：核对用户简化建议；见[收敛报告](reports/2026-11-04-agent-runtime-simplification.md)。
 - **空“深度思考”区块（2026-11-04）**：用户历史消息中存在空的已完成 reasoning 事件，前端仍展示空思考区块。需过滤完成后的空区块并保留流式生成占位，补前端回归和历史会话验证。本次运行时简化未修改前端；来源：用户在 3001 聊天页的反馈，见[收敛报告](reports/2026-11-04-agent-runtime-simplification.md)。
 
-- **现有品牌图标路径缺失**：本地浏览器发现 Chat/智能体侧栏使用不存在的 `example-icon.svg`，public 目录实际为 `opendataworks-icon.svg` 系列。需统一品牌资源与引用；本轮不修改品牌。来源：本轮 UI smoke，关联[验证报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
-
-
 - **SDK 升级依赖审计**：安装 pi-coding-agent@1.4.0 后 npm 报告 12 项依赖漏洞（7 moderate、4 high、1 critical）；需核对传递依赖和运行时可达性，再选择兼容修复。来源：本次 npm install；关联[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md) Step 0，尚未执行自动升级。
-
 
 - **前端依赖审计**：2026-11-03 全新 npm ci 报告 29 项漏洞（10 moderate、17 high、2 critical）；需单独核对并升级传递依赖，本次未执行强制修复。来源：本次本地工具链安装；关联[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)，前端生产构建通过。
 
 ## 已完成
+
+- **统一 DataAgent 品牌图标资源与引用（2026-11-10）**：在 `dataagent-frontend/public` 中采用标准 `dataagent-icon*` 图标资产（包括 SVG/PNG/ICO），同步更新 `index.html` 的 favicon 链接、`NL2SqlChatV2.vue` 与 `IntelligentQueryView.vue` 中的品牌 logo 路径为 `${import.meta.env.BASE_URL}dataagent-icon.svg`，清理历史遗留的 `opendataworks-icon*` 与 `example-icon*` 文件，修复离线包与容器部署后 dataagent 图标 404 找不到的问题。来源：本轮 UI smoke，关联[验证报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。
 
 - **删除未被调用的 `cleanup_orphan_topic_workspaces`（2026-11-06）**：该函数会对 `DATAAGENT_HOST_ROOT` 下所有非活跃子目录执行 `rmtree`（包括放在运行时目录里的 Skill 目录），生产路径从未调用，连同测试一并删除；删除单个 topic 仍用 `delete_topic_workspace`。来源：编写 OpenDataWorks 迁移脚本时发现。
 

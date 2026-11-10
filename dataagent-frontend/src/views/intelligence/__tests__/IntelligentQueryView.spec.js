@@ -70,6 +70,14 @@ describe('IntelligentQueryView', () => {
     expect(wrapper.text()).not.toContain('智能问数')
   })
 
+  it('renders the dataagent brand logo referencing dataagent-icon.svg', () => {
+    const wrapper = mountView()
+    const logo = wrapper.find('.intelligent-query-brand__logo')
+    expect(logo.exists()).toBe(true)
+    expect(logo.attributes('src')).toBe('/dataagent-icon.svg')
+    expect(logo.attributes('alt')).toBe('DataAgent')
+  })
+
   it('preserves the shared sidebar on the workbench route', () => {
     const workbench = mountView({ path: '/agents/agent_1', meta: { tab: 'agents', agentWorkbench: true } })
     expect(workbench.find('.intelligent-query-sidebar').exists()).toBe(true)
