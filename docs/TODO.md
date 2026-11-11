@@ -154,6 +154,8 @@
 
 ## 已完成
 
+- **沙箱网络模式支持 (bridge 与 host) 与 Compose 环境变量对齐（2026-11-11）**：新增 `DATAAGENT_SANDBOX_NETWORK_MODE` 配置项（支持 `bridge` 默认与 `host` 宿主机模式），当沙箱开启网络（`DATAAGENT_SANDBOX_NETWORK_ENABLED=true`）且处于特定内网/VPN 环境时可使用 `host` 模式直通宿主机网络，解决 bridge 下 NAT/路由不通导致无法连接数据库与 pip install 失败的问题；当未开启网络时强制保持 `--network=none` 断网隔离；在 `deploy/docker-compose.yml` 中补齐 `DATAAGENT_SANDBOX_NETWORK_ENABLED` 与 `DATAAGENT_SANDBOX_NETWORK_MODE` 变量声明；启动与运行时诊断日志完整打印沙箱 network、networkEnabled 与 networkMode。关联设计 [design](design/2026-11-11-sandbox-network-mode-design.md) 与计划 [plan](plans/2026-11-11-sandbox-network-mode-plan.md)，跟踪 [Issue #26](https://github.com/opendata-lab/opendataagent/issues/26)。
+
 - **规范运行时失败码与异常文本展示（2026-11-10）**：`pi_runtime.execute_pi_run` 只保留本模块抛出的已知错误码（`CELL_LOSS`、`PI_RUN_TIMEOUT`、`PI_RUN_IDLE_TIMEOUT`、协议类错误码），其余归一为 `PI_EXECUTION_ERROR`，原文放进 `message`。`CELL_LOSS` 区分三种情况：stderr 出现 Node 的 `heap out of memory`（随后约 45 行栈并以 -6 退出，因此逐行识别而非看末尾）为内存不足；退出码 -9/137 为被系统强制终止（可能是内存超限）；其余为异常中断。前端 `reducer.js`、`message.js` 为历史记录中只有 `CELL_LOSS` 的旧消息补友好文案。来源：PR #25 及其评审（OOM 实测：Node 22 堆耗尽退出码 -6、标记行后 46 行栈）。
 
 - **统一 DataAgent 品牌图标资源与引用（2026-11-10）**：在 `dataagent-frontend/public` 中采用标准 `dataagent-icon*` 图标资产（包括 SVG/PNG/ICO），同步更新 `index.html` 的 favicon 链接、`NL2SqlChatV2.vue` 与 `IntelligentQueryView.vue` 中的品牌 logo 路径为 `${import.meta.env.BASE_URL}dataagent-icon.svg`，清理历史遗留的 `opendataworks-icon*` 与 `example-icon*` 文件，修复离线包与容器部署后 dataagent 图标 404 找不到的问题。来源：本轮 UI smoke，关联[验证报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。

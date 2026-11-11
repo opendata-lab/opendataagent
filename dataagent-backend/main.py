@@ -98,9 +98,10 @@ async def startup():
     # Effective values after env, DATAAGENT_SETTINGS and stored settings; a fresh
     # `python -c` only sees the environment.
     logger.info(
-        "Sandbox image=%s network_enabled=%s",
+        "Sandbox image=%s network_enabled=%s network_mode=%s",
         cfg.dataagent_sandbox_image,
         cfg.dataagent_sandbox_network_enabled,
+        cfg.dataagent_sandbox_network_mode,
     )
 
     try:

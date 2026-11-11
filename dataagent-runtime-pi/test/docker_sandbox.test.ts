@@ -40,11 +40,32 @@ test("sandbox network switch rejects non-boolean values", () => {
   }
 });
 
-for (const networkEnabled of [undefined, false, true]) {
-  test(`sandbox network switch ${networkEnabled} selects the expected docker argument`, async () => {
+test("sandbox networkMode rejects values other than bridge or host", () => {
+  const base: SandboxConfig = { runId: "r", image: "img", cli: "docker", uid: 1000, gid: 1000, lifetimeSeconds: 60,
+    memory: "2g", cpus: "2", pidsLimit: 512, workspaceSource: "/w", resultsSource: "/r", skills: [] };
+  for (const networkMode of ["none", "container:abc", "default", true, false, 123]) {
+    assert.throws(() => new DockerSandboxManager({ ...base, networkMode } as unknown as SandboxConfig),
+      /Invalid sandbox networkMode: expected 'bridge' or 'host'/);
+  }
+  assert.doesNotThrow(() => new DockerSandboxManager({ ...base, networkMode: "bridge" }));
+  assert.doesNotThrow(() => new DockerSandboxManager({ ...base, networkMode: "host" }));
+});
+
+const networkCases: Array<{ networkEnabled?: boolean; networkMode?: "bridge" | "host"; expectedNetwork: string }> = [
+  { networkEnabled: undefined, expectedNetwork: "none" },
+  { networkEnabled: false, expectedNetwork: "none" },
+  { networkEnabled: false, networkMode: "bridge", expectedNetwork: "none" },
+  { networkEnabled: false, networkMode: "host", expectedNetwork: "none" },
+  { networkEnabled: true, expectedNetwork: "bridge" },
+  { networkEnabled: true, networkMode: "bridge", expectedNetwork: "bridge" },
+  { networkEnabled: true, networkMode: "host", expectedNetwork: "host" },
+];
+
+for (const c of networkCases) {
+  test(`sandbox networkEnabled=${c.networkEnabled} networkMode=${c.networkMode} selects the expected docker argument`, async () => {
     const manager = new DockerSandboxManager({ runId: "r", image: "img", cli: "docker", uid: 1000, gid: 1000,
       lifetimeSeconds: 60, memory: "2g", cpus: "2", pidsLimit: 512, workspaceSource: "/w", resultsSource: "/r",
-      skills: [], networkEnabled });
+      skills: [], networkEnabled: c.networkEnabled, networkMode: c.networkMode });
     const commands: string[][] = [];
     // Capture the CLI boundary without invoking Docker.
     const internals = manager as unknown as { command: (args: string[]) => Promise<number> };
@@ -55,10 +76,9 @@ for (const networkEnabled of [undefined, false, true]) {
     try {
       assert.equal(await manager.execute(["true"], { timeoutMs: 1000, onData: () => {} }), 0);
       assert.equal(commands[0][0], "run");
-      const expected = networkEnabled === true ? "bridge" : "none";
-      assert.deepEqual(commands[0].filter(arg => arg.startsWith("--network=")), [`--network=${expected}`]);
+      assert.deepEqual(commands[0].filter(arg => arg.startsWith("--network=")), [`--network=${c.expectedNetwork}`]);
       // The effective value is logged so a deployment can see what docker actually received.
-      assert.ok(diagnostics.some(line => line.includes(`network=${expected} networkEnabled=${String(networkEnabled)}`)), diagnostics.join(""));
+      assert.ok(diagnostics.some(line => line.includes(`network=${c.expectedNetwork} networkEnabled=${String(c.networkEnabled)} networkMode=${c.networkMode ?? "bridge"}`)), diagnostics.join(""));
     } finally { process.stderr.write = write; await manager.close(); }
   });
 }

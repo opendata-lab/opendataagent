@@ -126,8 +126,9 @@ class Settings(BaseSettings):
     dataagent_sandbox_memory: str = "2g"
     dataagent_sandbox_cpus: str = "2"
     dataagent_sandbox_pids_limit: int = 512
-    # Trusted deployments may enable Docker's default bridge network.
+    # Trusted deployments may enable Docker's default bridge or host network.
     dataagent_sandbox_network_enabled: bool = False
+    dataagent_sandbox_network_mode: Literal["bridge", "host"] = "bridge"
     # Package index for pip installs inside a running sandbox. The image's
     # PIP_INDEX_URL build arg only covers build time; networks that cannot
     # reach PyPI set a mirror here. Empty keeps pip's default.
@@ -164,6 +165,15 @@ class Settings(BaseSettings):
         if type(value) is int and value in (0, 1):
             return bool(value)
         raise ValueError("DATAAGENT_SANDBOX_NETWORK_ENABLED must be true/false/1/0/yes/no (case-insensitive)")
+
+    @field_validator("dataagent_sandbox_network_mode", mode="before")
+    @classmethod
+    def validate_sandbox_network_mode(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"bridge", "host"}:
+                return normalized
+        raise ValueError("DATAAGENT_SANDBOX_NETWORK_MODE must be 'bridge' or 'host' (case-insensitive)")
 
     @model_validator(mode="after")
     def validate_execution_timeouts(self):
