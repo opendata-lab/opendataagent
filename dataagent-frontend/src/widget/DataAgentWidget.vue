@@ -29,8 +29,21 @@
         </div>
       </transition>
 
-      <button class="odw-launcher" type="button" :aria-label="`打开 ${config.projectName}`" @pointerdown="startLauncherDrag" @click.stop.prevent="openIfNotDragged">
-        <img class="odw-launcher__icon" :src="assistantIcon" alt="" aria-hidden="true">
+      <button
+        class="odw-launcher"
+        :class="{ 'is-working': state.workingCount > 0 && state.unreadNoticeCount === 0 }"
+        type="button"
+        :aria-label="`打开 ${config.projectName}`"
+        @pointerdown="startLauncherDrag"
+        @click.stop.prevent="openIfNotDragged"
+      >
+        <img
+          class="odw-launcher__icon"
+          :class="{ 'is-working': state.workingCount > 0 && state.unreadNoticeCount === 0 }"
+          :src="assistantIcon"
+          alt=""
+          aria-hidden="true"
+        >
         <span v-if="state.unreadNoticeCount > 0" class="odw-launcher__badge" title="有后台任务已完成"></span>
         <span v-else-if="state.workingCount > 0" class="odw-launcher__working" title="后台任务进行中"></span>
       </button>
