@@ -107,6 +107,13 @@ export const WIDGET_STYLES = `
   width: 28px;
   height: 28px;
   flex-shrink: 0;
+  transform-origin: center center;
+  transition: transform 0.2s ease;
+}
+
+.odw-launcher__icon.is-working,
+.odw-launcher.is-working .odw-launcher__icon {
+  animation: odw-star-breathe 2s ease-in-out infinite;
 }
 
 .odw-panel {
@@ -1545,8 +1552,8 @@ export const WIDGET_STYLES = `
   position: absolute;
   top: 2px;
   right: 2px;
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: #ef4444;
   border: 1.5px solid #ffffff;
@@ -1556,17 +1563,15 @@ export const WIDGET_STYLES = `
 }
 
 .odw-launcher__working {
+  /* Scheme 1: Background task indicator is rendered via smooth twin-star breathing
+     on the inner icon (.is-working), leaving the white launcher button clean without
+     an intrusive blue dot. The element remains in the DOM for accessibility and tests. */
   position: absolute;
-  top: -1px;
-  right: -1px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: #3b82f6;
-  border: 2px solid #ffffff;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
-  z-index: 2;
-  animation: odw-pulse 1.8s infinite;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
 }
 
 .odw-launcher-bubble {
@@ -1812,9 +1817,46 @@ export const WIDGET_STYLES = `
 }
 
 @keyframes odw-pulse {
-  0% { transform: scale(0.95); opacity: 0.8; }
-  50% { transform: scale(1.15); opacity: 1; }
-  100% { transform: scale(0.95); opacity: 0.8; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
+
+@keyframes odw-star-breathe {
+  0%, 100% {
+    transform: scale(0.88);
+    opacity: 0.85;
+    filter: drop-shadow(0 0 0 rgba(163, 110, 255, 0));
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 1;
+    filter: drop-shadow(0 2px 8px rgba(163, 110, 255, 0.45));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .odw-launcher__icon.is-working,
+  .odw-launcher.is-working .odw-launcher__icon {
+    animation: none;
+    opacity: 0.9;
+  }
+}
+
+/* Backup Scheme 3 (Rotating streamer ring):
+   Can be activated by adding .has-streamer to .odw-launcher if the outer ring is desired.
+.odw-launcher.has-streamer::before {
+  content: '';
+  position: absolute;
+  inset: -3.5px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0%, transparent 40%, #ED63ED 68%, #A36EFF 85%, #526CFF 100%);
+  animation: odw-spin-streamer 1.6s linear infinite;
+  z-index: -1;
+}
+@keyframes odw-spin-streamer {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+*/
 
 `
