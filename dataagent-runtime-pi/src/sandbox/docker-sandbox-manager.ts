@@ -14,6 +14,8 @@ export interface SandboxConfig {
   pidsLimit: number;
   /** Enable Docker's default bridge network; false isolates the sandbox. */
   networkEnabled?: boolean;
+  /** Network mode when networkEnabled is true: 'bridge' (default) or 'host'. */
+  networkMode?: "bridge" | "host";
   workspaceSource: string;
   resultsSource: string;
   skills: Array<{ source: string; folder: string }>;
@@ -42,6 +44,9 @@ export class DockerSandboxManager {
     }
     if (config.networkEnabled !== undefined && typeof config.networkEnabled !== "boolean") {
       throw new Error("Invalid sandbox networkEnabled: expected a boolean");
+    }
+    if (config.networkMode !== undefined && config.networkMode !== "bridge" && config.networkMode !== "host") {
+      throw new Error("Invalid sandbox networkMode: expected 'bridge' or 'host'");
     }
     for (const skill of config.skills) {
       if (!/^[\w-]+$/.test(skill.folder)) throw new Error("Invalid skill folder");
@@ -75,9 +80,10 @@ export class DockerSandboxManager {
     if (this.closed) throw new Error("SANDBOX_CLOSED");
     this.startPromise ??= (async () => {
       const c = this.config;
-      const network = c.networkEnabled === true ? "bridge" : "none";
+      const mode = c.networkMode === "host" ? "host" : "bridge";
+      const network = c.networkEnabled === true ? mode : "none";
       // Lands in the backend log as pi_cell.stderr, so the effective network is never a guess.
-      logDiagnostic(`sandbox start name=${this.containerName} network=${network} networkEnabled=${String(c.networkEnabled)}`);
+      logDiagnostic(`sandbox start name=${this.containerName} network=${network} networkEnabled=${String(c.networkEnabled)} networkMode=${c.networkMode ?? "bridge"}`);
       const args = ["run", "-d", "--rm", "--pull=never", "--name", this.containerName,
         `--network=${network}`, "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
         `--memory=${c.memory}`, `--memory-swap=${c.memory}`, `--cpus=${c.cpus}`, `--pids-limit=${c.pidsLimit}`,

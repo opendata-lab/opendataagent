@@ -73,15 +73,19 @@ async def test_cleanup_reports_an_unavailable_daemon(monkeypatch):
 
 
 @pytest.mark.parametrize("network_enabled", [False, True])
-def test_sandbox_config_carries_resource_limits(monkeypatch, tmp_path, network_enabled):
+@pytest.mark.parametrize("network_mode", ["bridge", "host"])
+def test_sandbox_config_carries_resource_limits(monkeypatch, tmp_path, network_enabled, network_mode):
     monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/usr/bin/docker')
     monkeypatch.setattr(sandbox, 'backend_mounts', lambda: [])
     cfg = SimpleNamespace(dataagent_sandbox_image='img', dataagent_sandbox_memory='1g',
                           dataagent_sandbox_cpus='1.5', dataagent_sandbox_pids_limit=256,
-                          dataagent_sandbox_network_enabled=network_enabled)
+                          dataagent_sandbox_network_enabled=network_enabled,
+                          dataagent_sandbox_network_mode=network_mode)
     config, _ = sandbox.build_sandbox_config(cfg, run_id='r', workspace=tmp_path / 'topic' / 'workspace',
                                              enabled_roots={}, lifetime=60, env={})
-    assert (config['memory'], config['cpus'], config['pidsLimit'], config['networkEnabled']) == ('1g', '1.5', 256, network_enabled)
+    assert (config['memory'], config['cpus'], config['pidsLimit'], config['networkEnabled'], config['networkMode']) == (
+        '1g', '1.5', 256, network_enabled, network_mode
+    )
     assert 'network' not in config
 
 
@@ -133,6 +137,27 @@ def test_network_enabled_rejects_invalid_environment(monkeypatch, raw):
 def test_network_enabled_defaults_to_false(monkeypatch):
     monkeypatch.delenv('DATAAGENT_SANDBOX_NETWORK_ENABLED', raising=False)
     assert Settings(_env_file=None).dataagent_sandbox_network_enabled is False
+
+
+@pytest.mark.parametrize('raw, expected', [
+    ('bridge', 'bridge'), ('BRIDGE', 'bridge'), ('Bridge', 'bridge'), (' bridge ', 'bridge'),
+    ('host', 'host'), ('HOST', 'host'), ('Host', 'host'), (' host ', 'host'),
+])
+def test_network_mode_parses_environment(monkeypatch, raw, expected):
+    monkeypatch.setenv('DATAAGENT_SANDBOX_NETWORK_MODE', raw)
+    assert Settings(_env_file=None).dataagent_sandbox_network_mode == expected
+
+
+@pytest.mark.parametrize('raw', ['', 'none', 'container:abc', 'default', 'true', 'false', 'overlay', 'macvlan'])
+def test_network_mode_rejects_invalid_environment(monkeypatch, raw):
+    monkeypatch.setenv('DATAAGENT_SANDBOX_NETWORK_MODE', raw)
+    with pytest.raises(ValueError, match="DATAAGENT_SANDBOX_NETWORK_MODE must be 'bridge' or 'host'"):
+        Settings(_env_file=None)
+
+
+def test_network_mode_defaults_to_bridge(monkeypatch):
+    monkeypatch.delenv('DATAAGENT_SANDBOX_NETWORK_MODE', raising=False)
+    assert Settings(_env_file=None).dataagent_sandbox_network_mode == 'bridge'
 
 
 @pytest.mark.parametrize('source', ['environment', 'dotenv'])
