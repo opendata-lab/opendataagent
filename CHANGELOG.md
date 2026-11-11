@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-11
+
+补丁发布，支持沙箱网络模式配置。
+
+### Added
+
+- 沙箱网络模式配置 `DATAAGENT_SANDBOX_NETWORK_MODE`（支持 `bridge` 默认与 `host`）：当沙箱网络开启（`DATAAGENT_SANDBOX_NETWORK_ENABLED=true`）且处于特定内网/VPN/NAT 环境时，可配置为 `host` 直接共享宿主机网络栈，解决数据库连接与 `pip install` 无法触达外部网络的问题；断网模式（`false`）下严格保持 `--network=none` 隔离。
+- `deploy/docker-compose.yml` 显式声明 `DATAAGENT_SANDBOX_NETWORK_ENABLED` 与 `DATAAGENT_SANDBOX_NETWORK_MODE`。
+
 ## [0.1.0] - 2026-11-10
 
 首个独立发布版本，配合 OpenDataWorks 1.6.0 使用。
