@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="DataAgent Backend",
     description="智能问数服务后端 — 基于 Claude AI 的自然语言转 SQL",
-    version="0.1.0",
+    version="0.1.1",
 )
 
 # CORS — 允许前端直接对接
@@ -57,7 +57,7 @@ app.include_router(eval_router)
 async def root():
     return {
         "service": "dataagent-backend",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "docs": "/docs",
     }
 
