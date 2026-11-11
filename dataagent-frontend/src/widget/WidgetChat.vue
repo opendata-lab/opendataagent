@@ -810,31 +810,40 @@ const syncNoticeCounts = () => {
   props.state.unreadNoticeCount = unviewedFinishedTopicIds.value.size
 }
 
-const handleViewCapsule = async (targetTopicId) => {
+const clearTopicNotice = (targetTopicId) => {
   if (!targetTopicId) return
-  dismissCapsule()
-  if (props.state.activeLauncherNotice?.topicId === targetTopicId) {
-    props.state.activeLauncherNotice = null
+  let changed = false
+  if (unviewedFinishedTopicIds.value.has(targetTopicId)) {
+    unviewedFinishedTopicIds.value.delete(targetTopicId)
+    changed = true
   }
-  unviewedFinishedTopicIds.value.delete(targetTopicId)
-  syncNoticeCounts()
-  await selectTopicEngine(targetTopicId)
-  closeHistory()
-}
-
-// Engine navigation, plus closing the floating history drawer.
-const selectTopic = async (targetTopicId) => {
-  if (!targetTopicId || targetTopicId === topicId.value) return
-  unviewedFinishedTopicIds.value.delete(targetTopicId)
   if (activeCapsuleNotice.value?.topicId === targetTopicId) {
     dismissCapsule()
   }
   if (props.state.activeLauncherNotice?.topicId === targetTopicId) {
     props.state.activeLauncherNotice = null
   }
-  syncNoticeCounts()
-  await selectTopicEngine(targetTopicId)
+  if (changed) {
+    syncNoticeCounts()
+  }
+}
+
+const handleViewCapsule = async (targetTopicId) => {
+  if (!targetTopicId) return
+  clearTopicNotice(targetTopicId)
   closeHistory()
+  if (targetTopicId !== topicId.value) {
+    await selectTopicEngine(targetTopicId)
+  }
+}
+
+// Engine navigation, plus closing the floating history drawer.
+const selectTopic = async (targetTopicId) => {
+  if (!targetTopicId) return
+  clearTopicNotice(targetTopicId)
+  closeHistory()
+  if (targetTopicId === topicId.value) return
+  await selectTopicEngine(targetTopicId)
 }
 
 const newConversation = async () => {
@@ -1239,6 +1248,18 @@ watch(
   () => props.state.isOpen,
   (open, wasOpen) => {
     if (open && wasOpen === false && !loginRequired.value) void refreshTopics()
+    if (open && topicId.value) {
+      clearTopicNotice(topicId.value)
+    }
+  }
+)
+
+watch(
+  () => topicId.value,
+  (newId) => {
+    if (props.state.isOpen && newId) {
+      clearTopicNotice(newId)
+    }
   }
 )
 

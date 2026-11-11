@@ -296,7 +296,7 @@ describe('WidgetChat history conversations', () => {
       ])
 
     try {
-      const { wrapper } = mountChat({ config: { displayMode: 'inline' } })
+      const { wrapper, state } = mountChat({ config: { displayMode: 'inline' } })
       await flushPromises()
 
       expect(wrapper.find('[data-testid="history-topic-topic-bg"] .query-session-loading').exists()).toBe(true)
@@ -310,6 +310,12 @@ describe('WidgetChat history conversations', () => {
       expect(wrapper.find('.query-notice-capsule').text()).toContain('后台运行会话')
       expect(wrapper.find('.query-notice-capsule').text()).toContain('分析已完成')
       expect(wrapper.find('[data-testid="history-topic-topic-bg"] .query-session-tag.is-completed').exists()).toBe(true)
+
+      // Clicking the current topic item in the history drawer should clear the notice even when already on it
+      await wrapper.find('[data-testid="history-topic-topic-bg"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="history-topic-topic-bg"] .query-session-tag.is-completed').exists()).toBe(false)
+      expect(state.unreadNoticeCount).toBe(0)
     } finally {
       vi.useRealTimers()
     }
