@@ -6,6 +6,10 @@
 
 对话组件包 `@opendataagent/agent-conversation` 升至 0.3.0（移除 `planMode`）。
 
+### Added
+
+- Widget 面板宽度配置：`data-panel-width`（悬浮面板初始宽度）和 `data-dock-width`（固定面板宽度，`panel-layout` 事件的预留宽度随之变化），像素整数，最小 360。见[设计](docs/design/2026-11-12-widget-panel-width-design.md)。
+
 ### Changed
 
 - 对话组件：批准计划卡片后，权限模式选择器切换到 `acceptEdits`（与 DataAgent 批准计划后的会话模式一致），宿主未提供该选项时保持不变。

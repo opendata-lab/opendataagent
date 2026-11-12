@@ -24,6 +24,17 @@ export function normalizePermissionMode(value) {
   return VALID_PERMISSION_MODES.has(mode) ? mode : 'default'
 }
 
+// The smallest panel the widget lays out (`useWidgetGeometry` MIN_WIDTH).
+const MIN_PANEL_WIDTH = 360
+
+/** A configured panel width in whole pixels, at least the minimum; null when unset or invalid. */
+export function normalizePanelWidth(value) {
+  if (value == null || String(value).trim() === '') return null
+  const width = Math.round(Number(value))
+  if (!Number.isFinite(width) || width <= 0) return null
+  return Math.max(MIN_PANEL_WIDTH, width)
+}
+
 export function resolveFullscreenUrl(value) {
   const url = String(value || '').trim()
   if (!url) return ''
@@ -91,6 +102,8 @@ export function parseWidgetConfig(script = resolveCurrentScript()) {
     position,
     displayMode,
     panelMode: normalizePanelMode(dataset.panelMode),
+    panelWidth: normalizePanelWidth(dataset.panelWidth),
+    dockWidth: normalizePanelWidth(dataset.dockWidth),
     containerId,
     permissionMode: normalizePermissionMode(dataset.permissionMode),
     fullscreenUrl: resolveFullscreenUrl(dataset.fullscreenUrl),

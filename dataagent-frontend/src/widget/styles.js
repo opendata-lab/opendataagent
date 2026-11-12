@@ -118,7 +118,7 @@ export const WIDGET_STYLES = `
 
 .odw-panel {
   position: relative;
-  width: clamp(440px, 30vw, 720px);
+  width: var(--odw-panel-width, clamp(440px, 30vw, 720px));
   height: min(860px, calc(100vh - 48px));
   display: flex;
   flex-direction: column;
@@ -138,7 +138,7 @@ export const WIDGET_STYLES = `
 .odw-widget.is-docked-right { inset: 0 0 0 auto; }
 .odw-widget.is-docked-left .odw-panel,
 .odw-widget.is-docked-right .odw-panel {
-  width: min(440px, 100vw);
+  width: min(var(--odw-dock-width, 440px), 100vw);
   height: 100vh;
   height: 100dvh;
   border-radius: 0;
