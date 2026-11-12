@@ -427,7 +427,17 @@ const onInput = (value) => {
   autoResize()
 }
 
+/**
+ * Show a mode the server already applied, such as the one DataAgent switches to
+ * after a plan is approved. Nothing is saved, and a mode the host does not
+ * offer is ignored.
+ */
+const adoptPermissionMode = (mode) => {
+  if (permissionModes.value.some((item) => item.value === mode)) permissionMode.value = mode
+}
+
 defineExpose({
+  adoptPermissionMode,
   focus: () => nextTick(() => { inputRef.value?.focus(); autoResize() }),
   getSettings: () => settings.value,
   getAttachments: () => attachments.value,

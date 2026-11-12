@@ -414,10 +414,12 @@ export function useConversation({ transport, generation, emit, settings }) {
     }
   }
 
+  /** Resolves true once the transport accepted the answer, false otherwise. */
   async function submitInteraction(payload) {
-    if (!transport.value) return
+    if (!transport.value) return false
     try {
       await transport.value.submitInteraction(payload)
+      return true
     } catch (error) {
       const { requestId, kind } = payload || {}
       if (requestId) {
@@ -441,6 +443,7 @@ export function useConversation({ transport, generation, emit, settings }) {
         triggerRef(messages)
       }
       fail(error)
+      return false
     }
   }
 

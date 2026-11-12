@@ -1,6 +1,6 @@
 <template>
   <!-- A plan is a document to approve, not a tool call: it gets its own card. -->
-  <PlanCard v-if="isPlan" :block="block" :disabled="disabled" @decide="(payload) => emit('decide', payload)" />
+  <PlanCard v-if="isPlan" :block="block" :disabled="disabled" @decide="(payload) => emit('decide', { ...payload, plan: true })" />
   <div v-else class="v2-perm-card" :class="`risk-${block.risk_level || 'high'}`">
     <div class="v2-perm-head">
       <span class="v2-perm-badge">{{ riskLabel }}</span>

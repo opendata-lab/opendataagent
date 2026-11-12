@@ -83,7 +83,9 @@ export interface ComposerConfig {
   permissionModes?: { value: string; label: string; desc?: string }[]
   /**
    * The mode this conversation is saved with. Supply it when switching
-   * conversations, or the picker keeps showing the previous one's.
+   * conversations, or the picker keeps showing the previous one's. After a
+   * plan card is approved the picker moves to `acceptEdits` when it is offered,
+   * matching the mode DataAgent gives the topic.
    */
   permissionMode?: string
   /**
