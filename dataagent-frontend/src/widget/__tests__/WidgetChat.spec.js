@@ -296,7 +296,7 @@ describe('WidgetChat history conversations', () => {
       ])
 
     try {
-      const { wrapper, state } = mountChat({ config: { displayMode: 'inline' } })
+      const { wrapper } = mountChat({ config: { displayMode: 'inline' } })
       await flushPromises()
 
       expect(wrapper.find('[data-testid="history-topic-topic-bg"] .query-session-loading').exists()).toBe(true)
@@ -310,12 +310,6 @@ describe('WidgetChat history conversations', () => {
       expect(wrapper.find('.query-notice-capsule').text()).toContain('后台运行会话')
       expect(wrapper.find('.query-notice-capsule').text()).toContain('分析已完成')
       expect(wrapper.find('[data-testid="history-topic-topic-bg"] .query-session-tag.is-completed').exists()).toBe(true)
-
-      // Clicking the current topic item in the history drawer should clear the notice even when already on it
-      await wrapper.find('[data-testid="history-topic-topic-bg"]').trigger('click')
-      await flushPromises()
-      expect(wrapper.find('[data-testid="history-topic-topic-bg"] .query-session-tag.is-completed').exists()).toBe(false)
-      expect(state.unreadNoticeCount).toBe(0)
     } finally {
       vi.useRealTimers()
     }
@@ -356,6 +350,90 @@ describe('WidgetChat history conversations', () => {
       expect(state.topicId).toBe('topic-bg')
       expect(wrapper.find('.query-notice-capsule').exists()).toBe(false)
       expect(state.unreadNoticeCount).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // The panel is closed (state.isOpen unset), so the current topic finishing still raises a notice.
+  const finishTopicsInBackground = async (ids, finalStatus = 'finished') => {
+    const running = ids.map((id) => topic(id, `${id} 会话`, { current_task_id: `task-${id}`, current_task_status: 'running' }))
+    apiMocks.topicApi.listTopics
+      .mockResolvedValueOnce(running) // mount
+      .mockResolvedValueOnce(running) // selecting ids[0] reloads the list
+      .mockResolvedValue(ids.map((id) => topic(id, `${id} 会话`, { current_task_id: `task-${id}`, current_task_status: finalStatus })))
+    const mounted = mountChat({ config: { displayMode: 'inline' } })
+    await flushPromises()
+    await mounted.wrapper.find(`[data-testid="history-topic-${ids[0]}"]`).trigger('click')
+    await flushPromises()
+    expect(mounted.state.topicId).toBe(ids[0])
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    return mounted
+  }
+  const readyTag = (wrapper, id) => wrapper.find(`[data-testid="history-topic-${id}"] .query-session-tag.is-completed`)
+
+  it('clears the notice when clicking the current topic in the history drawer', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper, state } = await finishTopicsInBackground(['topic-x'])
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(true)
+      expect(state.unreadNoticeCount).toBe(1)
+
+      await wrapper.find('[data-testid="history-topic-topic-x"]').trigger('click')
+      await flushPromises()
+
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(false)
+      expect(state.unreadNoticeCount).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the current topic notice when the panel opens on it', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper, state } = await finishTopicsInBackground(['topic-x'])
+      expect(state.unreadNoticeCount).toBe(1)
+
+      state.isOpen = true
+      await flushPromises()
+
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(false)
+      expect(state.unreadNoticeCount).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the previous topic notice when opening navigates to another topic', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper, state } = await finishTopicsInBackground(['topic-x', 'topic-y'])
+      expect(state.unreadNoticeCount).toBe(2)
+
+      // Same sequence as openFromLauncherNotice / controller.selectConversation.
+      state.isOpen = true
+      state.requestedTopicId = 'topic-y'
+      state.selectConversationSignal += 1
+      await flushPromises()
+
+      expect(state.topicId).toBe('topic-y')
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(true)
+      expect(readyTag(wrapper, 'topic-y').exists()).toBe(false)
+      expect(state.unreadNoticeCount).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the awaiting tag rather than ready for an unviewed topic waiting on the user', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper, state } = await finishTopicsInBackground(['topic-x'], 'waiting_permission')
+      expect(state.unreadNoticeCount).toBe(1)
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="history-topic-topic-x"] .query-session-tag.is-permission').text()).toBe('待授权')
     } finally {
       vi.useRealTimers()
     }
