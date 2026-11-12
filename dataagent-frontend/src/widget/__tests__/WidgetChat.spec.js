@@ -355,14 +355,15 @@ describe('WidgetChat history conversations', () => {
     }
   })
 
-  // The panel is closed (state.isOpen unset), so the current topic finishing still raises a notice.
+  // The panel starts closed (isOpen=false, as a minimized floating widget), so the current
+  // topic finishing still raises a notice and reopening goes through the refresh branch.
   const finishTopicsInBackground = async (ids, finalStatus = 'finished') => {
     const running = ids.map((id) => topic(id, `${id} 会话`, { current_task_id: `task-${id}`, current_task_status: 'running' }))
     apiMocks.topicApi.listTopics
       .mockResolvedValueOnce(running) // mount
       .mockResolvedValueOnce(running) // selecting ids[0] reloads the list
       .mockResolvedValue(ids.map((id) => topic(id, `${id} 会话`, { current_task_id: `task-${id}`, current_task_status: finalStatus })))
-    const mounted = mountChat({ config: { displayMode: 'inline' } })
+    const mounted = mountChat({ config: { displayMode: 'inline' }, state: { isOpen: false } })
     await flushPromises()
     await mounted.wrapper.find(`[data-testid="history-topic-${ids[0]}"]`).trigger('click')
     await flushPromises()
@@ -396,9 +397,11 @@ describe('WidgetChat history conversations', () => {
       const { wrapper, state } = await finishTopicsInBackground(['topic-x'])
       expect(state.unreadNoticeCount).toBe(1)
 
+      const listCalls = apiMocks.topicApi.listTopics.mock.calls.length
       state.isOpen = true
       await flushPromises()
 
+      expect(apiMocks.topicApi.listTopics.mock.calls.length).toBe(listCalls + 1)
       expect(readyTag(wrapper, 'topic-x').exists()).toBe(false)
       expect(state.unreadNoticeCount).toBe(0)
     } finally {
