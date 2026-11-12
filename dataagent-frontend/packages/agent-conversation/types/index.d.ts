@@ -88,12 +88,6 @@ export interface ComposerConfig {
    * matching the mode DataAgent gives the topic.
    */
   permissionMode?: string
-  /**
-   * The "计划" switch. While on, every message is sent with
-   * `settings.permission_mode = "plan"`; while off, with the picker's mode or
-   * `default`. `default` is the switch's initial state.
-   */
-  planMode?: { enabled?: boolean; default?: boolean }
   /** Build these with the exported `buildCommands(names)`. */
   slashCommands?: SlashCommand[]
   /** Offered while the conversation is empty; clicking one sends it. */

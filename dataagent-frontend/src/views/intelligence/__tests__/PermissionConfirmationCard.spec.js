@@ -78,7 +78,7 @@ describe('PermissionConfirmationCard plan rendering', () => {
   it('emits approval with the request id', async () => {
     const wrapper = mount(PermissionConfirmationCard, { props: { block: planBlock() } })
     await wrapper.findAll('.dac-plan-choice')[0].trigger('click')
-    expect(wrapper.emitted('decide')[0]).toEqual([{ requestId: 'req-1', decision: 'allow' }])
+    expect(wrapper.emitted('decide')[0]).toEqual([{ requestId: 'req-1', decision: 'allow', plan: true }])
   })
 
   it('sends a revision request as deny with the user note', async () => {
@@ -91,7 +91,7 @@ describe('PermissionConfirmationCard plan rendering', () => {
     await submit.trigger('click')
 
     expect(wrapper.emitted('decide')[0]).toEqual([
-      { requestId: 'req-1', decision: 'deny', note: '先不建汇总表，只做明细层' },
+      { requestId: 'req-1', decision: 'deny', note: '先不建汇总表，只做明细层', plan: true },
     ])
   })
 
@@ -129,7 +129,7 @@ describe('PermissionConfirmationCard plan rendering', () => {
   it('treats closing the question as declining without notes', async () => {
     const wrapper = mount(PermissionConfirmationCard, { props: { block: planBlock() } })
     await wrapper.get('[aria-label="不执行"]').trigger('click')
-    expect(wrapper.emitted('decide')[0]).toEqual([{ requestId: 'req-1', decision: 'deny' }])
+    expect(wrapper.emitted('decide')[0]).toEqual([{ requestId: 'req-1', decision: 'deny', plan: true }])
   })
 
   it('leaves non-plan confirmation cards as plain-text summaries with tool details', () => {

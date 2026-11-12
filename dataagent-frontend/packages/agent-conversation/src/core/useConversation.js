@@ -4,6 +4,9 @@ import { createChatState, processV2Record } from './streamParser.js'
 import { normalizeConversationMessage } from './message.js'
 import { ErrorCode, StreamInterrupted } from '../transport/errors.js'
 
+/** What the retry button sends: the agent continues the stopped run. */
+export const RETRY_CONTENT = '继续'
+
 const RETRY_DELAYS_MS = [1000, 2000, 4000]
 const POLL_INTERVAL_MS = 3000
 const PROGRESS_RECORD_TYPES = new Set(['stream', 'tool_result', 'pi_event', 'agent_event'])
@@ -373,20 +376,19 @@ export function useConversation({ transport, generation, emit, settings }) {
     }
   }
 
+  // The topic already holds the failed request and what the run did before it
+  // stopped. Sending that request again would ask twice; the agent is asked to
+  // continue instead.
   async function retry(message, options = {}, sendMessage = send) {
     if (!message || isActive.value) return false
     const index = messages.value.findIndex((item) => item.id === message.id)
-    for (let cursor = (index < 0 ? messages.value.length : index) - 1; cursor >= 0; cursor -= 1) {
-      const candidate = messages.value[cursor]
-      if (candidate?.role !== 'user') continue
-      const activeSettings = options.settings ?? resolveSettings()
-      return sendMessage(candidate.content, {
-        attachments: candidate.attachments || [],
-        settings: activeSettings,
-        ...options,
-      })
-    }
-    return false
+    const asked = messages.value.slice(0, index < 0 ? messages.value.length : index).some((item) => item?.role === 'user')
+    if (!asked) return false
+    return sendMessage(RETRY_CONTENT, {
+      attachments: [],
+      settings: options.settings ?? resolveSettings(),
+      ...options,
+    })
   }
 
   async function cancel() {

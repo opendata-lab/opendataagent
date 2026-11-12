@@ -61,7 +61,7 @@ describe('a run that fails', () => {
     el.remove()
   })
 
-  it('retries by resending the question that produced it', async () => {
+  it('retries by asking the agent to continue, not by resending the question', async () => {
     const transport = makeTransport({
       streamEvents: async function* () {
         throw new Error('后端连接被重置')
@@ -77,7 +77,8 @@ describe('a run that fails', () => {
     await settle()
 
     expect(transport.sendMessage).toHaveBeenCalledTimes(2)
-    expect(transport.sendMessage.mock.calls[1][0]).toMatchObject({ content: '开始建模' })
+    expect(transport.sendMessage.mock.calls[1][0]).toMatchObject({ content: '继续' })
+    expect(transport.sendMessage.mock.calls[1][0].attachments).toBeUndefined()
     el.remove()
   })
 
@@ -123,7 +124,7 @@ describe('a run that fails', () => {
 
     expect(transport.sendMessage).toHaveBeenCalledTimes(2)
     expect(transport.sendMessage.mock.calls[1][0]).toMatchObject({
-      content: '开始建模',
+      content: '继续',
       settings: {
         provider_id: 'openai',
         model: 'gpt-4o-mini'
@@ -152,7 +153,7 @@ describe('a run that fails', () => {
     el.shadowRoot.querySelector('.dac-retry').click()
     await settle()
 
-    expect(transport.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ content: '开始建模' }))
+    expect(transport.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ content: '继续' }))
     el.remove()
   })
 
