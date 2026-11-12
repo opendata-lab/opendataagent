@@ -1555,7 +1555,7 @@ export const WIDGET_STYLES = `
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #ef4444;
+  background: #059669;
   border: 1.5px solid #ffffff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
   z-index: 2;
@@ -1654,7 +1654,7 @@ export const WIDGET_STYLES = `
 }
 
 .odw-badge-dot.is-completed {
-  background: #ef4444;
+  background: #059669;
   box-shadow: 0 0 0 1.5px var(--odw-widget-color, #4A90A4);
   animation: odw-badge-pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
@@ -1771,9 +1771,9 @@ export const WIDGET_STYLES = `
 }
 
 .query-session-tag.is-completed {
-  background: #fef2f2;
-  color: #ef4444;
-  border: 1px solid #fee2e2;
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
 }
 
 .query-session-tag.is-awaiting {

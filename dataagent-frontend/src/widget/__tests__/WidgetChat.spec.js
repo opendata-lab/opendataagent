@@ -355,6 +355,93 @@ describe('WidgetChat history conversations', () => {
     }
   })
 
+  // The panel starts closed (isOpen=false, as a minimized floating widget), so the current
+  // topic finishing still raises a notice and reopening goes through the refresh branch.
+  const finishTopicsInBackground = async (ids, finalStatus = 'finished') => {
+    const running = ids.map((id) => topic(id, `${id} 会话`, { current_task_id: `task-${id}`, current_task_status: 'running' }))
+    apiMocks.topicApi.listTopics
+      .mockResolvedValueOnce(running) // mount
+      .mockResolvedValueOnce(running) // selecting ids[0] reloads the list
+      .mockResolvedValue(ids.map((id) => topic(id, `${id} 会话`, { current_task_id: `task-${id}`, current_task_status: finalStatus })))
+    const mounted = mountChat({ config: { displayMode: 'inline' }, state: { isOpen: false } })
+    await flushPromises()
+    await mounted.wrapper.find(`[data-testid="history-topic-${ids[0]}"]`).trigger('click')
+    await flushPromises()
+    expect(mounted.state.topicId).toBe(ids[0])
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    return mounted
+  }
+  const readyTag = (wrapper, id) => wrapper.find(`[data-testid="history-topic-${id}"] .query-session-tag.is-completed`)
+
+  it('clears the notice when clicking the current topic in the history drawer', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper, state } = await finishTopicsInBackground(['topic-x'])
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(true)
+      expect(state.unreadNoticeCount).toBe(1)
+
+      await wrapper.find('[data-testid="history-topic-topic-x"]').trigger('click')
+      await flushPromises()
+
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(false)
+      expect(state.unreadNoticeCount).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the current topic notice when the panel opens on it', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper, state } = await finishTopicsInBackground(['topic-x'])
+      expect(state.unreadNoticeCount).toBe(1)
+
+      const listCalls = apiMocks.topicApi.listTopics.mock.calls.length
+      state.isOpen = true
+      await flushPromises()
+
+      expect(apiMocks.topicApi.listTopics.mock.calls.length).toBe(listCalls + 1)
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(false)
+      expect(state.unreadNoticeCount).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the previous topic notice when opening navigates to another topic', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper, state } = await finishTopicsInBackground(['topic-x', 'topic-y'])
+      expect(state.unreadNoticeCount).toBe(2)
+
+      // Same sequence as openFromLauncherNotice / controller.selectConversation.
+      state.isOpen = true
+      state.requestedTopicId = 'topic-y'
+      state.selectConversationSignal += 1
+      await flushPromises()
+
+      expect(state.topicId).toBe('topic-y')
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(true)
+      expect(readyTag(wrapper, 'topic-y').exists()).toBe(false)
+      expect(state.unreadNoticeCount).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the awaiting tag rather than ready for an unviewed topic waiting on the user', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper, state } = await finishTopicsInBackground(['topic-x'], 'waiting_permission')
+      expect(state.unreadNoticeCount).toBe(1)
+      expect(readyTag(wrapper, 'topic-x').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="history-topic-topic-x"] .query-session-tag.is-permission').text()).toBe('待授权')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('surfaces the error card when opening a failed (status=error) history conversation', async () => {
     apiMocks.topicApi.getTopicMessages.mockImplementation(async (topicId) => ({
       topic_id: topicId,

@@ -33,9 +33,9 @@
           >
             <div class="query-session-item-main">
               <div class="query-session-title">{{ truncate(topic.title || '新话题', 26) }}</div>
-              <span v-if="unviewedFinishedTopicIds.has(topic.topic_id)" class="query-session-tag is-completed">已就绪</span>
-              <span v-else-if="topicBadgeKind(topic) === 'awaiting'" class="query-session-tag is-awaiting">待处理</span>
+              <span v-if="topicBadgeKind(topic) === 'awaiting'" class="query-session-tag is-awaiting">待处理</span>
               <span v-else-if="topicBadgeKind(topic) === 'awaiting_permission'" class="query-session-tag is-permission">待授权</span>
+              <span v-else-if="unviewedFinishedTopicIds.has(topic.topic_id)" class="query-session-tag is-completed">已就绪</span>
             </div>
             <div v-if="isTopicWorking(topic)" class="query-session-loading" title="正在分析中...">
               <svg class="query-session-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -810,31 +810,40 @@ const syncNoticeCounts = () => {
   props.state.unreadNoticeCount = unviewedFinishedTopicIds.value.size
 }
 
-const handleViewCapsule = async (targetTopicId) => {
+const clearTopicNotice = (targetTopicId) => {
   if (!targetTopicId) return
-  dismissCapsule()
-  if (props.state.activeLauncherNotice?.topicId === targetTopicId) {
-    props.state.activeLauncherNotice = null
+  let changed = false
+  if (unviewedFinishedTopicIds.value.has(targetTopicId)) {
+    unviewedFinishedTopicIds.value.delete(targetTopicId)
+    changed = true
   }
-  unviewedFinishedTopicIds.value.delete(targetTopicId)
-  syncNoticeCounts()
-  await selectTopicEngine(targetTopicId)
-  closeHistory()
-}
-
-// Engine navigation, plus closing the floating history drawer.
-const selectTopic = async (targetTopicId) => {
-  if (!targetTopicId || targetTopicId === topicId.value) return
-  unviewedFinishedTopicIds.value.delete(targetTopicId)
   if (activeCapsuleNotice.value?.topicId === targetTopicId) {
     dismissCapsule()
   }
   if (props.state.activeLauncherNotice?.topicId === targetTopicId) {
     props.state.activeLauncherNotice = null
   }
-  syncNoticeCounts()
-  await selectTopicEngine(targetTopicId)
+  if (changed) {
+    syncNoticeCounts()
+  }
+}
+
+const handleViewCapsule = async (targetTopicId) => {
+  if (!targetTopicId) return
+  clearTopicNotice(targetTopicId)
   closeHistory()
+  if (targetTopicId !== topicId.value) {
+    await selectTopicEngine(targetTopicId)
+  }
+}
+
+// Engine navigation, plus closing the floating history drawer.
+const selectTopic = async (targetTopicId) => {
+  if (!targetTopicId) return
+  clearTopicNotice(targetTopicId)
+  closeHistory()
+  if (targetTopicId === topicId.value) return
+  await selectTopicEngine(targetTopicId)
 }
 
 const newConversation = async () => {
@@ -1239,6 +1248,17 @@ watch(
   () => props.state.isOpen,
   (open, wasOpen) => {
     if (open && wasOpen === false && !loginRequired.value) void refreshTopics()
+  }
+)
+
+// Opening the panel shows the current topic, so its notice counts as viewed, unless the
+// same open also navigates away (launcher notice, selectConversation, newConversation).
+watch(
+  () => [props.state.isOpen, props.state.selectConversationSignal, props.state.newConversationSignal],
+  ([open, selectSignal, newSignal], [wasOpen, prevSelectSignal, prevNewSignal]) => {
+    if (!open || wasOpen || loginRequired.value || !topicId.value) return
+    if (selectSignal !== prevSelectSignal || newSignal !== prevNewSignal) return
+    clearTopicNotice(topicId.value)
   }
 )
 
