@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+对话组件包 `@opendataagent/agent-conversation` 升至 0.3.0（移除 `planMode`）。
+
 ### Changed
 
 - 对话组件：批准计划卡片后，权限模式选择器切换到 `acceptEdits`（与 DataAgent 批准计划后的会话模式一致），宿主未提供该选项时保持不变。
