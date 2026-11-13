@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+对话组件包 `@opendataagent/agent-conversation` 升至 0.3.0（移除 `planMode`）。
+
+### Changed
+
+- 对话组件：批准计划卡片后，权限模式选择器切换到 `acceptEdits`（与 DataAgent 批准计划后的会话模式一致），宿主未提供该选项时保持不变。
+- 对话组件：失败或中断后的“重试”改为发送“继续”且不带附件，由 Agent 接着原运行继续，不再重复发送原请求。
+
+### Removed
+
+- 对话组件：移除独立的“计划”开关（`composerConfig.planMode`），计划模式改由权限模式选择器中的 `plan` 选项提供。
+
 ## [0.1.1] - 2026-11-11
 
 补丁发布，支持沙箱网络模式配置。

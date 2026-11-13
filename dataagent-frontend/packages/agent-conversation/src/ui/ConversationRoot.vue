@@ -147,13 +147,20 @@ const conversation = useConversation({
 
 // Without these the two waiting states have no exit: a run parked on
 // waiting_permission renders a card nobody can answer, and stays parked.
-const onDecide = ({ taskId, requestId, decision, note }) =>
-  conversation.submitInteraction({
+// DataAgent moves a topic to this mode once its plan is approved
+// (`permission_gate.POST_PLAN_MODE`); the picker follows so it does not keep
+// showing `plan` and send the next message as another plan.
+const POST_PLAN_MODE = 'acceptEdits'
+
+const onDecide = async ({ taskId, requestId, decision, note, plan }) => {
+  const accepted = await conversation.submitInteraction({
     taskId: taskId || conversation.run.value?.taskId,
     kind: 'permission',
     requestId,
     payload: note ? { decision, note } : { decision },
   })
+  if (accepted && plan && decision === 'allow') composerRef.value?.adoptPermissionMode(POST_PLAN_MODE)
+}
 
 const onAnswer = ({ taskId, requestId, answers }) =>
   conversation.submitInteraction({

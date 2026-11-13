@@ -286,7 +286,14 @@ no enabled provider offers a model.
 The current selection is sent with each message as
 `sendMessage({ content, settings: { provider_id, model, permission_mode } })`
 rather than pushed separately, so what was sent and what the user could see
-cannot disagree. Suggestions are offered only while the conversation is empty.
+cannot disagree. After a plan card is approved, the picker shows `acceptEdits`,
+the mode DataAgent gives the topic once its plan is approved, when the host
+offers that mode; nothing is saved through `setPermissionMode`. Suggestions are
+offered only while the conversation is empty.
+
+The retry button on a failed or stopped turn sends `继续` without attachments:
+the topic already holds the original request, so the agent continues the run
+instead of being asked the same thing twice.
 When lazy creation is enabled, the resolver receives either
 `{ reason: 'send', content, settings }` or `{ reason: 'upload', files }`; this
 lets the host title a new conversation from the real first prompt and create a

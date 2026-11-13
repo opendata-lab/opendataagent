@@ -369,7 +369,7 @@ describe('retrying', () => {
 
     expect(transport.sendMessage).toHaveBeenCalledTimes(2)
     expect(transport.sendMessage.mock.calls[1][0]).toMatchObject({
-      content: '原问题',
+      content: '继续',
       settings: { provider_id: 'openai', model: 'gpt-4o' }
     })
   })

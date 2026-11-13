@@ -514,59 +514,6 @@ describe('permission mode', () => {
   })
 })
 
-describe('plan switch', () => {
-  it('starts as the host says and sends plan while on', async () => {
-    const transport = makeTransport()
-    const el = await mount({
-      transportFactory: () => transport,
-      composerConfig: { planMode: { enabled: true, default: true } }
-    })
-    const toggle = el.shadowRoot.querySelector('[data-control="plan-mode"]')
-    expect(toggle.getAttribute('aria-pressed')).toBe('true')
-
-    await el.sendMessage('建一个订单主题模型')
-    await settle()
-    expect(transport.sendMessage.mock.calls[0][0].settings.permission_mode).toBe('plan')
-    el.remove()
-  })
-
-  it('sends default once switched off', async () => {
-    const transport = makeTransport()
-    const el = await mount({
-      transportFactory: () => transport,
-      composerConfig: { planMode: { enabled: true, default: true } }
-    })
-    const toggle = el.shadowRoot.querySelector('[data-control="plan-mode"]')
-    toggle.click()
-    await settle()
-    expect(toggle.getAttribute('aria-pressed')).toBe('false')
-
-    await el.sendMessage('再补一个门店维度')
-    await settle()
-    expect(transport.sendMessage.mock.calls[0][0].settings.permission_mode).toBe('default')
-    el.remove()
-  })
-
-  it('falls back to the picker mode when switched off', async () => {
-    const transport = makeTransport()
-    const el = await mount({
-      transportFactory: () => transport,
-      composerConfig: { ...CONFIG, permissionMode: 'bypassPermissions', planMode: { enabled: true } }
-    })
-
-    await el.sendMessage('开始')
-    await settle()
-    expect(transport.sendMessage.mock.calls[0][0].settings.permission_mode).toBe('bypassPermissions')
-    el.remove()
-  })
-
-  it('is absent unless the host enables it', async () => {
-    const el = await mount({ transportFactory: () => makeTransport(), composerConfig: CONFIG })
-    expect(el.shadowRoot.querySelector('[data-control="plan-mode"]')).toBeNull()
-    el.remove()
-  })
-})
-
 describe('textarea auto-resize', () => {
   it('starts at rows=1 and auto-resizes up to 160px', async () => {
     const el = await mount({ transportFactory: () => makeTransport() })
@@ -601,6 +548,78 @@ describe('textarea auto-resize', () => {
 
     expect(textarea.style.height).toBe('38px')
 
+    el.remove()
+  })
+})
+
+describe('after a plan is approved', () => {
+  const MODES = [
+    { value: 'plan', label: '计划' },
+    { value: 'default', label: '执行' },
+    { value: 'acceptEdits', label: '自动接受编辑' },
+  ]
+  const planRun = (submitInteraction = vi.fn(async () => {})) => makeTransport({
+    submitInteraction,
+    streamEvents: async function* () {
+      yield { type: 'event', seqId: 1, event: { record_type: 'stream', data: { type: 'message_start', usage: {} } } }
+      yield {
+        type: 'event',
+        seqId: 2,
+        event: {
+          record_type: 'permission_request',
+          data: { request_id: 'plan-1', tool_name: 'ExitPlanMode', risk_level: 'plan', summary: '# 计划\n1. 抽取订单' },
+        },
+      }
+      await new Promise(() => {})
+    },
+  })
+  const approve = async (el) => {
+    const button = el.shadowRoot.querySelector('.dac-plan-choice.primary')
+    expect(button, 'the plan card must offer approval').toBeTruthy()
+    button.click()
+    await flush()
+  }
+  const picker = (el) => el.shadowRoot.querySelector('[data-control="permission-mode"]')
+  // Streamed events are flushed on a timer, not a microtask.
+  const flush = async () => {
+    await settle()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await settle()
+  }
+
+  it('moves the picker to acceptEdits without saving it', async () => {
+    const transport = { ...planRun(), setPermissionMode: vi.fn(async () => {}) }
+    const el = await mount({ transportFactory: () => transport, composerConfig: { permissionModes: MODES, permissionMode: 'plan' } })
+    await el.sendMessage('建模')
+    await flush()
+
+    await approve(el)
+    expect(transport.submitInteraction).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'plan-1', payload: { decision: 'allow' } }))
+    expect(picker(el).value).toBe('acceptEdits')
+    expect(transport.setPermissionMode).not.toHaveBeenCalled()
+    el.remove()
+  })
+
+  it('keeps the picker when the approval fails', async () => {
+    const transport = planRun(vi.fn(async () => { throw new Error('offline') }))
+    const el = await mount({ transportFactory: () => transport, composerConfig: { permissionModes: MODES, permissionMode: 'plan' } })
+    await el.sendMessage('建模')
+    await flush()
+
+    await approve(el)
+    expect(picker(el).value).toBe('plan')
+    el.remove()
+  })
+
+  it('keeps the picker when the host does not offer acceptEdits', async () => {
+    const transport = planRun()
+    const modes = MODES.filter((item) => item.value !== 'acceptEdits')
+    const el = await mount({ transportFactory: () => transport, composerConfig: { permissionModes: modes, permissionMode: 'plan' } })
+    await el.sendMessage('建模')
+    await flush()
+
+    await approve(el)
+    expect(picker(el).value).toBe('plan')
     el.remove()
   })
 })
