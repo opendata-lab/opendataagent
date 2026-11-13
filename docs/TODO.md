@@ -4,6 +4,11 @@
 
 ## DataAgent 运行时与插件
 
+### 会话历史分页加载（大会话打开慢）
+
+- **现状**（2026-11-13 实测）：点击会话时前端一次读取 `GET /api/v1/nl2sql/topics/{topic_id}/messages` 的全部历史（默认 `page_size=200`、`order=asc`）。本地某会话 `topic_47941a2a…` 响应 4.0 MB（接口 100–120 ms），其余 0.2–0.7 MB；慢主要在浏览器渲染整段历史。接口已支持 `page`、`page_size`（≤500）、`order=asc|desc`。
+- **要做**：参考 Codex 的做法，先只加载最近一页（如 `order=desc&page_size=20`），滚动到顶部时再加载更早的一页并保持滚动位置；主站与 Widget 都改。先确认 4 MB 来自消息条数还是单条消息过大（工具输出、`records`），若是后者还需精简单条消息的返回内容。属于中等变更，实施前先写设计与计划。来源：用户反馈，2026-11-13。
+
 ### 多实例部署时的流式文字直推
 
 - **现状**（2026-11-13）：`content.delta` 只在执行任务的进程内直推给 SSE，不落库（[设计](design/2026-11-13-content-delta-live-stream-design.md)）。当前部署是单容器单 `uvicorn` 进程，满足要求。
