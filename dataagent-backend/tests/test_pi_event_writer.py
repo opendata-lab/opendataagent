@@ -199,3 +199,28 @@ def test_store_failure_is_swallowed_not_propagated():
     writer.ingest(_event(1, "content.delta", {"delta": "x"}))
     writer.ingest(_event(2, "run.failed", {"error_code": "X"}))
     writer.flush_open_blocks()
+
+
+def test_block_text_is_kept_until_its_row_is_stored():
+    """A failed insert must not lose text that exists nowhere else."""
+
+    class _FlakyStore(_FakeStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failures = 2
+
+        def append_sdk_record(self, **kwargs: Any) -> int:
+            if self.failures:
+                self.failures -= 1
+                raise RuntimeError("db hiccup")
+            return super().append_sdk_record(**kwargs)
+
+    store = _FlakyStore()
+    writer = PiEventWriter(store, "task-1", "topic-1")
+    writer.ingest(_event(1, "content.delta", {"turn_id": "t", "content_id": "c-0", "kind": "answer", "delta": "hello"}))
+    writer.ingest(_event(2, "content.completed", {"turn_id": "t", "content_id": "c-0", "kind": "answer", "text": "hello"}))  # fails
+    writer.flush_open_blocks()  # fails, block kept
+    writer.flush_open_blocks()  # succeeds
+
+    assert [(r["event_type"], r["data"].get("text")) for r in store.records] == [("content.delta", "hello")]
+    assert writer.open_blocks_snapshot() == []

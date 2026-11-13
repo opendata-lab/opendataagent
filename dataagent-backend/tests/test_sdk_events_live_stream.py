@@ -139,3 +139,35 @@ async def test_reconnect_mid_block_replaces_text_without_duplicates(live):
     stored = [(r["event_type"] or r["record_type"], r["data"].get("text")) for r in store.rows[2:]]
     assert stored == [("content.delta", "partial!"), ("run.failed", None), ("error", None)]
     assert _summary(got)[2:] == [("text", "partial!"), ("run.failed", 4), ("error", 5)]
+
+
+@pytest.mark.asyncio
+async def test_poll_after_timeout_never_overtakes_queued_deltas(live, monkeypatch):
+    """Events queued between a queue timeout and the poll must go out first."""
+    store, writer = live
+    writer.ingest(_event(1, "content.started", {"turn_id": "t", "content_id": "c-0", "kind": "answer"}))
+    writer.ingest(_delta(2, "hel"))
+
+    real_wait_for = asyncio.wait_for
+    fired = False
+
+    async def wait_for_then_race(aw, timeout):
+        nonlocal fired
+        if not fired and timeout and timeout >= 1:
+            fired = True
+            aw.close()
+            # The run loop gets in before the SSE coroutine resumes.
+            writer.ingest(_delta(3, "lo"))
+            writer.ingest(_event(4, "content.completed", {"turn_id": "t", "content_id": "c-0", "kind": "answer", "text": "hello"}))
+            raise asyncio.TimeoutError
+        return await real_wait_for(aw, timeout)
+
+    monkeypatch.setattr(routes.asyncio, "wait_for", wait_for_then_race)
+    got: list[dict[str, Any]] = []
+    consumer = asyncio.create_task(_collect(0, got))
+    await _settle()
+    live_events.close_channel(TASK)
+    store.status = "finished"
+    await asyncio.wait_for(consumer, timeout=5)
+
+    assert _summary(got) == [("content.started", 1), ("text", "hel"), ("delta", "lo"), ("content.completed", 2)]

@@ -116,14 +116,15 @@ class PiEventWriter:
             self._track_delta(payload, envelope)
             live_events.publish(self._task_id, self._live_record(payload))
             return
-        if event_type == "content.completed":
-            self._open_blocks.pop(_block_key(payload), None)
-        elif event_type in TERMINAL_EVENT_TYPES:
+        if event_type in TERMINAL_EVENT_TYPES:
             # A block cut short never gets content.completed; its text must be
             # stored before the terminal event so history shows it in order.
             self.flush_open_blocks()
 
         self._append("agent_event", event_type, payload, envelope)
+        if event_type == "content.completed":
+            # Only once stored: if the insert failed, the flush keeps the text.
+            self._open_blocks.pop(_block_key(payload), None)
 
         if event_type == "run.failed":
             self.append_error(
@@ -155,8 +156,7 @@ class PiEventWriter:
         Called before a terminal event and once more when the run exits, so any
         exit path keeps the text produced so far. Safe to repeat. Never raises.
         """
-        blocks, self._open_blocks = self._open_blocks, {}
-        for block in blocks.values():
+        for key, block in list(self._open_blocks.items()):
             try:
                 self._store.append_sdk_record(
                     task_id=self._task_id,
@@ -168,7 +168,10 @@ class PiEventWriter:
                     envelope=block["envelope"],
                 )
             except Exception:
+                # Kept for the next flush (the runtime's finally retries once more).
                 logger.exception("pi_event.flush_open_block_failed task_id=%s", self._task_id)
+                continue
+            del self._open_blocks[key]
 
     def open_blocks_snapshot(self) -> list[dict[str, Any]]:
         """Live records carrying the full text so far (``text``) of each unfinished block."""

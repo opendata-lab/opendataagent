@@ -678,6 +678,10 @@ async def _stream_sdk_events(task_id: str, after_id: int, context: dict[str, str
                         try:
                             item = await asyncio.wait_for(sub.queue.get(), timeout=poll_interval)
                         except asyncio.TimeoutError:
+                            # The writer may have queued events after the timeout
+                            # fired; deliver those first so a poll cannot overtake them.
+                            if not sub.queue.empty():
+                                continue
                             if sub.closed:
                                 break
                             pending = _sdk_rows_upto(store, task_id, next_after_id)
