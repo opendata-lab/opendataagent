@@ -478,6 +478,8 @@ async def execute_pi_run(
         return PiRunOutcome(terminal_status="cancelled" if cancel_deadline is not None else "failed",
             answer="".join(answer_parts), error_code=code, error_message=message, usage=usage,last_sequence=highest_sequence)
     finally:
+        # Exits that skip the terminal event (outer cancellation) still keep the unfinished text.
+        writer.flush_open_blocks()
         await _terminate(process,ctx.task_id)
         stderr_task.cancel()
         try:

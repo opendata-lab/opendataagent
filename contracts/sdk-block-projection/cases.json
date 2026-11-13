@@ -1419,6 +1419,55 @@
         }
       ],
       "expected": []
+    },
+    {
+      "name": "pi interrupted block stored as one full-text row",
+      "records": [
+        {
+          "seq_id": 1,
+          "record_type": "agent_event",
+          "event_type": "turn.started",
+          "data": {
+            "turn_id": "turn-1"
+          }
+        },
+        {
+          "seq_id": 2,
+          "record_type": "agent_event",
+          "event_type": "content.started",
+          "data": {
+            "turn_id": "turn-1",
+            "content_id": "c-0",
+            "kind": "answer"
+          }
+        },
+        {
+          "seq_id": 3,
+          "record_type": "agent_event",
+          "event_type": "content.delta",
+          "data": {
+            "turn_id": "turn-1",
+            "content_id": "c-0",
+            "kind": "answer",
+            "text": "partial answer"
+          }
+        },
+        {
+          "seq_id": 4,
+          "record_type": "agent_event",
+          "event_type": "run.failed",
+          "data": {
+            "error_code": "CELL_LOSS",
+            "message": "lost"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "kind": "text",
+          "text": "partial answer"
+        }
+      ]
     }
   ]
 }

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from config import get_settings
 from core.agent_profile_service import DEFAULT_AGENT_ID, build_agent_snapshot, get_agent_profile
 from core.provider_runtime import normalize_api_format
+from core import live_events
 from core.task_status import TERMINAL_TASK_STATUSES
 from core.agent_visibility import agent_visible_to
 from core.auth import AuthIdentity, is_auth_enabled, resolve_identity
@@ -622,7 +623,31 @@ async def api_stream_sdk_events(task_id: str, request: Request, after_id: int = 
     )
 
 
+def _sdk_rows_upto(store, task_id: str, after_id: int, upto: int | None = None) -> list[dict[str, Any]]:
+    """Persistent records with after_id < seq_id <= upto (no upper bound when upto is None)."""
+    rows: list[dict[str, Any]] = []
+    cursor = after_id
+    while True:
+        batch = store.list_sdk_records(task_id=task_id, after_id=cursor, limit=200)
+        for rec in batch:
+            seq_id = int(rec.get("seq_id") or 0)
+            if upto is not None and seq_id > upto:
+                return rows
+            rows.append(rec)
+            cursor = seq_id
+        if len(batch) < 200:
+            return rows
+
+
 async def _stream_sdk_events(task_id: str, after_id: int, context: dict[str, str] | None = None) -> AsyncIterator[str]:
+    """SSE for one task: live from memory while its segment runs here, MySQL polling otherwise.
+
+    Design: docs/design/2026-11-13-content-delta-live-stream-design.md. In live
+    mode, content.delta comes from the in-process channel (never stored) and a
+    persistent record arrives as a seq_id marker, read back from MySQL in id
+    order; timeouts also poll MySQL for rows written outside the event writer
+    (cards, decisions).
+    """
     cfg = get_settings()
     poll_interval = max(1, int(cfg.run_events_stream_poll_interval_seconds or 1))
     ping_seconds = max(5, int(cfg.run_events_stream_ping_seconds or 10))
@@ -634,6 +659,45 @@ async def _stream_sdk_events(task_id: str, after_id: int, context: dict[str, str
 
     try:
         while True:
+            sub = live_events.subscribe(task_id)
+            if sub is not None:
+                try:
+                    # Stored records first, then the text of blocks still being
+                    # generated, then live records in arrival order.
+                    pending: list[dict[str, Any]] = _sdk_rows_upto(store, task_id, next_after_id)
+                    pending.extend(sub.snapshot)
+                    while True:
+                        for rec in pending:
+                            if rec.get("seq_id"):
+                                next_after_id = max(next_after_id, int(rec["seq_id"]))
+                            delivered += 1
+                            yield _encode_sse(rec)
+                        if pending:
+                            since_ping = 0
+                        pending = []
+                        try:
+                            item = await asyncio.wait_for(sub.queue.get(), timeout=poll_interval)
+                        except asyncio.TimeoutError:
+                            if sub.closed:
+                                break
+                            pending = _sdk_rows_upto(store, task_id, next_after_id)
+                            if not pending:
+                                since_ping += poll_interval
+                                if since_ping >= ping_seconds:
+                                    yield ": ping\n\n"
+                                    since_ping = 0
+                            continue
+                        if item is None:
+                            break
+                        seq_id = item.get("seq_id")
+                        if seq_id is None:
+                            pending = [item]
+                        elif int(seq_id) > next_after_id:
+                            pending = _sdk_rows_upto(store, task_id, next_after_id, int(seq_id))
+                finally:
+                    live_events.unsubscribe(sub)
+                # The segment ended or this subscriber fell behind: poll below,
+                # or resubscribe (with a fresh snapshot) if a segment is live.
             records = store.list_sdk_records(task_id=task_id, after_id=next_after_id, limit=200)
             for rec in records:
                 next_after_id = max(next_after_id, int(rec.get("seq_id") or 0))

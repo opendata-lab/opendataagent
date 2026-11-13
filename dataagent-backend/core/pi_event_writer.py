@@ -6,6 +6,8 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from core import live_events
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,9 @@ class PiEventWriter:
         self._topic_id = topic_id
         self._turn_index = initial_turn_index
         self._highest_sequence = 0
+        # Blocks still being generated, keyed by (turn_id, content_id). Their
+        # deltas are streamed live and never stored; see flush_open_blocks.
+        self._open_blocks: dict[tuple[str, str], dict[str, Any]] = {}
 
     @property
     def turn_index(self) -> int:
@@ -97,23 +102,28 @@ class PiEventWriter:
         # deduplicated, ordered against its producer, or attributed to an engine
         # — everything history replay needs once it stops going through a second
         # projection.
-        self._store.append_sdk_record(
-            task_id=self._task_id,
-            topic_id=self._topic_id,
-            turn_index=self._turn_index,
-            record_type="agent_event",
-            event_type=event_type,
-            data=payload,
-            envelope={
-                "contract_version": 1,
-                "engine_kind": "pi_agent_core",
-                "event_id": str(event.get("event_id") or "") or None,
-                "run_id": str(event.get("run_id") or "") or None,
-                "task_attempt_id": str(event.get("task_attempt_id") or "") or None,
-                "engine_sequence": sequence if isinstance(sequence, int) else None,
-                "occurred_at": _parse_occurred_at(event.get("timestamp")),
-            },
-        )
+        envelope = {
+            "contract_version": 1,
+            "engine_kind": "pi_agent_core",
+            "event_id": str(event.get("event_id") or "") or None,
+            "run_id": str(event.get("run_id") or "") or None,
+            "task_attempt_id": str(event.get("task_attempt_id") or "") or None,
+            "engine_sequence": sequence if isinstance(sequence, int) else None,
+            "occurred_at": _parse_occurred_at(event.get("timestamp")),
+        }
+
+        if event_type == "content.delta":
+            self._track_delta(payload, envelope)
+            live_events.publish(self._task_id, self._live_record(payload))
+            return
+        if event_type == "content.completed":
+            self._open_blocks.pop(_block_key(payload), None)
+        elif event_type in TERMINAL_EVENT_TYPES:
+            # A block cut short never gets content.completed; its text must be
+            # stored before the terminal event so history shows it in order.
+            self.flush_open_blocks()
+
+        self._append("agent_event", event_type, payload, envelope)
 
         if event_type == "run.failed":
             self.append_error(
@@ -134,11 +144,71 @@ class PiEventWriter:
         }
         if detail:
             payload["detail"] = str(detail)
-        self._store.append_sdk_record(
+        self._append("error", None, payload)
+
+    def flush_open_blocks(self) -> None:
+        """Store each unfinished block's full text as one content.delta row with ``text``.
+
+        ``text`` replaces rather than appends in every reader, so a live client
+        that already shows part of the block does not duplicate it.
+
+        Called before a terminal event and once more when the run exits, so any
+        exit path keeps the text produced so far. Safe to repeat. Never raises.
+        """
+        blocks, self._open_blocks = self._open_blocks, {}
+        for block in blocks.values():
+            try:
+                self._store.append_sdk_record(
+                    task_id=self._task_id,
+                    topic_id=self._topic_id,
+                    turn_index=block["turn_index"],
+                    record_type="agent_event",
+                    event_type="content.delta",
+                    data={**block["data"], "text": block["text"]},
+                    envelope=block["envelope"],
+                )
+            except Exception:
+                logger.exception("pi_event.flush_open_block_failed task_id=%s", self._task_id)
+
+    def open_blocks_snapshot(self) -> list[dict[str, Any]]:
+        """Live records carrying the full text so far (``text``) of each unfinished block."""
+        return [
+            {**self._live_record({**block["data"], "text": block["text"]}), "turn_index": block["turn_index"]}
+            for block in self._open_blocks.values()
+        ]
+
+    def _track_delta(self, payload: dict[str, Any], envelope: dict[str, Any]) -> None:
+        key = _block_key(payload)
+        block = self._open_blocks.get(key)
+        if block is None:
+            base = {k: v for k, v in payload.items() if k != "delta"}
+            block = self._open_blocks[key] = {"turn_index": self._turn_index, "data": base, "text": ""}
+        block["text"] += str(payload.get("delta") or "")
+        block["envelope"] = envelope
+
+    def _live_record(self, data: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "turn_index": self._turn_index,
+            "record_type": "agent_event",
+            "event_type": "content.delta",
+            "data": data,
+        }
+
+    def _append(self, record_type: str, event_type: str | None, data: dict[str, Any], envelope: dict[str, Any] | None = None) -> None:
+        seq_id = self._store.append_sdk_record(
             task_id=self._task_id,
             topic_id=self._topic_id,
             turn_index=self._turn_index,
-            record_type="error",
-            event_type=None,
-            data=payload,
+            record_type=record_type,
+            event_type=event_type,
+            data=data,
+            envelope=envelope,
         )
+        # Persistent rows are read back from MySQL by the SSE route; the live
+        # channel only needs to know a row up to this id exists.
+        if seq_id:
+            live_events.publish(self._task_id, {"seq_id": int(seq_id)})
+
+
+def _block_key(payload: dict[str, Any]) -> tuple[str, str]:
+    return (str(payload.get("turn_id") or ""), str(payload.get("content_id") or ""))

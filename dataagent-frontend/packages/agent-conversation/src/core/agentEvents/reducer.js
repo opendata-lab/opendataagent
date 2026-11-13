@@ -92,7 +92,13 @@ export function reducePiEvent(state, record) {
         if (key) state._piContentBlocks[key] = block
       }
       if (type === AgentEventType.CONTENT_DELTA) {
-        block.content += String(data.delta || '')
+        // A live snapshot (stream opened or reconnected mid-block) carries the
+        // block's full text so far in `text`; it replaces, an ordinary delta appends.
+        if (Object.prototype.hasOwnProperty.call(data, 'text')) {
+          block.content = String(data.text || '')
+        } else {
+          block.content += String(data.delta || '')
+        }
       }
       break
     }

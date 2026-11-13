@@ -15,6 +15,7 @@ from core.agent_profile_service import normalize_agent_snapshot, normalize_permi
 from core.agent_runtime import (_build_system_prompt, _build_mcp_servers, _build_provider_env,
     resolve_agent_skill_runtime, resolve_enabled_skill_runtime, resolve_runtime_provider_selection)
 from core.context_governance import build_governance_settings
+from core import live_events
 from core.interaction_policy import plan_deadline, question_deadline
 from core.pi_event_writer import PiEventWriter
 from core.pi_runtime import PiRunContext, accumulate_usage, execute_pi_run
@@ -189,7 +190,11 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         value=is_cancel_requested()
         return await value if inspect.isawaitable(value) else value
 
-    outcome = await execute_pi_run(ctx,writer=writer,cancel_reason=cancelled,segment_handler=commit,operation_handler=operation_result)
+    live_events.open_channel(params.task_id,writer.open_blocks_snapshot)
+    try:
+        outcome = await execute_pi_run(ctx,writer=writer,cancel_reason=cancelled,segment_handler=commit,operation_handler=operation_result)
+    finally:
+        live_events.close_channel(params.task_id)
     return TaskExecutionResult(task_status="parked" if outcome.terminal_status=="parked" else from_engine_outcome(outcome.terminal_status),
         content=outcome.answer or outcome.error_message,usage=accumulate_usage(previous_usage.get("tokens"),outcome.usage) or None,
         error={"code":outcome.error_code,"message":outcome.error_message} if outcome.error_code else None,

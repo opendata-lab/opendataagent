@@ -17,8 +17,8 @@
 - 文件：`dataagent-backend/core/pi_event_writer.py`
 - `content.delta`：不调用 `append_sdk_record`；累积到 `(turn_id, content_id)` 的块文字；`publish`。
 - `content.completed`：写库，清除该块文字，`publish`（带 `seq_id`）。
-- 其他事件：写库后 `publish`（带 `seq_id`）。`append_sdk_record` 需返回新行 id。
-- `run.failed` / `run.cancelled` 写入前调用 `flush_open_blocks()`：每个未完成块写一行 `content.delta`（全量文字）。
+- 其他事件：写库后 `publish({"seq_id": id})` 标记。`append_sdk_record` 需返回新行 id。
+- 任一终态事件写入前调用 `flush_open_blocks()`：每个未完成块写一行 `content.delta`，`data.text` 为全量文字。
 - 新增公开方法 `flush_open_blocks()`，可重复调用，无未完成块时不写。
 
 ### Task 3：执行器与 runtime
@@ -28,7 +28,9 @@
 ### Task 4：存储
 - `dataagent-backend/core/topic_task_store.py`：
   - `append_sdk_record` 返回 `lastrowid`；
-  - 删除 `_delete_task_content_deltas` 及其调用与日志。
+  - 删除 `_delete_task_content_deltas` 及其调用与日志；
+  - 历史投影：`content.delta` 带 `text` 时覆盖块文字；
+  - 共享夹具 `contracts/sdk-block-projection/cases.json` 增加"中断块存为一行全量文字"用例。
 
 ### Task 5：SSE 路由
 - `dataagent-backend/api/routes.py` `_stream_sdk_events`：按设计 4.3 实现"订阅 → 补库 → 快照 → 消费队列 → 通道关闭后回到轮询"；无通道时沿用现有轮询。

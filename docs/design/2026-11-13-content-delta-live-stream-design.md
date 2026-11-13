@@ -41,8 +41,8 @@ api/routes.py _stream_sdk_events ── 每 1 秒 list_sdk_records(after_id) ─
 
 - `content.delta` **不写库**。writer 按内容键 `(turn_id, content_id)` 在内存里累积该块已生成的文字，并把事件推给本任务的直播通道（4.2）。
 - `content.completed` 写库（与现在相同），同时清掉该块的内存文字。
-- 其余事件照常写库，写库后带上数据库 `seq_id` 推给直播通道。
-- **中断时保留残余文字**：写入 `run.failed` / `run.cancelled` 之前，把每个仍未完成的块写成**一行** `content.delta`（`delta` 为该块全部已生成文字，`kind`、`turn_id`、`content_id` 不变）。现有历史投影与前端历史回放按"拼接 delta"处理，一行即完整文字，读取方不用改。writer 新增 `flush_open_blocks()` 执行这一步；`pi_runtime` 在运行结束的 `finally` 中也调用一次，覆盖外部取消等不经过终态事件的退出路径（已写过则为空操作）。
+- 其余事件照常写库，写库后只把新行的 `seq_id` 作为标记推给直播通道；SSE 按标记从 MySQL 读回该行，行的形态与顺序以数据库为准。
+- **中断时保留残余文字**：写入任一终态事件（`run.failed` / `run.cancelled` / `run.suspended` 等）之前，把每个仍未完成的块写成**一行** `content.delta`，`data.text` 为该块全部已生成文字（`kind`、`turn_id`、`content_id` 不变）。`text` 在所有读取方都表示"覆盖"而非追加：后端历史投影与前端 reducer 各加一处判断，共享夹具 `contracts/sdk-block-projection/cases.json` 增加对应用例。用覆盖而不是 `delta` 追加，是因为直播中的客户端已显示部分文字，追加会重复。writer 新增 `flush_open_blocks()` 执行这一步；`pi_runtime` 在运行结束的 `finally` 中也调用一次，覆盖外部取消等不经过终态事件的退出路径（已写过则为空操作）。
 - 正常结束的任务不会有 delta 行，**删除逻辑整体移除**（`_delete_task_content_deltas` 及其调用、日志）。
 
 ### 4.2 直播通道（新模块 `core/live_events.py`）
@@ -59,14 +59,14 @@ api/routes.py _stream_sdk_events ── 每 1 秒 list_sdk_records(after_id) ─
    1. 先 `subscribe`，拿到队列和快照；
    2. 查库补发 `id > after_id` 的持久记录，记录最大 `seq_id`；
    3. 对快照里每个未完成块，发一条 `content.delta`，`data` 带 `text`（该块全部已生成文字）而非 `delta`；
-   4. 之后消费队列：持久记录 `seq_id` ≤ 已发最大值的跳过（已由第 2 步发过），其余原样发出；delta 记录不带 `seq_id`。
+   4. 之后消费队列：delta 原样发出（不带 `seq_id`）；`seq_id` 标记大于已发最大值时，从 MySQL 读取 `(已发最大值, 标记]` 的行并按序发出。队列空闲达轮询间隔时也查一次库，补上不经 writer 写入的行（卡片请求、权限决定等，如 `session_checkpoint.py` 的卡片插入）。
    5. 通道关闭（段结束）后回到第 2 种模式。
 2. 否则（排队、等待卡片、已结束、或不在本进程）：沿用现有数据库轮询，逻辑不变。
 3. 终止条件、ping、断开日志不变。
 
 ### 4.4 前端：快照覆盖
 
-`reducer.js` 的 `content.delta` 分支：`data` 含 `text` 时用它**覆盖**块内容，否则追加 `delta`。不标 `done`，块仍在生成中。主站与 Widget 共用该 reducer，一处修改。
+`reducer.js` 的 `content.delta` 分支：`data` 含 `text` 时用它**覆盖**块内容，否则追加 `delta`。不标 `done`，块仍在生成中。主站与 Widget 共用该 reducer，一处修改。中断任务存下的那一行同样带 `text`，走同一分支。
 
 重连时前端已有的半截文字会被快照覆盖，不会重复；首次连接时块刚由 `content.started` 建好，快照填入全部已生成文字。
 
