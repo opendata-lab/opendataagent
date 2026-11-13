@@ -31,6 +31,8 @@ Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入�
 | `data-api-base-url` | 是 | — | 后端 API 地址，如 `http://localhost:8900` |
 | `data-display-mode` | 否 | `floating` | 显示模式：`floating`（悬浮）/ `inline`（内嵌） |
 | `data-panel-mode` | 否 | `floating` | 浮动实例初始面板布局：`floating` / `docked-left` / `docked-right` |
+| `data-panel-width` | 否 | `clamp(440px, 30vw, 720px)` | 悬浮面板初始宽度（像素整数，最小 360，不超过视口宽度减 48px）；用户拖动缩放后保存的宽度优先 |
+| `data-dock-width` | 否 | `440` | 固定面板宽度（像素整数，最小 360，不超过视口）；`panel-layout` 事件的 `width`、`reservedWidth` 随之变化 |
 | `data-position` | 否 | `bottom-right` | 悬浮按钮位置：`bottom-right` / `bottom-left` |
 | `data-project-name` | 否 | `智能问数` | 面板标题栏显示名称 |
 | `data-project-color` | 否 | `#4A90A4` | 主题色（十六进制） |
@@ -229,7 +231,7 @@ const openAssistant = (draft) => props.widget.open({ draft })
 
 安装配置可指定 `panelMode`，脚本属性为 `data-panel-mode`。运行时使用 `setPanelMode(mode)`，有效浮动实例返回 `true`，非法值或 inline 实例返回 `false`；`getPanelMode()` 查询当前模式。切换模式保留当前会话、输入和流连接；关闭后保留选中模式，下次打开继续沿用。回到悬浮模式恢复原位置/尺寸；模式本身不跨刷新持久化。
 
-固定面板贴视口边缘，高度占满视口，宽度 440px（不超过视口）。Widget 不修改宿主 DOM，父应用需要监听自己的实例的 `panel-layout` 事件，让主页面给面板留空间：
+固定面板贴视口边缘，高度占满视口，宽度默认 440px，可用 `dockWidth`（`data-dock-width`）设置，不超过视口。悬浮面板的初始宽度用 `panelWidth`（`data-panel-width`）设置。两者只在安装时配置，内嵌实例不使用。Widget 不修改宿主 DOM，父应用需要监听自己的实例的 `panel-layout` 事件，让主页面给面板留空间：
 
 ```javascript
 const app = document.getElementById('app') // 宿主的整页根容器

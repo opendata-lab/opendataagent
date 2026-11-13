@@ -1,6 +1,6 @@
 import { createApp, reactive, watch } from 'vue'
 import DataAgentWidget from './DataAgentWidget.vue'
-import { isWidgetLoginRequired, normalizePermissionMode, parseBooleanFlag, parseWidgetConfig, resolveCurrentScript, resolveFullscreenUrl, resolveVisitorId } from './config'
+import { isWidgetLoginRequired, normalizePanelWidth, normalizePermissionMode, parseBooleanFlag, parseWidgetConfig, resolveCurrentScript, resolveFullscreenUrl, resolveVisitorId } from './config'
 import { WIDGET_STYLES } from './styles'
 import { createWidgetTracker } from './tracking'
 import { getPanelLayout, normalizePanelMode, PANEL_MODES } from './panelLayout'
@@ -601,6 +601,8 @@ export function installWidget(scriptOrConfig = resolveCurrentScript()) {
     config.agentId = config.agentId || ''
     config.apiBaseUrl = config.apiBaseUrl ?? ''
     config.permissionMode = normalizePermissionMode(config.permissionMode)
+    config.panelWidth = normalizePanelWidth(config.panelWidth)
+    config.dockWidth = normalizePanelWidth(config.dockWidth)
   } else {
     scriptEl = scriptOrConfig
     config = parseWidgetConfig(scriptEl)

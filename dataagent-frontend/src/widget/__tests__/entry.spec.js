@@ -125,6 +125,35 @@ describe('installWidget', () => {
     window.innerWidth = 1024
   })
 
+  it('uses the configured docked width for the panel and the reserved host space', async () => {
+    window.innerWidth = 1440
+    const ctrl = installWidget({ agentId: 'demo', panelMode: 'docked-right', dockWidth: 520, panelWidth: '600' })
+    const layout = vi.fn()
+    ctrl.on('panel-layout', layout)
+    ctrl.open()
+    await flushPromises()
+    expect(ctrl.getPanelLayout()).toMatchObject({ mode: 'docked-right', width: 520, reservedWidth: 520 })
+    expect(layout).toHaveBeenLastCalledWith(expect.objectContaining({ width: 520, reservedWidth: 520 }))
+    const widget = document.querySelector('[data-odw-widget-root]').shadowRoot.querySelector('.odw-widget')
+    expect(widget.style.getPropertyValue('--odw-dock-width')).toBe('520px')
+    expect(widget.style.getPropertyValue('--odw-panel-width')).toBe('min(600px, calc(100vw - 48px))')
+    window.innerWidth = 480
+    window.dispatchEvent(new Event('resize'))
+    expect(ctrl.getPanelLayout()).toMatchObject({ width: 480, reservedWidth: 0 })
+    ctrl.destroy()
+    window.innerWidth = 1024
+  })
+
+  it('keeps the stylesheet widths when none are configured', async () => {
+    const ctrl = installWidget({ agentId: 'demo' })
+    ctrl.open()
+    await flushPromises()
+    const widget = document.querySelector('[data-odw-widget-root]').shadowRoot.querySelector('.odw-widget')
+    expect(widget.style.getPropertyValue('--odw-panel-width')).toBe('')
+    expect(widget.style.getPropertyValue('--odw-dock-width')).toBe('')
+    ctrl.destroy()
+  })
+
   it('keeps inline layout under host control', () => {
     const ctrl = installWidget({ displayMode: 'inline', panelMode: 'docked-left', agentId: 'demo' })
     expect(ctrl.setPanelMode('docked-right')).toBe(false)

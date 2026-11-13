@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseWidgetConfig, resolveFullscreenUrl } from '../config'
+import { normalizePanelWidth, parseWidgetConfig, resolveFullscreenUrl } from '../config'
 
 describe('parseWidgetConfig', () => {
   it('reads dataset attributes from the embedding script', () => {
@@ -86,6 +86,29 @@ describe('parseWidgetConfig', () => {
     script.dataset.fullscreenUrl = '/#/chat?topicId=one'
     expect(parseWidgetConfig(script).fullscreenUrl).toBe(new URL('/#/chat?topicId=one', window.location.href).href)
     expect(resolveFullscreenUrl('https://app.example.com/chat')).toBe('https://app.example.com/chat')
+  })
+
+  it('reads separate floating and docked widths in pixels', () => {
+    const script = document.createElement('script')
+    script.dataset.websiteId = 'demo'
+    expect(parseWidgetConfig(script)).toMatchObject({ panelWidth: null, dockWidth: null })
+
+    script.dataset.panelWidth = '560'
+    script.dataset.dockWidth = '480'
+    expect(parseWidgetConfig(script)).toMatchObject({ panelWidth: 560, dockWidth: 480 })
+  })
+
+  it.each([
+    ['600', 600],
+    ['520.4', 520],
+    ['200', 360],
+    ['0', null],
+    ['-1', null],
+    ['wide', null],
+    ['', null],
+    [undefined, null],
+  ])('normalizes panel width %s to %s', (value, expected) => {
+    expect(normalizePanelWidth(value)).toBe(expected)
   })
 
   it('reads permission mode from dataset and falls back to default', () => {

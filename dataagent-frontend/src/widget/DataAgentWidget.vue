@@ -143,9 +143,13 @@ const props = defineProps({
   }
 })
 
-const themeStyle = computed(() => ({
-  '--odw-widget-color': props.config.projectColor || '#4A90A4'
-}))
+const themeStyle = computed(() => {
+  const style = { '--odw-widget-color': props.config.projectColor || '#4A90A4' }
+  // Unset widths leave the stylesheet defaults in place.
+  if (props.config.panelWidth) style['--odw-panel-width'] = `min(${props.config.panelWidth}px, calc(100vw - 48px))`
+  if (props.config.dockWidth) style['--odw-dock-width'] = `${props.config.dockWidth}px`
+  return style
+})
 
 const positionClass = computed(() => `is-${props.config.position || 'bottom-right'}`)
 const modeClass = computed(() => `is-${props.config.displayMode || 'floating'}`)
