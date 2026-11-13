@@ -39,6 +39,9 @@ class _RecordingWriter:
     def ingest(self, event: dict[str, Any]) -> None:
         self.events.append(event)
 
+    def flush_open_blocks(self) -> None:
+        pass
+
 
 def _context(tmp_path: Path, provider_id: str, model_id: str) -> PiRunContext:
     return PiRunContext(

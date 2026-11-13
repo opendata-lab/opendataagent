@@ -58,3 +58,18 @@ Records written before this contract carry `record_type: "pi_event"` and, for
 tool results, an unsplit `{content, details}` wrapper. They are normalized on
 read in `list_sdk_records`, which every reader goes through, rather than being
 migrated: the stored evidence stays intact and a mistake is a code fix.
+
+## `content.delta` storage and the full-text form
+
+`content.delta` is streamed live and not stored
+([design](../../../docs/design/2026-11-13-content-delta-live-stream-design.md)).
+A `content.delta` whose payload has `text` instead of `delta` carries the
+block's full text so far, and every reader replaces the block's text with it
+rather than appending:
+
+- the SSE live snapshot sent when a stream opens or reconnects mid-block;
+- the one row stored for each unfinished block when a run ends without
+  `content.completed` for it (failed, cancelled, suspended, lost Cell).
+
+Rows from before this change hold incremental `delta` payloads and still
+replay by concatenation.

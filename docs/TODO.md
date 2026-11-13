@@ -4,6 +4,12 @@
 
 ## DataAgent 运行时与插件
 
+### 多实例部署时的流式文字直推
+
+- **现状**（2026-11-13）：`content.delta` 只在执行任务的进程内直推给 SSE，不落库（[设计](design/2026-11-13-content-delta-live-stream-design.md)）。当前部署是单容器单 `uvicorn` 进程，满足要求。
+- **缺口**：若后端扩成多实例，打到非执行实例的 SSE 只能轮询 MySQL 持久事件，看不到逐字打字（工具、完成等结果不受影响）。
+- **要做**：扩容前，按任务把 SSE 路由到持有租约的实例，或把 `core/live_events.py` 换成跨实例通道（如 Redis）；writer、存储与前端不需改动。来源：PR #37 评审，2026-11-13。
+
 ### 定时消息（会话定时任务）功能完善
 
 - **现状**（2026-10-27 核实）：只有后端。`/message-schedule` 接口（增删改查、执行日志）和协调器里的定时循环都在，数据存于 `da_agent_message_schedule`；前端 `dataagent-frontend/src/api/nl2sql.js` 封装了 `scheduleApi`，但没有任何页面或菜单调用，用户无入口。来源：2026-03-23 提交 `8bb5d774`。

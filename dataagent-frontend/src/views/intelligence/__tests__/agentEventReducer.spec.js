@@ -101,6 +101,22 @@ describe('Pi agent event reducer', () => {
     expect(state.blocks.map((b) => b.content)).toEqual(['still here'])
   })
 
+  it('replaces a block with a live snapshot instead of appending to it', () => {
+    // A stream opened or reconnected mid-block gets the full text so far as
+    // `text`; the client may already show part of it, so appending would duplicate.
+    const delta = (d) => piEvent(AgentEventType.CONTENT_DELTA, { turn_id: 'turn-1', content_id: 'c-0', kind: 'answer', ...d })
+    const state = feed([
+      piEvent(AgentEventType.TURN_STARTED, { turn_id: 'turn-1' }),
+      delta({ delta: 'par' }),
+      delta({ text: 'partial' }),
+      delta({ delta: '!' }),
+    ])
+
+    const block = state.blocks.find((b) => b.type === 'text')
+    expect(block.content).toBe('partial!')
+    expect(block.status).not.toBe('done')
+  })
+
   it('keeps parallel reasoning and answer blocks independently streaming', () => {
     const state = feed([
       piEvent(AgentEventType.TURN_STARTED, { turn_id: 'turn-1' }),

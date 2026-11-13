@@ -41,8 +41,13 @@ class _RecordingWriter:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
 
+        self.flushes = 0
+
     def ingest(self, event: dict[str, Any]) -> None:
         self.events.append(event)
+
+    def flush_open_blocks(self) -> None:
+        self.flushes += 1
 
 
 def _context(tmp_path: Path, **overrides: Any) -> PiRunContext:
@@ -132,6 +137,8 @@ async def test_happy_path_streams_events_and_reports_success(tmp_path: Path):
     # Reasoning deltas must not leak into the user-visible answer.
     assert outcome.answer == "hello"
     assert outcome.last_sequence == 6
+    # The exit path always offers unfinished text to storage.
+    assert writer.flushes == 1
     assert [e["type"] for e in writer.events] == [
         "run.started",
         "turn.started",
@@ -216,6 +223,34 @@ async def test_child_exit_without_terminal_event_yields_cell_loss(tmp_path: Path
     assert writer.events[-1]["payload"]["error_code"] == "CELL_LOSS"
     assert writer.events[-1]["payload"]["message"] == "运行时子进程异常中断（CELL_LOSS），请联系管理员"
 
+
+@pytest.mark.asyncio
+async def test_cell_loss_stores_the_unfinished_text_before_run_failed(tmp_path: Path):
+    """Deltas are not stored while streaming; a lost Cell must still keep its partial text."""
+    from core.pi_event_writer import PiEventWriter
+
+    class _Store:
+        def __init__(self) -> None:
+            self.records: list[dict[str, Any]] = []
+
+        def append_sdk_record(self, **kwargs: Any) -> int:
+            self.records.append(kwargs)
+            return len(self.records)
+
+    store = _Store()
+    cell = _stub_cell(
+        """
+        read()
+        event(1, "content.delta", {"turn_id": "t", "content_id": "c-0", "kind": "answer", "delta": "par"})
+        event(2, "content.delta", {"turn_id": "t", "content_id": "c-0", "kind": "answer", "delta": "tial"})
+        sys.exit(3)
+        """
+    )
+
+    await execute_pi_run(_context(tmp_path), writer=PiEventWriter(store, "task-1", "topic-1"), cell_command=cell)
+
+    rows = [(r["event_type"], r["data"].get("text")) for r in store.records if r["record_type"] == "agent_event"]
+    assert rows == [("content.delta", "partial"), ("run.failed", None)]
 
 @pytest.mark.asyncio
 async def test_node_heap_oom_is_reported_even_after_a_long_stack_trace(tmp_path: Path):
