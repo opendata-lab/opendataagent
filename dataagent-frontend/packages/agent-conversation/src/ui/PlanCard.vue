@@ -28,7 +28,11 @@
       </div>
       <!-- renderMarkdown escapes the source before parsing, so model-authored
            plan text cannot inject markup here. -->
-      <div class="dac-plan-body" :class="{ 'is-full': expanded }" v-html="rendered" />
+      <div ref="bodyRef" class="dac-plan-body" :class="{ 'is-full': expanded }" v-html="rendered" />
+      <!-- Only a clipped plan gets the bar; over a plan that fits it would hide the last lines. -->
+      <div v-if="!expanded && clipped" class="dac-plan-expand-bar">
+        <button type="button" class="dac-plan-view-btn" @click="openFull">查看完整计划</button>
+      </div>
     </div>
 
     <div v-if="isPending" class="dac-plan-ask">
@@ -72,7 +76,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { renderMarkdown } from '../core/message.js'
 import { useDeadline } from '../core/useDeadline.js'
@@ -91,6 +95,8 @@ const submitting = ref(false)
 const revising = ref(false)
 const note = ref('')
 const expanded = ref(false)
+const bodyRef = ref(null)
+const clipped = ref(false)
 
 watch(() => props.block._submitFailed, (failed) => {
   if (failed) submitting.value = false
@@ -103,6 +109,21 @@ const rendered = computed(() => renderMarkdown(markdown.value))
 const HEADING = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/m
 const title = computed(() => markdown.value.match(HEADING)?.[1] || '计划')
 const body = computed(() => (HEADING.test(markdown.value) ? markdown.value.replace(HEADING, '').trim() : markdown.value))
+// The collapsed body is capped at 240px; re-measure when the text or the card width changes.
+function measureClipped() {
+  const el = bodyRef.value
+  if (el && !expanded.value) clipped.value = el.scrollHeight > el.clientHeight + 1
+}
+let resizeObserver = null
+onMounted(() => {
+  measureClipped()
+  if (typeof ResizeObserver !== 'undefined' && bodyRef.value) {
+    resizeObserver = new ResizeObserver(measureClipped)
+    resizeObserver.observe(bodyRef.value)
+  }
+})
+onBeforeUnmount(() => resizeObserver?.disconnect())
+watch([rendered, expanded], () => nextTick(measureClipped))
 const isPending = computed(() => (props.block.decision || 'pending') === 'pending')
 
 const { label: countdown } = useDeadline(() => props.block.deadline_at, () => isPending.value)
@@ -183,7 +204,13 @@ const resultLabel = computed(() => {
 <style scoped>
 .dac-plan { margin: 8px 0; display: flex; flex-direction: column; gap: 10px; }
 .dac-plan-doc {
+  position: relative;
   border: 1px solid #e5e6eb; border-radius: 12px; background: #fff; overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.dac-plan-doc:hover {
+  border-color: #d0d5dd;
+  box-shadow: 0 1px 4px rgba(31, 35, 41, 0.05);
 }
 .dac-plan-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 10px 0 16px; }
 .dac-plan-title { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #8a9099; }
@@ -199,11 +226,51 @@ const resultLabel = computed(() => {
 .dac-plan-icon svg { width: 15px; height: 15px; }
 .dac-plan-body {
   padding: 6px 16px 14px; font-size: 13px; line-height: 1.7; color: #1f2329;
-  max-height: 240px; overflow: hidden;
+  max-height: 240px; overflow: hidden; overflow-wrap: anywhere; user-select: text;
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent 100%);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent 100%);
 }
-.dac-plan-body.is-full { max-height: none; -webkit-mask-image: none; mask-image: none; }
+.dac-plan-body.is-full { max-height: none; overflow: visible; -webkit-mask-image: none; mask-image: none; }
+.dac-plan-expand-bar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; justify-content: center; align-items: flex-end;
+  padding: 24px 16px 12px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.92) 48%, #ffffff 100%);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.dac-plan-doc:hover .dac-plan-expand-bar,
+.dac-plan-expand-bar:focus-within {
+  opacity: 1;
+}
+@media (hover: none) {
+  .dac-plan-expand-bar { opacity: 1; }
+}
+.dac-plan-view-btn {
+  border: 1px solid #d0d5dd; border-radius: var(--dac-button-radius, 6px);
+  background: #ffffff; color: #1f2329;
+  font: inherit; font-size: 12px; font-weight: 500; line-height: 1;
+  padding: 7px 14px; cursor: pointer;
+  box-shadow: 0 1px 3px rgba(31, 35, 41, 0.08);
+  pointer-events: none;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.dac-plan-doc:hover .dac-plan-view-btn,
+.dac-plan-expand-bar:focus-within .dac-plan-view-btn {
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .dac-plan-view-btn { pointer-events: auto; }
+}
+.dac-plan-view-btn:hover {
+  border-color: var(--dac-primary, #10b981);
+  color: var(--dac-primary, #10b981);
+  background: #f8fafc;
+}
+.dac-plan-view-btn:focus-visible {
+  outline: 2px solid var(--dac-primary, #10b981);
+  outline-offset: 2px;
+}
 .dac-plan-body :deep(h1) { font-size: 18px; font-weight: 600; margin: 6px 0 12px; line-height: 1.45; }
 .dac-plan-body :deep(h2) { font-size: 15px; font-weight: 600; margin: 14px 0 8px; line-height: 1.45; }
 .dac-plan-body :deep(h3), .dac-plan-body :deep(h4) { font-size: 13px; font-weight: 600; margin: 12px 0 6px; }
@@ -212,10 +279,10 @@ const resultLabel = computed(() => {
 .dac-plan-body :deep(ul), .dac-plan-body :deep(ol) { margin: 0 0 8px; padding-left: 20px; }
 .dac-plan-body :deep(li) { margin: 3px 0; }
 .dac-plan-body :deep(code) { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-.dac-plan-body :deep(pre) { background: #f7f8fa; border-radius: 6px; padding: 10px 12px; overflow-x: auto; }
+.dac-plan-body :deep(pre) { background: #f7f8fa; border-radius: 6px; padding: 10px 12px; overflow-x: auto; overflow-wrap: normal; }
 .dac-plan-body :deep(pre code) { background: none; padding: 0; }
-.dac-plan-body :deep(table) { border-collapse: collapse; width: 100%; margin: 8px 0; }
-.dac-plan-body :deep(th), .dac-plan-body :deep(td) { border-bottom: 1px solid #e5e6eb; padding: 7px 10px; font-size: 12px; text-align: left; }
+.dac-plan-body :deep(table) { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; width: 100%; margin: 8px 0; }
+.dac-plan-body :deep(th), .dac-plan-body :deep(td) { border-bottom: 1px solid #e5e6eb; padding: 7px 10px; font-size: 12px; text-align: left; min-width: 72px; }
 .dac-plan-body :deep(th) { background: #f2f3f5; font-weight: 500; }
 .dac-plan-ask {
   border: 1px solid #e5e6eb; border-radius: 12px; background: #fff; padding: 10px 12px 12px;

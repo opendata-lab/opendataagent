@@ -27,8 +27,9 @@ Point the element at a base path and implement these six endpoints under it:
   (`risk_level: "plan"`), `deny` with `note` asks the agent to revise the plan.
 
 Request records may carry `deadline_at` (ISO time; the card counts down) and
-answers carry `source` (`user` or `auto_timeout`). Expanding a plan dispatches a
-cancelable, composed `dataagent-plan-open` event with `{ markdown, title, body, requestId }`
+answers carry `source` (`user` or `auto_timeout`). Opening a plan card (via its
+hover `查看完整计划` button or top-right expand button) dispatches a cancelable,
+composed `dataagent-plan-open` event with `{ markdown, title, body, requestId }`
 (`body` is the markdown without its first heading, which `title` carries); a host
 that calls `preventDefault()` shows it itself, otherwise the card expands in place.
 
