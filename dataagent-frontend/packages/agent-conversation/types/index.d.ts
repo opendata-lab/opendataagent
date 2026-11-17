@@ -342,9 +342,9 @@ export interface AgentConversationEventMap {
   }>
   'dataagent-error': CustomEvent<{ code: ErrorCode; message: string; hint?: string }>
   /**
-   * A plan card's expand button. Cancelable: call `preventDefault()` to show
-   * the plan yourself; otherwise the card expands in place. `body` is the
-   * markdown without its first heading, which `title` carries.
+   * Clicking a plan card or its expand button. Cancelable: call `preventDefault()`
+   * to show the plan yourself; otherwise the card expands in place. `body` is
+   * the markdown without its first heading, which `title` carries.
    */
   'dataagent-plan-open': CustomEvent<{ markdown: string; title: string; body: string; requestId: string }>
 }

@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import PermissionConfirmationCard from '../../../../packages/agent-conversation/src/ui/PermissionCard.vue'
 
@@ -123,6 +123,47 @@ describe('PermissionConfirmationCard plan rendering', () => {
     expect(wrapper.find('.dac-plan-body.is-full').exists()).toBe(true)
     await wrapper.get('[aria-label="收起"]').trigger('click')
     expect(wrapper.find('.dac-plan-body.is-full').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('opens the plan only from 查看完整计划 or the header expand button, leaving card body free for selection', async () => {
+    const wrapper = mount(PermissionConfirmationCard, {
+      props: { block: planBlock({ summary: '# 订单主题建模计划\n\n查看 [规范](#spec)' }) },
+      attachTo: document.body,
+    })
+    const seen = []
+    const claim = (event) => {
+      seen.push(event.detail)
+      event.preventDefault()
+    }
+    document.addEventListener('dataagent-plan-open', claim)
+
+    // Clicking the card body, header, tools, or markdown links does not open the plan.
+    await wrapper.get('.dac-plan-body').trigger('click')
+    await wrapper.get('.dac-plan-head').trigger('click')
+    await wrapper.get('[aria-label="复制"]').trigger('click')
+    await wrapper.get('.dac-plan-body a').trigger('click')
+    expect(seen).toHaveLength(0)
+    expect(wrapper.find('.dac-plan-body.is-full').exists()).toBe(false)
+
+    // Clicking "查看完整计划" dispatches dataagent-plan-open and stays collapsed when claimed.
+    await wrapper.get('.dac-plan-view-btn').trigger('click')
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ title: '订单主题建模计划', requestId: 'req-1' })
+    expect(wrapper.find('.dac-plan-body.is-full').exists()).toBe(false)
+
+    // Without a host listener claiming it, "查看完整计划" expands in place and hides the hover bar.
+    document.removeEventListener('dataagent-plan-open', claim)
+    await wrapper.get('.dac-plan-view-btn').trigger('click')
+    expect(wrapper.find('.dac-plan-body.is-full').exists()).toBe(true)
+    expect(wrapper.find('.dac-plan-expand-bar').exists()).toBe(false)
+
+    await wrapper.get('.dac-plan-body').trigger('click')
+    expect(wrapper.find('.dac-plan-body.is-full').exists()).toBe(true)
+
+    await wrapper.get('[aria-label="收起"]').trigger('click')
+    expect(wrapper.find('.dac-plan-body.is-full').exists()).toBe(false)
+    expect(wrapper.find('.dac-plan-view-btn').text()).toBe('查看完整计划')
     wrapper.unmount()
   })
 

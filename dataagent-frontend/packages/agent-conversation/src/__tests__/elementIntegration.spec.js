@@ -816,3 +816,72 @@ describe('host send preparation', () => {
     el.remove()
   })
 })
+
+describe('plan card interactions', () => {
+  it('dispatches dataagent-plan-open across shadow DOM from 查看完整计划 without opening on body click', async () => {
+    const transport = makeTransport({
+      loadConversation: async () => ({
+        messages: [
+          {
+            id: 'a-plan',
+            role: 'assistant',
+            status: 'success',
+            _v2state: {
+              status: 'done',
+              blocks: [
+                {
+                  type: 'permission_request',
+                  requestId: 'plan-hist-1',
+                  tool_name: 'ExitPlanMode',
+                  risk_level: 'plan',
+                  summary: '# 星河采购建模计划\n\n## 步骤\n1. 新建对象 **供应商**',
+                  decision: 'allow'
+                }
+              ]
+            }
+          }
+        ],
+        run: null
+      })
+    })
+    const el = mount({ endpoint: '/conv/a', transportFactory: () => transport })
+    await settle()
+
+    const opened = []
+    const claim = (event) => {
+      opened.push(event.detail)
+      event.preventDefault()
+    }
+    el.addEventListener('dataagent-plan-open', claim)
+
+    const body = el.shadowRoot.querySelector('.dac-plan-body')
+    const viewBtn = el.shadowRoot.querySelector('.dac-plan-view-btn')
+    expect(body).toBeTruthy()
+    expect(viewBtn?.textContent).toBe('查看完整计划')
+
+    body.click()
+    await settle()
+    expect(opened).toEqual([])
+
+    viewBtn.click()
+    await settle()
+
+    expect(opened).toEqual([
+      {
+        title: '星河采购建模计划',
+        body: '## 步骤\n1. 新建对象 **供应商**',
+        markdown: '# 星河采购建模计划\n\n## 步骤\n1. 新建对象 **供应商**',
+        requestId: 'plan-hist-1'
+      }
+    ])
+    expect(body.classList.contains('is-full')).toBe(false)
+
+    // Unclaimed click expands in place inside shadow DOM.
+    el.removeEventListener('dataagent-plan-open', claim)
+    viewBtn.click()
+    await settle()
+    expect(body.classList.contains('is-full')).toBe(true)
+
+    el.remove()
+  })
+})
