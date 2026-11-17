@@ -1,5 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 import PermissionConfirmationCard from '../../../../packages/agent-conversation/src/ui/PermissionCard.vue'
 
@@ -126,7 +127,28 @@ describe('PermissionConfirmationCard plan rendering', () => {
     wrapper.unmount()
   })
 
+  // jsdom has no layout: make every element report a body taller than the 240px cap.
+  const stubClippedLayout = () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(600)
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(240)
+  }
+
+  it('shows 查看完整计划 only when the collapsed plan is clipped', async () => {
+    const fits = mount(PermissionConfirmationCard, { props: { block: planBlock() } })
+    expect(fits.find('.dac-plan-view-btn').exists()).toBe(false)
+    expect(fits.find('[aria-label="展开"]').exists()).toBe(true)
+    fits.unmount()
+
+    stubClippedLayout()
+    const clipped = mount(PermissionConfirmationCard, { props: { block: planBlock() } })
+    await nextTick()
+    expect(clipped.find('.dac-plan-view-btn').exists()).toBe(true)
+    clipped.unmount()
+    vi.restoreAllMocks()
+  })
+
   it('opens the plan only from 查看完整计划 or the header expand button, leaving card body free for selection', async () => {
+    stubClippedLayout()
     const wrapper = mount(PermissionConfirmationCard, {
       props: { block: planBlock({ summary: '# 订单主题建模计划\n\n查看 [规范](#spec)' }) },
       attachTo: document.body,
@@ -163,8 +185,10 @@ describe('PermissionConfirmationCard plan rendering', () => {
 
     await wrapper.get('[aria-label="收起"]').trigger('click')
     expect(wrapper.find('.dac-plan-body.is-full').exists()).toBe(false)
+    await nextTick()
     expect(wrapper.find('.dac-plan-view-btn').text()).toBe('查看完整计划')
     wrapper.unmount()
+    vi.restoreAllMocks()
   })
 
   it('treats closing the question as declining without notes', async () => {

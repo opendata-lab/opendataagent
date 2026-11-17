@@ -844,6 +844,9 @@ describe('plan card interactions', () => {
         run: null
       })
     })
+    // jsdom has no layout: report a plan body taller than the 240px cap.
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(600)
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(240)
     const el = mount({ endpoint: '/conv/a', transportFactory: () => transport })
     await settle()
 
@@ -883,5 +886,6 @@ describe('plan card interactions', () => {
     expect(body.classList.contains('is-full')).toBe(true)
 
     el.remove()
+    vi.restoreAllMocks()
   })
 })

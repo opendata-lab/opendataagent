@@ -342,7 +342,7 @@ export interface AgentConversationEventMap {
   }>
   'dataagent-error': CustomEvent<{ code: ErrorCode; message: string; hint?: string }>
   /**
-   * Clicking a plan card or its expand button. Cancelable: call `preventDefault()`
+   * A plan card's 查看完整计划 button or its expand button. Cancelable: call `preventDefault()`
    * to show the plan yourself; otherwise the card expands in place. `body` is
    * the markdown without its first heading, which `title` carries.
    */

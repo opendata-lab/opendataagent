@@ -28,8 +28,9 @@
       </div>
       <!-- renderMarkdown escapes the source before parsing, so model-authored
            plan text cannot inject markup here. -->
-      <div class="dac-plan-body" :class="{ 'is-full': expanded }" v-html="rendered" />
-      <div v-if="!expanded" class="dac-plan-expand-bar">
+      <div ref="bodyRef" class="dac-plan-body" :class="{ 'is-full': expanded }" v-html="rendered" />
+      <!-- Only a clipped plan gets the bar; over a plan that fits it would hide the last lines. -->
+      <div v-if="!expanded && clipped" class="dac-plan-expand-bar">
         <button type="button" class="dac-plan-view-btn" @click="openFull">查看完整计划</button>
       </div>
     </div>
@@ -75,7 +76,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { renderMarkdown } from '../core/message.js'
 import { useDeadline } from '../core/useDeadline.js'
@@ -94,6 +95,8 @@ const submitting = ref(false)
 const revising = ref(false)
 const note = ref('')
 const expanded = ref(false)
+const bodyRef = ref(null)
+const clipped = ref(false)
 
 watch(() => props.block._submitFailed, (failed) => {
   if (failed) submitting.value = false
@@ -106,6 +109,21 @@ const rendered = computed(() => renderMarkdown(markdown.value))
 const HEADING = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/m
 const title = computed(() => markdown.value.match(HEADING)?.[1] || '计划')
 const body = computed(() => (HEADING.test(markdown.value) ? markdown.value.replace(HEADING, '').trim() : markdown.value))
+// The collapsed body is capped at 240px; re-measure when the text or the card width changes.
+function measureClipped() {
+  const el = bodyRef.value
+  if (el && !expanded.value) clipped.value = el.scrollHeight > el.clientHeight + 1
+}
+let resizeObserver = null
+onMounted(() => {
+  measureClipped()
+  if (typeof ResizeObserver !== 'undefined' && bodyRef.value) {
+    resizeObserver = new ResizeObserver(measureClipped)
+    resizeObserver.observe(bodyRef.value)
+  }
+})
+onBeforeUnmount(() => resizeObserver?.disconnect())
+watch([rendered, expanded], () => nextTick(measureClipped))
 const isPending = computed(() => (props.block.decision || 'pending') === 'pending')
 
 const { label: countdown } = useDeadline(() => props.block.deadline_at, () => isPending.value)
