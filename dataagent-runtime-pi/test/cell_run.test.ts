@@ -469,6 +469,20 @@ test("a thrown setup error is reported as an execution failure", async () => {
   assert.match(String(last.payload.detail), /factory exploded/);
 });
 
+test("a failure that starts with a code keeps it as error_code and reads as a sentence", async () => {
+  const cases: Array<[string, string, RegExp]> = [
+    ["SANDBOX_COMMAND_TIMEOUT: bash exceeded 30s", "SANDBOX_COMMAND_TIMEOUT", /工具命令执行超时/],
+    ["RESULT_STORAGE_FAILED: disk full", "RESULT_STORAGE_FAILED", /^后台服务异常，请联系管理员$/],
+  ];
+  for (const [raw, code, message] of cases) {
+    const { events } = await runCell(initPayload(workspace()), (() => { throw new Error(raw); }) as never);
+    const last = events[events.length - 1];
+    assert.equal(last.payload.error_code, code);
+    assert.match(String(last.payload.message), message);
+    assert.equal(last.payload.detail, raw);
+  }
+});
+
 test("an unsupported provider fails the run rather than hanging it", async () => {
   const root = workspace();
   const { events, result } = await runCell(

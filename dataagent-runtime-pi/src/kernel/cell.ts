@@ -89,6 +89,14 @@ export interface CellRunResult {
   error?: string;
 }
 
+const LEADING_ERROR_CODE = /^([A-Z][A-Z0-9_]{2,})(?::|$)/;
+// Failures a user can act on; any other code reads as a service error.
+const USER_ERROR_MESSAGES: Record<string, string> = {
+  SANDBOX_COMMAND_TIMEOUT: "工具命令执行超时，请缩小处理范围后重试；持续出现请联系管理员",
+  MCP_WRITE_FAILED: "外部系统写入失败，请先确认外部系统中的数据状态再重试",
+  SESSION_SNAPSHOT_TOO_LARGE: "会话内容过大，请新建会话后继续",
+};
+
 export class Cell {
   private agent: Agent | null = null;
   private session: AgentSession | null = null;
@@ -518,9 +526,11 @@ export class Cell {
         emit(sm.createEvent("run.cancelled", { reason: "cancelled by control plane" }));
         return { terminal_status: "cancelled", last_sequence: sm.lastSequence };
       }
-      // The raw text is often an internal code; users get a sentence, the
-      // administrator gets the original in detail and in the logs above.
-      emit(sm.createEvent("run.failed", { error_code: "PI_EXECUTION_ERROR", message: "后台服务异常，请联系管理员", detail: message }));
+      // The raw text often starts with an internal code; it becomes error_code,
+      // users get a sentence, and the original goes to detail and the logs above.
+      const errorCode = LEADING_ERROR_CODE.exec(message)?.[1] ?? "PI_EXECUTION_ERROR";
+      emit(sm.createEvent("run.failed", { error_code: errorCode,
+        message: USER_ERROR_MESSAGES[errorCode] ?? "后台服务异常，请联系管理员", detail: message }));
       return { terminal_status: "failed", last_sequence: sm.lastSequence, error: message };
     } finally {
       if (activeToolTimer) {
