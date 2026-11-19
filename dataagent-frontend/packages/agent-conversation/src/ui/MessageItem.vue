@@ -69,7 +69,7 @@
              block is not actively streaming (between turns / tool calls).
              Suppressed when waiting for user permission or question input. -->
         <p v-if="showTrailingActivity(message)" class="dac-activity" part="activity">
-          <span class="dac-activity-dot" aria-hidden="true" />{{ activityLabel }}
+          <span class="dac-activity-dot" aria-hidden="true" />{{ message._v2state?.retryText || activityLabel }}
         </p>
       </template>
 
@@ -77,7 +77,7 @@
            conversation shows an empty bubble for however long the agent
            spends before its first token, which reads as a stall. -->
       <p v-else-if="isStreaming(message)" class="dac-activity" part="activity">
-        <span class="dac-activity-dot" aria-hidden="true" />{{ activityLabel }}
+        <span class="dac-activity-dot" aria-hidden="true" />{{ message._v2state?.retryText || activityLabel }}
       </p>
 
       <div v-else class="dac-bubble" part="bubble assistant-bubble">

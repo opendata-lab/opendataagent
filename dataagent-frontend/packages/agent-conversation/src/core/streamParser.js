@@ -34,6 +34,8 @@ export function createChatState() {
     usage: null,
     /** Error text if record_type === 'error'. */
     errorText: null,
+    /** Model retry notice while a transient failure is being retried. */
+    retryText: '',
   }
 }
 

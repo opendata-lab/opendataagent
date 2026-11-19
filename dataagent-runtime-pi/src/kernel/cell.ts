@@ -89,8 +89,18 @@ export interface CellRunResult {
   error?: string;
 }
 
+// Sandbox failures arrive as String(error), i.e. "Error: SANDBOX_COMMAND_TIMEOUT".
+const LEADING_ERROR_CODE = /^(?:Error:\s*)?([A-Z][A-Z0-9_]{2,})(?::|$)/;
+// Failures a user can act on; any other code reads as a service error.
+const USER_ERROR_MESSAGES: Record<string, string> = {
+  SANDBOX_COMMAND_TIMEOUT: "工具命令执行超时，请缩小处理范围后重试；持续出现请联系管理员",
+  MCP_WRITE_FAILED: "外部系统写入失败，请先确认外部系统中的数据状态再重试",
+  SESSION_SNAPSHOT_TOO_LARGE: "会话内容过大，请新建会话后继续",
+};
+
 export class Cell {
   private agent: Agent | null = null;
+  private session: AgentSession | null = null;
   private cancelled = false;
   private readonly cancellation = new AbortController();
 
@@ -99,7 +109,11 @@ export class Cell {
   public cancel(): void {
     this.cancelled = true;
     this.cancellation.abort();
-    this.agent?.abort();
+    // Retry backoffs and compaction (whose summary calls retry too) run outside
+    // the agent loop; session.abort() stops all of them, agent.abort() alone
+    // would leave the cancel waiting out a delay.
+    if (this.session) void this.session.abort().catch(() => {});
+    else this.agent?.abort();
   }
 
   public async run(
@@ -379,6 +393,23 @@ export class Cell {
         };
 
       this.agent = agent;
+      this.session = sdk.session;
+      let modelRetries = 0;
+      sdk.session.subscribe((event) => {
+        if (event.type === "auto_retry_end" && event.success) modelRetries = 0;
+        if (event.type !== "auto_retry_start") return;
+        modelRetries = event.attempt;
+        // The failed call's turn is replaced, not spent: it must not count
+        // toward max_turns, or retries alone could end the task.
+        turnCount = Math.max(0, turnCount - 1);
+        logDiagnostic(`model retry ${event.attempt}/${event.maxAttempts} in ${event.delayMs}ms: ${event.errorMessage}`);
+        // The failed attempt's turn is replaced by the retry; readers drop its
+        // partial text so the reply does not appear twice.
+        const discardTurnId = normalizer.discardableTurnId;
+        emit(sm.createEvent("run.retrying", { attempt: event.attempt, max_attempts: event.maxAttempts,
+          delay_ms: event.delayMs, error_message: event.errorMessage,
+          ...(discardTurnId ? { discard_turn_id: discardTurnId } : {}) }));
+      });
 
       agent.subscribe((piEvent: PiAgentEvent) => {
         if (piEvent.type === "turn_start") {
@@ -465,8 +496,13 @@ export class Cell {
       // carries no answer, so the state has to be consulted explicitly.
       const modelError = agent.state.errorMessage;
       if (modelError) {
-        emit(sm.createEvent("run.failed", { error_code: "PI_MODEL_ERROR", message: modelError }));
-        return { terminal_status: "failed", last_sequence: sm.lastSequence, error: modelError };
+        // The provider's text is for the administrator; the user gets a sentence.
+        logDiagnostic(`model error after ${modelRetries} retries: ${modelError}`);
+        const message = modelRetries > 0
+          ? `模型服务暂时不可用，已自动重试 ${modelRetries} 次仍未成功，请稍后重试；持续出现请联系管理员`
+          : "模型服务返回错误，请联系管理员";
+        emit(sm.createEvent("run.failed", { error_code: "PI_MODEL_ERROR", message, detail: modelError }));
+        return { terminal_status: "failed", last_sequence: sm.lastSequence, error: message };
       }
 
       // A reply cut off at the output ceiling ends the loop like a finished
@@ -491,7 +527,11 @@ export class Cell {
         emit(sm.createEvent("run.cancelled", { reason: "cancelled by control plane" }));
         return { terminal_status: "cancelled", last_sequence: sm.lastSequence };
       }
-      emit(sm.createEvent("run.failed", { error_code: "PI_EXECUTION_ERROR", message }));
+      // The raw text often starts with an internal code; it becomes error_code,
+      // users get a sentence, and the original goes to detail and the logs above.
+      const errorCode = LEADING_ERROR_CODE.exec(message)?.[1] ?? "PI_EXECUTION_ERROR";
+      emit(sm.createEvent("run.failed", { error_code: errorCode,
+        message: USER_ERROR_MESSAGES[errorCode] ?? "后台服务异常，请联系管理员", detail: message }));
       return { terminal_status: "failed", last_sequence: sm.lastSequence, error: message };
     } finally {
       if (activeToolTimer) {

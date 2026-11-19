@@ -116,6 +116,12 @@ class PiEventWriter:
             self._track_delta(payload, envelope)
             live_events.publish(self._task_id, self._live_record(payload))
             return
+        if event_type == "run.retrying" and payload.get("discard_turn_id"):
+            # The retry replaces this turn; flushing its partial text later
+            # would store a reply the user never gets.
+            discard = str(payload["discard_turn_id"])
+            for key in [key for key in self._open_blocks if key[0] == discard]:
+                del self._open_blocks[key]
         if event_type in TERMINAL_EVENT_TYPES:
             # A block cut short never gets content.completed; its text must be
             # stored before the terminal event so history shows it in order.

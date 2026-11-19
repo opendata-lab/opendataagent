@@ -4,6 +4,11 @@
 
 ## DataAgent 运行时与插件
 
+### OntoFoundry 嵌入的 SDK 显示重试提示
+
+- **现状**（2026-11-19）：OntoFoundry 依赖打包的 `agent-conversation` SDK（`vendor-agent-conversation-0.3.1-ontofoundry.1.tgz`），不认识 `run.retrying`，会忽略它，重试期间仍显示"正在处理…"。失败提示文字由后端生成，部署本仓库后即生效。
+- **要做**：合并 [ontofoundry#103](https://github.com/opendata-lab/ontofoundry/pull/103)（用本次 SDK 构建的 `0.3.2-ontofoundry.1`）。来源：[模型重试设计](design/2026-11-19-model-retry-and-friendly-errors-design.md)，2026-11-19。
+
 ### 会话历史分页加载（大会话打开慢）
 
 - **现状**（2026-11-13 实测）：点击会话时前端一次读取 `GET /api/v1/nl2sql/topics/{topic_id}/messages` 的全部历史（默认 `page_size=200`、`order=asc`）。本地某会话 `topic_47941a2a…` 响应 4.0 MB（接口 100–120 ms），其余 0.2–0.7 MB；慢主要在浏览器渲染整段历史。接口已支持 `page`、`page_size`（≤500）、`order=asc|desc`。

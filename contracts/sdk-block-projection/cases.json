@@ -1468,6 +1468,152 @@
           "text": "partial answer"
         }
       ]
+    },
+    {
+      "name": "pi retry drops the cut-off attempt's turn",
+      "records": [
+        {
+          "seq_id": 1,
+          "record_type": "agent_event",
+          "event_type": "turn.started",
+          "data": {
+            "turn_id": "turn-1"
+          }
+        },
+        {
+          "seq_id": 2,
+          "record_type": "agent_event",
+          "event_type": "content.started",
+          "data": {
+            "turn_id": "turn-1",
+            "content_id": "c-0",
+            "kind": "answer"
+          }
+        },
+        {
+          "seq_id": 3,
+          "record_type": "agent_event",
+          "event_type": "content.completed",
+          "data": {
+            "turn_id": "turn-1",
+            "content_id": "c-0",
+            "kind": "answer",
+            "text": "Kept"
+          }
+        },
+        {
+          "seq_id": 4,
+          "record_type": "agent_event",
+          "event_type": "turn.completed",
+          "data": {
+            "turn_id": "turn-1"
+          }
+        },
+        {
+          "seq_id": 5,
+          "record_type": "agent_event",
+          "event_type": "turn.started",
+          "data": {
+            "turn_id": "turn-2"
+          }
+        },
+        {
+          "seq_id": 6,
+          "record_type": "agent_event",
+          "event_type": "content.started",
+          "data": {
+            "turn_id": "turn-2",
+            "content_id": "c-0",
+            "kind": "answer"
+          }
+        },
+        {
+          "seq_id": 7,
+          "record_type": "agent_event",
+          "event_type": "content.completed",
+          "data": {
+            "turn_id": "turn-2",
+            "content_id": "c-0",
+            "kind": "answer",
+            "text": "Half an ans"
+          }
+        },
+        {
+          "seq_id": 8,
+          "record_type": "agent_event",
+          "event_type": "turn.completed",
+          "data": {
+            "turn_id": "turn-2"
+          }
+        },
+        {
+          "seq_id": 9,
+          "record_type": "agent_event",
+          "event_type": "run.retrying",
+          "data": {
+            "attempt": 1,
+            "max_attempts": 10,
+            "delay_ms": 1000,
+            "error_message": "socket hang up",
+            "discard_turn_id": "turn-2"
+          }
+        },
+        {
+          "seq_id": 10,
+          "record_type": "agent_event",
+          "event_type": "turn.started",
+          "data": {
+            "turn_id": "turn-3"
+          }
+        },
+        {
+          "seq_id": 11,
+          "record_type": "agent_event",
+          "event_type": "content.started",
+          "data": {
+            "turn_id": "turn-3",
+            "content_id": "c-0",
+            "kind": "answer"
+          }
+        },
+        {
+          "seq_id": 12,
+          "record_type": "agent_event",
+          "event_type": "content.completed",
+          "data": {
+            "turn_id": "turn-3",
+            "content_id": "c-0",
+            "kind": "answer",
+            "text": "Full answer"
+          }
+        },
+        {
+          "seq_id": 13,
+          "record_type": "agent_event",
+          "event_type": "turn.completed",
+          "data": {
+            "turn_id": "turn-3"
+          }
+        },
+        {
+          "seq_id": 14,
+          "record_type": "agent_event",
+          "event_type": "run.completed",
+          "data": {
+            "terminal_status": "success"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "kind": "text",
+          "text": "Kept"
+        },
+        {
+          "kind": "text",
+          "text": "Full answer"
+        }
+      ]
     }
   ]
 }

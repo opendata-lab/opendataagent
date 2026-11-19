@@ -47,6 +47,7 @@ function extractUsage(message: unknown): Record<string, number> | null {
 export class EventNormalizer {
   private turnCounter = 0;
   private currentTurnId = "turn-0";
+  private turnHasTools = false;
   private contentCounter = 0;
 
   constructor(
@@ -70,6 +71,15 @@ export class EventNormalizer {
     return this.currentTurnId;
   }
 
+  /**
+   * The current turn, when it holds only model output. A failed model call
+   * ends its turn before any tool runs, so this is the attempt a retry
+   * replaces; a turn that ran tools is never offered for discarding.
+   */
+  public get discardableTurnId(): string | null {
+    return this.turnHasTools ? null : this.currentTurnId;
+  }
+
   public normalize(piEvent: PiAgentEvent): NeutralAgentEvent[] {
     const events: Array<NeutralAgentEvent | null> = [];
 
@@ -78,6 +88,7 @@ export class EventNormalizer {
         this.turnCounter += 1;
         this.currentTurnId = `turn-${this.turnCounter}`;
         this.contentCounter = 0;
+        this.turnHasTools = false;
         events.push(this.sm.createEvent("turn.started", { turn_id: this.currentTurnId }));
         break;
       }
@@ -147,6 +158,7 @@ export class EventNormalizer {
         break;
       }
       case "tool_execution_start": {
+        this.turnHasTools = true;
         events.push(
           this.sm.createEvent("tool.started", {
             turn_id: this.currentTurnId,

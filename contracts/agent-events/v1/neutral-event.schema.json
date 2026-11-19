@@ -28,7 +28,8 @@
         "run.completed",
         "run.failed",
         "run.cancelled",
-        "run.suspended"
+        "run.suspended",
+        "run.retrying"
       ],
       "description": "tool.progress is deliberately absent: nothing rendered it, so it only grew the record table. Liveness uses the run.heartbeat protocol frame."
     },

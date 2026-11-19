@@ -47,6 +47,7 @@ export type AgentEventType =
   | "tool.completed"
   | "tool.denied"
   | "usage.updated"
+  | "run.retrying"
   | "turn.completed"
   | "run.completed"
   | "run.failed"

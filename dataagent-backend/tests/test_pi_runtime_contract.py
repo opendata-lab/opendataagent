@@ -150,6 +150,32 @@ async def test_happy_path_streams_events_and_reports_success(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_a_retried_attempt_leaves_no_text_in_the_answer(tmp_path: Path):
+    writer = _RecordingWriter()
+    cell = _stub_cell(
+        """
+        init = read()
+        send("cell.ready", {"manifest": {"runtime_kind": "pi_agent_core"}})
+        event(1, "run.started")
+        event(2, "turn.started", {"turn_id": "turn-1"})
+        event(3, "content.delta", {"turn_id": "turn-1", "content_id": "c-0", "kind": "answer", "delta": "half an"})
+        event(4, "turn.completed", {"turn_id": "turn-1"})
+        event(5, "run.retrying", {"attempt": 1, "max_attempts": 10, "delay_ms": 1000, "discard_turn_id": "turn-1"})
+        event(6, "turn.started", {"turn_id": "turn-2"})
+        event(7, "content.delta", {"turn_id": "turn-2", "content_id": "c-0", "kind": "answer", "delta": "hello"})
+        event(8, "run.completed", {"terminal_status": "success"})
+        send("run.settled", {"terminal_status": "success"})
+        """
+    )
+
+    outcome = await execute_pi_run(_context(tmp_path), writer=writer, cell_command=cell)
+
+    assert outcome.terminal_status == "success"
+    # The cut-off attempt's text is taken back when the retry is announced.
+    assert outcome.answer == "hello"
+
+
+@pytest.mark.asyncio
 async def test_run_event_payload_is_the_event_itself(tmp_path: Path):
     """Pins the exact shape both sides must agree on.
 
@@ -215,13 +241,14 @@ async def test_child_exit_without_terminal_event_yields_cell_loss(tmp_path: Path
 
     assert outcome.terminal_status == "failed"
     assert outcome.error_code == "CELL_LOSS"
-    assert outcome.error_message == "运行时子进程异常中断（CELL_LOSS），请联系管理员"
+    assert outcome.error_message == "后台服务异常中断，请稍后重试；持续出现请联系管理员"
     assert outcome.answer == "partial"
     # The record stream must still be terminated, or history replay shows a
     # turn that never ends.
     assert writer.events[-1]["type"] == "run.failed"
     assert writer.events[-1]["payload"]["error_code"] == "CELL_LOSS"
-    assert writer.events[-1]["payload"]["message"] == "运行时子进程异常中断（CELL_LOSS），请联系管理员"
+    assert writer.events[-1]["payload"]["message"] == "后台服务异常中断，请稍后重试；持续出现请联系管理员"
+    assert writer.events[-1]["payload"]["detail"].startswith("CELL_LOSS exit=")
 
 
 @pytest.mark.asyncio
@@ -272,7 +299,7 @@ async def test_node_heap_oom_is_reported_even_after_a_long_stack_trace(tmp_path:
     outcome = await execute_pi_run(_context(tmp_path), writer=writer, cell_command=cell)
 
     assert outcome.error_code == "CELL_LOSS"
-    assert outcome.error_message.startswith("运行时子进程内存不足退出（CELL_LOSS）")
+    assert outcome.error_message.startswith("后台服务内存不足")
     assert writer.events[-1]["payload"]["message"] == outcome.error_message
 
 
@@ -290,7 +317,8 @@ async def test_unknown_exception_text_is_not_stored_as_an_error_code(tmp_path: P
     outcome = await execute_pi_run(_context(tmp_path), writer=writer, cell_command=cell)
 
     assert outcome.error_code == "PI_EXECUTION_ERROR"
-    assert outcome.error_message == "UNSUPPORTED_THING_X"
+    assert outcome.error_message == "后台服务异常，请联系管理员"
+    assert writer.events[-1]["payload"]["detail"] == "UNSUPPORTED_THING_X"
 
 
 @pytest.mark.asyncio
@@ -623,5 +651,5 @@ async def test_killed_cell_is_lost_even_if_a_grandchild_holds_stdout(tmp_path: P
 
     assert outcome.terminal_status == "failed"
     assert outcome.error_code == "CELL_LOSS"
-    assert outcome.error_message.startswith("运行时子进程被系统强制终止（CELL_LOSS），可能是内存超出上限")
+    assert outcome.error_message.startswith("后台服务被系统终止，可能是内存超出上限")
     assert elapsed < 10, f"loss detected after {elapsed:.1f}s"
