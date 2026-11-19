@@ -4,6 +4,8 @@ import { createAgentSession, createExtensionRuntime, ModelRuntime, SessionManage
   type ResourceLoader, type ToolDefinition, type FileEntry } from "@earendil-works/pi-coding-agent";
 import type { CellInitPayload } from "../protocol/frames.js";
 
+export const MODEL_MAX_RETRIES = 10;
+
 /** No default resource loader, auth file, models file or session file. */
 export async function createDataAgentSession(init: CellInitPayload, model: Model<Api>, streamFn: StreamFn, tools: ToolDefinition[]) {
   const manager = SessionManager.inMemory("/mnt/workspace", undefined,
@@ -42,7 +44,13 @@ export async function createDataAgentSession(init: CellInitPayload, model: Model
   };
   const { session } = await createAgentSession({ cwd: "/mnt/workspace", model,
     modelRuntime: runtime, resourceLoader: loader, sessionManager: manager,
-    settingsManager: SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: true } }),
+    // Retry transient model failures (429/5xx, overload, dropped connections) in
+    // place: waits 1, 2, 4, then 8s each, about a minute over 10 attempts. Each
+    // wait stays well under the control plane's idle timeout.
+    settingsManager: SettingsManager.inMemory({
+      retry: { enabled: true, maxRetries: MODEL_MAX_RETRIES, baseDelayMs: 1000, maxAgentDelayMs: 8000 },
+      compaction: { enabled: true },
+    }),
     tools: tools.map(t => t.name), customTools: tools });
   session.agent.toolExecution = "sequential";
   session.agent.streamFunction = streamFn;

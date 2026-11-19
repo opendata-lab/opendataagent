@@ -84,7 +84,9 @@ async def test_real_cell_completes_the_protocol_round_trip(tmp_path: Path):
     terminals = [e for e in writer.events if e["type"] in terminal_types]
     assert len(terminals) == 1, f"expected exactly one terminal event, got {[e['type'] for e in terminals]}"
     assert terminals[0] is writer.events[-1]
-    assert "provider" in str(terminals[0]["payload"].get("message", "")).lower()
+    # Users get a sentence; the provider's text is kept in detail for administrators.
+    assert terminals[0]["payload"]["message"] == "后台服务异常，请联系管理员"
+    assert "provider" in str(terminals[0]["payload"].get("detail", "")).lower()
 
 
 @pytest.mark.asyncio

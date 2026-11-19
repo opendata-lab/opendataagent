@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -241,11 +242,16 @@ _ERROR_MESSAGES = {
     "PI_RUN_TIMEOUT": "单轮执行超时",
     "PI_RUN_IDLE_TIMEOUT": "单轮等待超时",
 }
+# Shown to users for any internal failure without a message of its own; the
+# code and the original text stay in error_code and detail for administrators.
+_SERVICE_ERROR_MESSAGE = "后台服务异常，请联系管理员"
+_STDERR_TAIL_LINES = 20
 
 
 @dataclass
 class _StderrDiagnostics:
     heap_oom: bool = False
+    tail: deque[str] = field(default_factory=lambda: deque(maxlen=_STDERR_TAIL_LINES))
 
 
 async def _drain_stderr(
@@ -261,8 +267,10 @@ async def _drain_stderr(
             if not raw:
                 return
             line = raw.decode("utf-8", errors="replace").rstrip()
-            if diagnostics is not None and _HEAP_OOM_MARKER in line.lower():
-                diagnostics.heap_oom = True
+            if diagnostics is not None:
+                diagnostics.tail.append(line)
+                if _HEAP_OOM_MARKER in line.lower():
+                    diagnostics.heap_oom = True
             logger.info("pi_cell.stderr task_id=%s %s", task_id, line)
     except Exception:
         logger.debug("pi_cell.stderr_reader_stopped task_id=%s", task_id, exc_info=True)
@@ -270,11 +278,15 @@ async def _drain_stderr(
 
 def _cell_loss_message(returncode: int | None, diagnostics: _StderrDiagnostics) -> str:
     if diagnostics.heap_oom:
-        return "运行时子进程内存不足退出（CELL_LOSS）：本次处理的数据量过大，请缩小查询范围后重试，持续出现请联系管理员"
+        return "后台服务内存不足：本次处理的数据量过大，请缩小范围后重试；持续出现请联系管理员"
     if returncode in (-9, 137):
         # SIGKILL is usually the kernel OOM killer, but an operator can send it too.
-        return "运行时子进程被系统强制终止（CELL_LOSS），可能是内存超出上限，请缩小查询范围后重试或联系管理员"
-    return "运行时子进程异常中断（CELL_LOSS），请联系管理员"
+        return "后台服务被系统终止，可能是内存超出上限，请稍后重试；持续出现请联系管理员"
+    return "后台服务异常中断，请稍后重试；持续出现请联系管理员"
+
+
+def _cell_loss_detail(returncode: int | None, diagnostics: _StderrDiagnostics) -> str:
+    return "\n".join([f"CELL_LOSS exit={returncode}", *diagnostics.tail])
 
 
 async def _terminate(process: asyncio.subprocess.Process, task_id: str) -> None:
@@ -368,7 +380,8 @@ async def execute_pi_run(
     next_cancel_check = started
     snapshot = None
     highest_sequence = 0
-    answer_parts: list[str] = []
+    # (turn_id, text) so a retried model call can take back its partial text.
+    answer_parts: list[tuple[str, str]] = []
     usage = None
     cell_settled = False
     try:
@@ -421,7 +434,7 @@ async def execute_pi_run(
                 if snapshot is None or segment_handler is None:
                     raise ValueError("Parked segment has no persistent snapshot")
                 await segment_handler(snapshot, payload.get("interaction"), time.monotonic() - started, usage)
-                return PiRunOutcome(terminal_status="parked", answer="".join(answer_parts), usage=usage, last_sequence=highest_sequence)
+                return PiRunOutcome(terminal_status="parked", answer="".join(text for _, text in answer_parts), usage=usage, last_sequence=highest_sequence)
             elif ftype == "run.event":
                 event_type = payload.get("type")
                 event_data = payload.get("payload") or {}
@@ -434,11 +447,14 @@ async def execute_pi_run(
                     await segment_handler(snapshot, None, time.monotonic() - started, usage)
                 writer.ingest(payload)
                 if event_type == "content.delta" and event_data.get("kind") != "reasoning":
-                    answer_parts.append(str(event_data.get("delta") or ""))
+                    answer_parts.append((str(event_data.get("turn_id") or ""), str(event_data.get("delta") or "")))
+                elif event_type == "run.retrying" and event_data.get("discard_turn_id"):
+                    discard = str(event_data["discard_turn_id"])
+                    answer_parts = [part for part in answer_parts if part[0] != discard]
                 elif event_type == "usage.updated":
                     usage = accumulate_usage(usage, event_data.get("usage"))
                 elif event_type in TERMINAL_EVENT_TYPES:
-                    return _outcome_from_terminal_event(event_type,event_data,"".join(answer_parts),usage,highest_sequence)
+                    return _outcome_from_terminal_event(event_type,event_data,"".join(text for _, text in answer_parts),usage,highest_sequence)
             elif ftype == "protocol.error":
                 raise RuntimeError(str(payload.get("error") or "PI_PROTOCOL_ERROR"))
             elif ftype == "run.settled":
@@ -451,6 +467,7 @@ async def execute_pi_run(
         if cancel_deadline is None and cancel_reason and await cancel_reason():
             cancel_deadline = time.monotonic()
         raw_exc = str(exc)
+        detail = ""
         if cancel_deadline is not None:
             code = "task_cancelled"
             message = "任务已取消"
@@ -464,19 +481,24 @@ async def execute_pi_run(
                 except Exception:
                     pass
             message = _cell_loss_message(process.returncode, stderr_diagnostics)
+            detail = _cell_loss_detail(process.returncode, stderr_diagnostics)
         elif raw_exc in _KNOWN_ERROR_CODES:
             code = raw_exc
-            message = _ERROR_MESSAGES.get(raw_exc, raw_exc)
+            message = _ERROR_MESSAGES.get(raw_exc, _SERVICE_ERROR_MESSAGE)
+            detail = raw_exc
         else:
             code = "PI_EXECUTION_ERROR"
-            message = raw_exc
+            message = _SERVICE_ERROR_MESSAGE
+            detail = raw_exc
+        if code != "task_cancelled":
+            logger.warning("pi_cell.failed task_id=%s code=%s detail=%s", ctx.task_id, code, detail)
         run_id = ctx.run_id or ctx.task_id
         writer.ingest({"event_id": f"ev-{run_id}-terminal", "run_id":run_id,
             "task_id":ctx.task_id,"task_attempt_id":run_id,"sequence":highest_sequence+1,
             "type":"run.cancelled" if cancel_deadline is not None else "run.failed",
-            "payload":{"error_code":code,"message":message}})
+            "payload":{"error_code":code,"message":message,"detail":detail}})
         return PiRunOutcome(terminal_status="cancelled" if cancel_deadline is not None else "failed",
-            answer="".join(answer_parts), error_code=code, error_message=message, usage=usage,last_sequence=highest_sequence)
+            answer="".join(text for _, text in answer_parts), error_code=code, error_message=message, usage=usage,last_sequence=highest_sequence)
     finally:
         # Exits that skip the terminal event (outer cancellation) still keep the unfinished text.
         writer.flush_open_blocks()

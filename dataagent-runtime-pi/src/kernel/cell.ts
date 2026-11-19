@@ -91,6 +91,7 @@ export interface CellRunResult {
 
 export class Cell {
   private agent: Agent | null = null;
+  private session: AgentSession | null = null;
   private cancelled = false;
   private readonly cancellation = new AbortController();
 
@@ -99,7 +100,11 @@ export class Cell {
   public cancel(): void {
     this.cancelled = true;
     this.cancellation.abort();
-    this.agent?.abort();
+    // Retry backoffs and compaction (whose summary calls retry too) run outside
+    // the agent loop; session.abort() stops all of them, agent.abort() alone
+    // would leave the cancel waiting out a delay.
+    if (this.session) void this.session.abort().catch(() => {});
+    else this.agent?.abort();
   }
 
   public async run(
@@ -379,6 +384,23 @@ export class Cell {
         };
 
       this.agent = agent;
+      this.session = sdk.session;
+      let modelRetries = 0;
+      sdk.session.subscribe((event) => {
+        if (event.type === "auto_retry_end" && event.success) modelRetries = 0;
+        if (event.type !== "auto_retry_start") return;
+        modelRetries = event.attempt;
+        // The failed call's turn is replaced, not spent: it must not count
+        // toward max_turns, or retries alone could end the task.
+        turnCount = Math.max(0, turnCount - 1);
+        logDiagnostic(`model retry ${event.attempt}/${event.maxAttempts} in ${event.delayMs}ms: ${event.errorMessage}`);
+        // The failed attempt's turn is replaced by the retry; readers drop its
+        // partial text so the reply does not appear twice.
+        const discardTurnId = normalizer.discardableTurnId;
+        emit(sm.createEvent("run.retrying", { attempt: event.attempt, max_attempts: event.maxAttempts,
+          delay_ms: event.delayMs, error_message: event.errorMessage,
+          ...(discardTurnId ? { discard_turn_id: discardTurnId } : {}) }));
+      });
 
       agent.subscribe((piEvent: PiAgentEvent) => {
         if (piEvent.type === "turn_start") {
@@ -465,8 +487,13 @@ export class Cell {
       // carries no answer, so the state has to be consulted explicitly.
       const modelError = agent.state.errorMessage;
       if (modelError) {
-        emit(sm.createEvent("run.failed", { error_code: "PI_MODEL_ERROR", message: modelError }));
-        return { terminal_status: "failed", last_sequence: sm.lastSequence, error: modelError };
+        // The provider's text is for the administrator; the user gets a sentence.
+        logDiagnostic(`model error after ${modelRetries} retries: ${modelError}`);
+        const message = modelRetries > 0
+          ? `模型服务暂时不可用，已自动重试 ${modelRetries} 次仍未成功，请稍后重试；持续出现请联系管理员`
+          : "模型服务返回错误，请联系管理员";
+        emit(sm.createEvent("run.failed", { error_code: "PI_MODEL_ERROR", message, detail: modelError }));
+        return { terminal_status: "failed", last_sequence: sm.lastSequence, error: message };
       }
 
       // A reply cut off at the output ceiling ends the loop like a finished
@@ -491,7 +518,9 @@ export class Cell {
         emit(sm.createEvent("run.cancelled", { reason: "cancelled by control plane" }));
         return { terminal_status: "cancelled", last_sequence: sm.lastSequence };
       }
-      emit(sm.createEvent("run.failed", { error_code: "PI_EXECUTION_ERROR", message }));
+      // The raw text is often an internal code; users get a sentence, the
+      // administrator gets the original in detail and in the logs above.
+      emit(sm.createEvent("run.failed", { error_code: "PI_EXECUTION_ERROR", message: "后台服务异常，请联系管理员", detail: message }));
       return { terminal_status: "failed", last_sequence: sm.lastSequence, error: message };
     } finally {
       if (activeToolTimer) {

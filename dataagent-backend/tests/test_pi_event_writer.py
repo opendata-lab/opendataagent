@@ -224,3 +224,20 @@ def test_block_text_is_kept_until_its_row_is_stored():
 
     assert [(r["event_type"], r["data"].get("text")) for r in store.records] == [("content.delta", "hello")]
     assert writer.open_blocks_snapshot() == []
+
+
+def test_a_retry_drops_the_discarded_turns_unfinished_text():
+    store = _FakeStore()
+    writer = PiEventWriter(store, "task-1", "topic-1")
+
+    writer.ingest(_event(1, "turn.started", {"turn_id": "t1"}))
+    writer.ingest(_event(2, "content.delta", {"turn_id": "t1", "content_id": "c-0", "kind": "answer", "delta": "half"}))
+    writer.ingest(_event(3, "turn.completed", {"turn_id": "t1"}))
+    writer.ingest(_event(4, "run.retrying", {"attempt": 1, "max_attempts": 10, "discard_turn_id": "t1"}))
+    writer.ingest(_event(5, "turn.started", {"turn_id": "t2"}))
+    writer.ingest(_event(6, "content.delta", {"turn_id": "t2", "content_id": "c-0", "kind": "answer", "delta": "whole"}))
+    writer.ingest(_event(7, "run.failed", {"error_code": "PI_MODEL_ERROR", "message": "m"}))
+
+    texts = [r["data"].get("text") for r in store.records if r["event_type"] == "content.delta"]
+    assert texts == ["whole"]
+    assert writer.open_blocks_snapshot() == []

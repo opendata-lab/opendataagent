@@ -88,7 +88,60 @@ describe('Pi agent event reducer', () => {
 
   it('maps CELL_LOSS to diagnostic message when no message is present', () => {
     const state = feed([piEvent(AgentEventType.RUN_FAILED, { error_code: 'CELL_LOSS' })])
-    expect(state.errorText).toBe('运行时子进程异常中断（CELL_LOSS），请联系管理员')
+    expect(state.errorText).toBe('后台服务异常中断，请联系管理员')
+  })
+
+  it('shows a retry notice until the run makes progress', () => {
+    const retrying = feed([
+      piEvent(AgentEventType.RUN_STARTED),
+      piEvent(AgentEventType.TURN_STARTED, { turn_id: 'turn-1' }),
+      piEvent(AgentEventType.CONTENT_DELTA, { turn_id: 'turn-1', content_id: 'c1', kind: 'text', delta: 'par' }),
+      piEvent(AgentEventType.RUN_RETRYING, { attempt: 3, max_attempts: 10, delay_ms: 4000, error_message: '503' }),
+    ])
+    expect(retrying.retryText).toBe('模型服务连接异常，正在重试（3/10）…')
+    expect(retrying.status).toBe('streaming')
+    // The cut-off block is closed so the activity line carrying the notice shows.
+    expect(retrying.blocks.every(block => block.status === 'done')).toBe(true)
+
+    const discarded = feed([
+      piEvent(AgentEventType.RUN_STARTED),
+      piEvent(AgentEventType.TURN_STARTED, { turn_id: 'turn-1' }),
+      piEvent(AgentEventType.CONTENT_DELTA, { turn_id: 'turn-1', content_id: 'c-0', kind: 'answer', delta: 'kept' }),
+      piEvent(AgentEventType.TURN_COMPLETED, { turn_id: 'turn-1' }),
+      piEvent(AgentEventType.TURN_STARTED, { turn_id: 'turn-2' }),
+      piEvent(AgentEventType.CONTENT_DELTA, { turn_id: 'turn-2', content_id: 'c-0', kind: 'answer', delta: 'half an' }),
+      piEvent(AgentEventType.TURN_COMPLETED, { turn_id: 'turn-2' }),
+      piEvent(AgentEventType.RUN_RETRYING, { attempt: 1, max_attempts: 10, discard_turn_id: 'turn-2' }),
+      piEvent(AgentEventType.TURN_STARTED, { turn_id: 'turn-3' }),
+      piEvent(AgentEventType.CONTENT_DELTA, { turn_id: 'turn-3', content_id: 'c-0', kind: 'answer', delta: 'whole' }),
+    ])
+    expect(discarded.blocks.map(block => block.content)).toEqual(['kept', 'whole'])
+
+    // The message shares the blocks array with its state; removal must not replace it.
+    const state = createChatState()
+    const shared = state.blocks
+    for (const record of [
+      piEvent(AgentEventType.TURN_STARTED, { turn_id: 'turn-1' }),
+      piEvent(AgentEventType.CONTENT_DELTA, { turn_id: 'turn-1', content_id: 'c-0', kind: 'answer', delta: 'half' }),
+      piEvent(AgentEventType.RUN_RETRYING, { attempt: 1, max_attempts: 10, discard_turn_id: 'turn-1' }),
+    ]) processV2Record(state, record)
+    expect(state.blocks).toBe(shared)
+    expect(shared).toEqual([])
+    expect(discarded.turns.map(turn => turn.blocks.map(block => block.content))).toEqual([['kept'], ['whole']])
+
+    const resumed = feed([
+      piEvent(AgentEventType.RUN_STARTED),
+      piEvent(AgentEventType.RUN_RETRYING, { attempt: 1, max_attempts: 10 }),
+      piEvent(AgentEventType.TURN_STARTED, { turn_id: 'turn-2' }),
+    ])
+    expect(resumed.retryText).toBe('')
+
+    const failed = feed([
+      piEvent(AgentEventType.RUN_RETRYING, { attempt: 10, max_attempts: 10 }),
+      piEvent(AgentEventType.RUN_FAILED, { error_code: 'PI_MODEL_ERROR', message: '模型服务暂时不可用' }),
+    ])
+    expect(failed.retryText).toBe('')
+    expect(failed.errorText).toBe('模型服务暂时不可用')
   })
 
   it('tolerates a missing turn.started rather than losing the answer', () => {

@@ -4,6 +4,16 @@
 
 ## DataAgent 运行时与插件
 
+### OntoFoundry 嵌入的 SDK 显示重试提示
+
+- **现状**（2026-11-19）：OntoFoundry 依赖打包的 `agent-conversation` SDK（`vendor-agent-conversation-0.3.0.tgz`），不认识 `run.retrying`，会忽略它，重试期间仍显示"正在处理…"。失败提示文字由后端生成，已生效。
+- **要做**：发布含 `run.retrying` 的 SDK 新版本，并更新 OntoFoundry 的依赖。来源：同上。
+
+### 前端 `ToolOutputRenderer.spec.js` 10 个用例失败
+
+- **现状**（2026-11-19）：main（`b8c807b`）上 `npx vitest run src/views/intelligence/__tests__/ToolOutputRenderer.spec.js` 10 个失败、12 个通过，与模型重试改动无关。
+- **要做**：查明是组件行为变了还是用例过期，修复后恢复全量前端测试为绿。来源：模型重试 PR 跑全量测试时发现，2026-11-19。
+
 ### 会话历史分页加载（大会话打开慢）
 
 - **现状**（2026-11-13 实测）：点击会话时前端一次读取 `GET /api/v1/nl2sql/topics/{topic_id}/messages` 的全部历史（默认 `page_size=200`、`order=asc`）。本地某会话 `topic_47941a2a…` 响应 4.0 MB（接口 100–120 ms），其余 0.2–0.7 MB；慢主要在浏览器渲染整段历史。接口已支持 `page`、`page_size`（≤500）、`order=asc|desc`。

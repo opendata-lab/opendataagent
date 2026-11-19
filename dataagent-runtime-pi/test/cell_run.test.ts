@@ -258,7 +258,116 @@ test("a model stream failure is reported as failed, not success", async () => {
   const last = events[events.length - 1];
   assert.equal(last.type, "run.failed");
   assert.equal(last.payload.error_code, "PI_MODEL_ERROR");
-  assert.match(String(last.payload.message), /provider exploded/);
+  // Not a transient failure, so no retry; the provider text goes to detail only.
+  assert.equal(events.filter(event => event.type === "run.retrying").length, 0);
+  assert.equal(last.payload.message, "模型服务返回错误，请联系管理员");
+  assert.match(String(last.payload.detail), /provider exploded/);
+});
+
+/** Throws a transient provider error for the first `failures` calls, then answers. */
+function flakyStreamFactory(failures: number, answer = "ok") {
+  let calls = 0;
+  const ok = textStreamFactory(answer)();
+  return () => ({
+    model: ok.model,
+    streamFn: ((...args: unknown[]) => {
+      calls += 1;
+      if (calls <= failures) throw new Error("503 Service Unavailable");
+      return (ok.streamFn as (...a: unknown[]) => unknown)(...args);
+    }) as never,
+  });
+}
+
+test("a transient model failure is retried and the run completes", async () => {
+  const root = workspace();
+  const { events, result } = await runCell(initPayload(root), flakyStreamFactory(2) as never);
+
+  assert.equal(result.terminal_status, "success");
+  const retries = events.filter(event => event.type === "run.retrying");
+  assert.deepEqual(retries.map(event => [event.payload.attempt, event.payload.max_attempts, event.payload.delay_ms]),
+    [[1, 10, 1000], [2, 10, 2000]]);
+  assert.match(String(retries[0].payload.error_message), /503/);
+  assert.equal(events[events.length - 1].type, "run.completed");
+});
+
+/** Streams part of a reply, then drops the connection; answers on the next call. */
+function cutOffThenAnswerFactory(partial: string, answer: string) {
+  let calls = 0;
+  const ok = textStreamFactory(answer)();
+  return () => ({
+    model: ok.model,
+    streamFn: ((...args: unknown[]) => {
+      calls += 1;
+      if (calls > 1) return (ok.streamFn as (...a: unknown[]) => unknown)(...args);
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        const message = {
+          role: "assistant" as const, content: [{ type: "text" as const, text: partial }],
+          api: "faux" as const, provider: "faux", model: "faux-1",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          stopReason: "error" as const, errorMessage: "socket hang up", timestamp: Date.now(),
+        };
+        stream.push({ type: "start", partial: message as never });
+        stream.push({ type: "text_start", contentIndex: 0, partial: message as never });
+        stream.push({ type: "text_delta", contentIndex: 0, delta: partial, partial: message as never });
+        stream.push({ type: "error", reason: "error", error: message as never });
+        stream.end();
+      });
+      return stream;
+    }) as never,
+  });
+}
+
+test("a retry names the cut-off attempt's turn so readers can drop its partial text", async () => {
+  const root = workspace();
+  const { events, result } = await runCell(initPayload(root), cutOffThenAnswerFactory("half an ans", "full answer") as never);
+
+  assert.equal(result.terminal_status, "success");
+  const retry = events.find(event => event.type === "run.retrying");
+  assert.ok(retry, "no run.retrying event");
+  const discarded = String(retry!.payload.discard_turn_id);
+  const partial = events.filter(event => event.type === "content.delta" && event.payload.turn_id === discarded);
+  assert.deepEqual(partial.map(event => event.payload.delta), ["half an ans"]);
+  // The answer is produced in a later turn than the one discarded.
+  const answer = events.filter(event => event.type === "content.delta" && event.payload.delta === "answer");
+  assert.equal(answer.length, 1);
+  assert.notEqual(answer[0].payload.turn_id, discarded);
+});
+
+test("retried model calls do not count toward the turn ceiling", async () => {
+  // One failed call, then a tool turn and an answer: two real turns, within
+  // max_turns=2 only if the failed call is not counted.
+  const calls = { count: 0 };
+  let failed = false;
+  const loop = toolLoopFactory(1, calls)();
+  const factory = () => ({
+    model: loop.model,
+    streamFn: ((...args: unknown[]) => {
+      if (!failed) { failed = true; throw new Error("503 Service Unavailable"); }
+      return (loop.streamFn as (...a: unknown[]) => unknown)(...args);
+    }) as never,
+  });
+  const { result } = await runCell(initPayload(workspace(), { limits: limitsWith(2) }), factory as never);
+  assert.equal(result.terminal_status, "success", result.error);
+  assert.equal(calls.count, 2);
+});
+
+test("a cancel during the retry wait ends the run without waiting out the delay", async () => {
+  const root = workspace();
+  const events: NeutralAgentEvent[] = [];
+  const cell = new Cell(flakyStreamFactory(100) as never);
+  let cancelledAt = 0;
+  const result = await cell.run(initPayload(root), (event) => {
+    events.push(event);
+    if (event.type === "run.retrying" && !cancelledAt) {
+      cancelledAt = Date.now();
+      queueMicrotask(() => cell.cancel());
+    }
+  });
+
+  assert.equal(result.terminal_status, "cancelled");
+  assert.ok(Date.now() - cancelledAt < 500, "cancel waited out the 1s backoff");
+  assert.equal(events[events.length - 1].type, "run.cancelled");
 });
 
 test("a reply cut off at the output ceiling is reported as failed, not success", async () => {
@@ -356,7 +465,8 @@ test("a thrown setup error is reported as an execution failure", async () => {
   const last = events[events.length - 1];
   assert.equal(last.type, "run.failed");
   assert.equal(last.payload.error_code, "PI_EXECUTION_ERROR");
-  assert.match(String(last.payload.message), /factory exploded/);
+  assert.equal(last.payload.message, "后台服务异常，请联系管理员");
+  assert.match(String(last.payload.detail), /factory exploded/);
 });
 
 test("an unsupported provider fails the run rather than hanging it", async () => {

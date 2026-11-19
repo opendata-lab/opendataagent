@@ -73,3 +73,17 @@ rather than appending:
 
 Rows from before this change hold incremental `delta` payloads and still
 replay by concatenation.
+
+## `run.retrying`
+
+Sent when a transient model failure (429/5xx, overload, dropped connection) is
+about to be retried, with payload `{attempt, max_attempts, delay_ms,
+error_message}`. It is not terminal. Readers show a retry notice until the next
+event of any other kind except `usage.updated`
+([design](../../../docs/design/2026-11-19-model-retry-and-friendly-errors-design.md)).
+
+## Failure messages
+
+`run.failed.payload.message` is written for end users and never carries an
+internal code; `error_code` and `detail` (original error text, and for
+`CELL_LOSS` the exit status and last stderr lines) are for administrators.

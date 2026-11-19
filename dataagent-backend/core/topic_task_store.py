@@ -100,6 +100,7 @@ def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     # Pi events address content blocks by an opaque content_id rather than the
     # SDK's integer block index, so they need their own lookup.
     block_by_content_id: dict[str, dict[str, Any]] = {}
+    current_turn_id = ""
     blocks_by_tool_id: dict[str, dict[str, Any]] = {}
     perm_blocks_by_request_id: dict[str, dict[str, Any]] = {}
     max_seq_id = 0
@@ -192,6 +193,17 @@ def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             if etype == "turn.started":
                 current_turn_blocks = []
                 block_by_content_id = {}
+                current_turn_id = str(data.get("turn_id") or "")
+
+            elif etype == "run.retrying":
+                # The retry replaces the failed attempt's turn; its partial text
+                # would otherwise sit above the reply that starts over.
+                discard = str(data.get("discard_turn_id") or "")
+                if discard and discard == current_turn_id and current_turn_blocks is not None:
+                    dropped = {id(block) for block in current_turn_blocks}
+                    ordered_blocks[:] = [block for block in ordered_blocks if id(block) not in dropped]
+                    current_turn_blocks = []
+                    block_by_content_id = {}
 
             elif etype in {"content.started", "content.delta"} and current_turn_blocks is not None:
                 is_reasoning = str(data.get("kind") or "") == "reasoning"

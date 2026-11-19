@@ -18,6 +18,7 @@ describe('createChatState', () => {
       status: 'idle',
       usage: null,
       errorText: null,
+      retryText: '',
     })
   })
 })

@@ -31,6 +31,7 @@ export const AgentEventType = Object.freeze({
   RUN_FAILED: 'run.failed',
   RUN_CANCELLED: 'run.cancelled',
   RUN_SUSPENDED: 'run.suspended',
+  RUN_RETRYING: 'run.retrying',
 })
 
 const TERMINAL_TYPES = new Set([
@@ -58,7 +59,36 @@ export function reducePiEvent(state, record) {
   }
   if (!state._piTurns) state._piTurns = {}
 
+  // A retry notice lasts until the run shows any sign of progress or ends.
+  if (type !== AgentEventType.RUN_RETRYING && type !== AgentEventType.USAGE_UPDATED) {
+    state.retryText = ''
+  }
+
   switch (type) {
+    case AgentEventType.RUN_RETRYING: {
+      const attempt = Number(data.attempt) || 0
+      const max = Number(data.max_attempts) || 0
+      state.retryText = `模型服务连接异常，正在重试（${attempt}/${max}）…`
+      // The retry replaces the failed attempt's turn. Its partial text would
+      // otherwise sit above the new reply, which starts over.
+      const discarded = state._piTurns?.[String(data.discard_turn_id || '')]
+      if (discarded) {
+        // In place: the message holds the same blocks array (message.blocks),
+        // and a new array would leave it showing the discarded text.
+        const dropped = new Set(discarded.blocks)
+        _removeInPlace(state.blocks, block => dropped.has(block))
+        _removeInPlace(state.turns, turn => turn === discarded)
+        delete state._piTurns[String(data.discard_turn_id)]
+        state._piContentBlocks = {}
+      }
+      // Anything else still open stays as it was; closing it lets the
+      // activity line (which carries the notice) show beneath it.
+      for (const block of state.blocks) {
+        if (block.status === 'streaming') block.status = 'done'
+      }
+      break
+    }
+
     case AgentEventType.RUN_STARTED: {
       state.status = 'streaming'
       break
@@ -168,7 +198,7 @@ export function reducePiEvent(state, record) {
       state.status = 'error'
       const rawMessage = data.message || data.error_code || '执行出错'
       if (rawMessage === 'CELL_LOSS' || (data.error_code === 'CELL_LOSS' && (!data.message || data.message === 'CELL_LOSS'))) {
-        state.errorText = '运行时子进程异常中断（CELL_LOSS），请联系管理员'
+        state.errorText = '后台服务异常中断，请联系管理员'
       } else {
         state.errorText = String(rawMessage)
       }
@@ -245,6 +275,12 @@ function _turnForEvent(state, data, create = true) {
 function _contentKey(turn, data) {
   const contentId = String(data?.content_id || '')
   return contentId ? `${String(turn?._turnId || data?.turn_id || '')}:${contentId}` : ''
+}
+
+function _removeInPlace(list, shouldRemove) {
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (shouldRemove(list[i])) list.splice(i, 1)
+  }
 }
 
 function _finishTurn(turn) {
