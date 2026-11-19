@@ -16,7 +16,7 @@
    - `core/pi_event_writer.py`、`core/topic_task_store.py`（历史投影）、`core/pi_runtime.py`（最终答案）：按 `discard_turn_id` 丢弃被打断的文字；共享夹具加一例。
    - `core/pi_runtime.py`：`CELL_LOSS` 文案去掉代码，`detail` 带退出码与 stderr 末尾；协议类错误和未知异常统一为"后台服务异常，请联系管理员"，原文放 `detail`。
 4. **前端 SDK**：reducer 处理 `run.retrying`（设置/清除 `retryText`），`MessageItem.vue` 活动提示优先显示 `retryText`；`CELL_LOSS` 兜底文案更新。
-5. **Backlog**：`docs/TODO.md` 记录 OntoFoundry 更新 SDK 依赖、前端既有失败用例。
+5. **Backlog**：`docs/TODO.md` 记录 OntoFoundry 更新 SDK 依赖（`ToolOutputRenderer.spec.js` 的既有失败已有条目「前端测试与组件对齐」）。
 
 ## 验证
 
