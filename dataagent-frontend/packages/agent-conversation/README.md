@@ -294,6 +294,15 @@ offered only while the conversation is empty.
 The retry button on a failed or stopped turn sends `继续` without attachments:
 the topic already holds the original request, so the agent continues the run
 instead of being asked the same thing twice.
+
+While a run is active, sending (Enter or the 加入队列 button) queues the message
+above the composer instead. Queued messages are sent in order after a run
+finishes successfully; after a failed or cancelled run the queue pauses until
+the user acts. Each item offers 立即 (stop the current run, then send this
+message next), 编辑 (back into the input, only when the input is empty) and
+删除. A queued send that the host answers with HTTP 409 is retried for about 20
+seconds, since the host may still be settling the previous run. The queue is
+kept in memory and dropped on reload or when the conversation changes.
 When lazy creation is enabled, the resolver receives either
 `{ reason: 'send', content, settings }` or `{ reason: 'upload', files }`; this
 lets the host title a new conversation from the real first prompt and create a
@@ -397,6 +406,7 @@ dataagent-conversation::part(input) {
 - **Containers & List**: `root`, `messages`, `empty`
 - **Messages & Content**: `message`, `message-user`, `message-assistant`, `user-turn`, `assistant-turn`, `bubble`, `user-bubble`, `assistant-bubble`, `thinking`, `thinking-toggle`, `thinking-content`, `attachments`, `attachment-size`, `activity`
 - **Composer & Controls**: `composer`, `input`, `footer`, `actions`, `controls`, `run-detail`, `send-button`, `stop-button`
+- **Message queue**: `queue`, `queue-item`, `queue-send-now`, `queue-edit`, `queue-remove`
 
 ---
 

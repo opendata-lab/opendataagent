@@ -122,14 +122,15 @@
             <rect x="8" y="8" width="8" height="8" rx="1.5" />
           </svg>
         </button>
+        <!-- While a run is active this queues the message; it is sent after the run. -->
         <button
-          v-else
+          v-if="!active || hasContent"
           type="button"
           class="dac-send dac-send-control"
           part="send-button"
-          title="发送"
-          aria-label="发送"
-          :disabled="disabled || !hasConfiguredModel || uploading || (!modelValue.trim() && !attachments.length)"
+          :title="active ? '加入队列' : '发送'"
+          :aria-label="active ? '加入队列' : '发送'"
+          :disabled="disabled || !hasConfiguredModel || uploading || !hasContent"
           @click="$emit('send')"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15" aria-hidden="true">
@@ -416,6 +417,8 @@ defineExpose({
   getAttachments: () => attachments.value,
   clearAttachments: () => { attachments.value = [] }
 })
+
+const hasContent = computed(() => Boolean(props.modelValue.trim() || attachments.value.length))
 
 const onKeydown = (event) => {
   // The menu gets first refusal: while it is open, Enter and Tab pick a

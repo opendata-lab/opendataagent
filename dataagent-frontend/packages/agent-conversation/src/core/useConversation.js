@@ -338,7 +338,12 @@ export function useConversation({ transport, generation, emit, settings }) {
     }
   }
 
-  async function send(content, { metadata, clearDraft = true, attachments = [], settings: callSettings } = {}) {
+  /**
+   * Resolves true once sent, false on failure. With quietBusy, a 409 (the host
+   * is still settling the previous run) resolves 'busy' without reporting an
+   * error, so the message queue can try again shortly.
+   */
+  async function send(content, { metadata, clearDraft = true, attachments = [], settings: callSettings, quietBusy = false } = {}) {
     const text = String(content ?? draft.value).trim()
     const files = Array.isArray(attachments) ? attachments.filter((file) => file?.relPath) : []
     if ((!text && !files.length) || !canSend.value) return false
@@ -371,6 +376,7 @@ export function useConversation({ transport, generation, emit, settings }) {
       if (started?.taskId) subscribe(started.taskId, 0, at)
       return true
     } catch (error) {
+      if (quietBusy && error?.status === 409) return 'busy'
       if (!stale(at)) fail(error)
       return false
     }
