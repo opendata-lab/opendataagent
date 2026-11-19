@@ -42,6 +42,11 @@ that calls `preventDefault()` shows it itself, otherwise the card expands in pla
 }
 ```
 
+A host that cannot start a run yet, for example because it is still
+processing the previous run's result, should answer `POST {endpoint}/messages`
+with HTTP 409. The message queue treats 409 as "busy" and retries for about 20
+seconds before reporting the error.
+
 `metadata` is opaque to the SDK: whatever you pass to `sendMessage` comes back
 on the completion event. It arrives from the browser, so **treat it as
 untrusted input** and validate it server-side.

@@ -373,7 +373,9 @@ export declare const ErrorCode: {
 export declare class ConversationError extends Error {
   readonly code: ErrorCode
   readonly hint: string
-  constructor(code: ErrorCode, message: string, hint?: string)
+  /** HTTP status when the error came from a response, else 0. */
+  readonly status: number
+  constructor(code: ErrorCode, message: string, hint?: string, status?: number)
 }
 
 export declare class StreamInterrupted extends ConversationError {

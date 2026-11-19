@@ -39,6 +39,17 @@
       >{{ text }}</button>
     </div>
 
+    <QueuePanel
+      v-if="queue.length"
+      :items="queue"
+      :active="conversation.isActive.value"
+      :paused="queuePaused"
+      :disabled="disabled"
+      @send-now="sendQueuedNow"
+      @edit="editQueued"
+      @remove="removeQueued"
+    />
+
     <Composer
       ref="composerRef"
       :model-value="conversation.draft.value"
@@ -50,7 +61,7 @@
       :endpoint-ready="endpointApi.ready.value"
       :ensure-endpoint="endpointApi.ensure"
       @update:modelValue="onDraft"
-      @send="() => send()"
+      @send="onComposerSend"
       @cancel="conversation.cancel"
       @settings-change="(value) => { settings = value }"
       @resize="detail => emit({ name: 'composer-resize', detail })"
@@ -68,8 +79,10 @@ import { computed, nextTick, onBeforeUnmount, provide, ref, toRef, useHost, watc
 import MessageList from './MessageList.vue'
 import Composer from './Composer.vue'
 import AttachmentPreview from './AttachmentPreview.vue'
+import QueuePanel from './QueuePanel.vue'
 import { useEndpoint } from '../core/useEndpoint.js'
 import { useConversation } from '../core/useConversation.js'
+import { TERMINAL_RUN_STATUSES } from '../core/runStatus.js'
 
 const props = defineProps({
   endpoint: { type: String, default: '' },
@@ -128,6 +141,8 @@ const endpointApi = useEndpoint({
     // in. The shell used to clear them on every switch; that responsibility
     // moved here with the composer.
     composerRef.value?.clearAttachments?.()
+    // Queued messages belong to the conversation they were written in.
+    clearQueue()
     conversation.reset()
     // A lazily-created conversation is known to be empty. Loading it here
     // races the first send and can overwrite the local user/assistant turns
@@ -229,6 +244,110 @@ async function send(content, options = {}) {
     preparing.value = false
   }
 }
+
+// ---- Message queue -------------------------------------------------------
+// While a run is active, sending queues the message instead. The queue is sent
+// in order after a run finishes successfully; after a failed or cancelled run
+// it pauses for the user. 立即 stops the current run and sends that message
+// next. Kept in memory: a reload drops it, as in other agent clients.
+const queue = ref([])
+const queuePaused = ref(false)
+let sendNowPending = false
+let flushing = false
+let queueSeq = 0
+// The host may still be settling the previous run (OntoFoundry answers 409
+// while it processes a result), so a queued send retries for ~20s first.
+const BUSY_RETRY_DELAYS_MS = [1000, 2000, 4000, 6000, 8000]
+
+function clearQueue() {
+  queue.value = []
+  queuePaused.value = false
+  sendNowPending = false
+}
+
+function onComposerSend() {
+  if (!conversation.isActive.value) return send()
+  const content = String(conversation.draft.value)
+  const attachments = [...(composerRef.value?.getAttachments?.() ?? [])]
+  if (!content.trim() && !attachments.length) return false
+  queue.value = [...queue.value, { id: `queued-${++queueSeq}`, content, attachments, settings: { ...settings } }]
+  onDraft('')
+  composerRef.value?.clearAttachments?.()
+  return true
+}
+
+function removeQueued(id) {
+  queue.value = queue.value.filter((item) => item.id !== id)
+  if (!queue.value.length) queuePaused.value = false
+}
+
+function editQueued(id) {
+  const item = queue.value.find((entry) => entry.id === id)
+  if (!item) return
+  // Never overwrite something the user is typing.
+  if (conversation.draft.value.trim()) {
+    emit({ name: 'error', detail: { code: 'QUEUE_EDIT_BLOCKED', message: '请先发送或清空输入框，再编辑排队的消息' } })
+    return
+  }
+  removeQueued(id)
+  onDraft(item.content)
+  composerRef.value?.focus?.()
+}
+
+function sendQueuedNow(id) {
+  const item = queue.value.find((entry) => entry.id === id)
+  if (!item) return
+  queue.value = [item, ...queue.value.filter((entry) => entry !== item)]
+  queuePaused.value = false
+  if (conversation.isActive.value) {
+    sendNowPending = true
+    conversation.cancel()
+    return
+  }
+  flushQueue()
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function flushQueue() {
+  if (flushing || !queue.value.length || conversation.isActive.value) return
+  flushing = true
+  sendNowPending = false
+  try {
+    const item = queue.value[0]
+    for (let attempt = 0; attempt <= BUSY_RETRY_DELAYS_MS.length; attempt += 1) {
+      if (disposed || queue.value[0] !== item) return
+      const last = attempt === BUSY_RETRY_DELAYS_MS.length
+      const result = await send(item.content, {
+        attachments: item.attachments,
+        settings: item.settings,
+        clearDraft: false,
+        quietBusy: !last,
+      })
+      if (result === true) {
+        queue.value = queue.value.filter((entry) => entry !== item)
+        return
+      }
+      if (result !== 'busy') {
+        queuePaused.value = true
+        return
+      }
+      await wait(BUSY_RETRY_DELAYS_MS[attempt])
+    }
+  } finally {
+    flushing = false
+  }
+}
+
+watch(() => conversation.run.value?.status, (status) => {
+  if (!TERMINAL_RUN_STATUSES.has(status) || !queue.value.length) return
+  if (status === 'finished' || sendNowPending) {
+    queuePaused.value = false
+    flushQueue()
+  } else {
+    queuePaused.value = true
+  }
+})
 
 // Releasing the stream when the host parks the element keeps a hidden tab from
 // holding a connection open; re-activating reloads to catch up on what it missed.

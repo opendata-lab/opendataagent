@@ -8,11 +8,14 @@ export const ErrorCode = Object.freeze({
 })
 
 export class ConversationError extends Error {
-  constructor(code, message, hint = '') {
+  constructor(code, message, hint = '', status = 0) {
     super(message)
     this.name = 'ConversationError'
     this.code = code
     this.hint = hint
+    // HTTP status when the error came from a response; 409 means "busy, try
+    // again shortly" to the message queue.
+    this.status = status
   }
 }
 
@@ -38,9 +41,11 @@ export async function errorFromResponse(response) {
   } catch {
     return new ConversationError(
       ErrorCode.CONVERSATION_UNAVAILABLE,
-      `请求失败 (${response.status})`
+      `请求失败 (${response.status})`,
+      '',
+      response.status
     )
   }
   const message = String(payload?.message || payload?.detail || `请求失败 (${response.status})`)
-  return new ConversationError(ErrorCode.CONVERSATION_UNAVAILABLE, message, String(payload?.hint || ''))
+  return new ConversationError(ErrorCode.CONVERSATION_UNAVAILABLE, message, String(payload?.hint || ''), response.status)
 }
