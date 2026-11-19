@@ -8,21 +8,21 @@
 
 ## 第一步：评价可见
 
-1. Alembic 迁移：`da_agent_message.feedback_at`；`update_message_feedback` 写入时间。
+1. Alembic 迁移：`da_agent_message.feedback_at`；`update_message_feedback` 在任何变更（含取消）时写入时间。
 2. `GET /admin/feedback`（分页，按助手、评价、时间筛选，计数），管理员权限。
 3. 管理端独立菜单「用户反馈」，链接到会话。
-4. 测试：权限、过滤、计数、取消评价后的计数。
+4. 测试：权限、过滤、计数、取消评价。
 
 ## 第二步：经验库
 
-1. 迁移：一张表 `da_agent_experience`（`personal`/`assistant`/`platform` 三层、`owner_user_id`、`partition_key`）。作业进度存管理设置 `experience_digest`。
-2. `core/experience_store.py`：读写、去重、版本、上限归档、证据撤销。
-3. `core/experience_digest.py`：按助手和分区收集前一天任务与评价、截断与筛选。
-4. 运行时：无工具总结会话入口（复用 Cell 的模型解析，不加载技能和 MCP），输出 JSON。
-5. 调度：`_schedule_loop` 每日按助手处理前一天，进度与用量写入管理设置；失败下次重试；额度。
-6. 注入：`_build_system_prompt` 增加「历史经验参考」，条目随任务落库；全局开关；评测任务关闭。
-7. 管理端「经验」页签与接口：列表、详情、启停、提升、编辑。
-8. 测试：校验与敏感内容拒绝、去重合并、点踩撤销、三层隔离（个人层不外泄、Widget 站点不进入助手层）、助手层需 2 个不同用户证据、注入上限与层级优先、作业幂等。
+1. 迁移：一张表 `da_agent_experience`。
+2. `core/experience_store.py`：读写、去重、上限归档、评价变化时重算证据。
+3. `core/experience_digest.py`：按 4.2 判定可信身份与分区，排除调试预览；收集前一天任务与评价，剥离回答中的表格、图表数据与数字，提取失败工具首行错误；每人 5 个、每助手 30 个上限。
+4. 总结调用：复用 `provider_runtime.request_model_text`，个人层按用户、助手层按分区分别调用；输出 JSON 校验，证据归属由代码核对。
+5. 后台作业：独立协程，Redis 锁续期，按 `(agent_id, partition_key)` 记录进度并补跑最多 7 天。
+6. 注入：`_build_system_prompt` 增加分层呈现的「历史经验参考」；选中条目写入 `checkpoint.state["injected_experiences"]` 并在恢复时复用；全局开关加入管理设置白名单。
+7. 管理端「经验」页签与接口：列表、详情、启停、提升（选择分区）、编辑。
+8. 测试：可信身份判定（浏览器 Widget、匿名、预览被排除）、个人层隔离、助手层 2 用户计数与评价撤销重算、敏感内容拒绝、单人上限、补跑与锁、注入上限与恢复复用。
 
 ## 暂不做
 
