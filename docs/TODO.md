@@ -6,8 +6,8 @@
 
 ### OntoFoundry 嵌入的 SDK 显示重试提示
 
-- **现状**（2026-11-19）：OntoFoundry 依赖打包的 `agent-conversation` SDK（`vendor-agent-conversation-0.3.0.tgz`），不认识 `run.retrying`，会忽略它，重试期间仍显示"正在处理…"。失败提示文字由后端生成，已生效。
-- **要做**：发布含 `run.retrying` 的 SDK 新版本，并更新 OntoFoundry 的依赖。来源：同上。
+- **现状**（2026-11-19）：OntoFoundry 依赖打包的 `agent-conversation` SDK（`vendor-agent-conversation-0.3.1-ontofoundry.1.tgz`），不认识 `run.retrying`，会忽略它，重试期间仍显示"正在处理…"。失败提示文字由后端生成，部署本仓库后即生效。
+- **要做**：合并 [ontofoundry#103](https://github.com/opendata-lab/ontofoundry/pull/103)（用本次 SDK 构建的 `0.3.2-ontofoundry.1`）。来源：[模型重试设计](design/2026-11-19-model-retry-and-friendly-errors-design.md)，2026-11-19。
 
 ### 会话历史分页加载（大会话打开慢）
 
