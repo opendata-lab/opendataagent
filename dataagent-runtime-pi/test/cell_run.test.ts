@@ -472,6 +472,8 @@ test("a thrown setup error is reported as an execution failure", async () => {
 test("a failure that starts with a code keeps it as error_code and reads as a sentence", async () => {
   const cases: Array<[string, string, RegExp]> = [
     ["SANDBOX_COMMAND_TIMEOUT: bash exceeded 30s", "SANDBOX_COMMAND_TIMEOUT", /工具命令执行超时/],
+    // What the sandbox tool actually reports: String(new Error(code)).
+    ["Error: SANDBOX_COMMAND_TIMEOUT", "SANDBOX_COMMAND_TIMEOUT", /工具命令执行超时/],
     ["RESULT_STORAGE_FAILED: disk full", "RESULT_STORAGE_FAILED", /^后台服务异常，请联系管理员$/],
   ];
   for (const [raw, code, message] of cases) {

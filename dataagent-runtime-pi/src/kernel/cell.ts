@@ -89,7 +89,8 @@ export interface CellRunResult {
   error?: string;
 }
 
-const LEADING_ERROR_CODE = /^([A-Z][A-Z0-9_]{2,})(?::|$)/;
+// Sandbox failures arrive as String(error), i.e. "Error: SANDBOX_COMMAND_TIMEOUT".
+const LEADING_ERROR_CODE = /^(?:Error:\s*)?([A-Z][A-Z0-9_]{2,})(?::|$)/;
 // Failures a user can act on; any other code reads as a service error.
 const USER_ERROR_MESSAGES: Record<string, string> = {
   SANDBOX_COMMAND_TIMEOUT: "工具命令执行超时，请缩小处理范围后重试；持续出现请联系管理员",
