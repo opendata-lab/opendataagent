@@ -344,7 +344,7 @@ export async function connectMcpServers(
               };
             } catch (err: unknown) {
               const errMsg = redactString(err instanceof Error ? err.message : String(err));
-              logDiagnostic(`Tool '${toolName}' call failed: ${errMsg}`);
+              logDiagnostic(`Tool '${toolName}' call failed: ${errMsg}`, { level: "WARN" });
               if (err instanceof McpToolError) throw err;
               // Upstream text reaches the model only after redaction; it can
               // carry connection strings or tokens.
@@ -358,7 +358,7 @@ export async function connectMcpServers(
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      logDiagnostic(`Failed to connect to MCP server '${server.name}' at ${server.url}: ${message}`);
+      logDiagnostic(`Failed to connect to MCP server '${server.name}' at ${server.url}: ${message}`, { level: "WARN" });
     }
   }
 
@@ -367,7 +367,7 @@ export async function connectMcpServers(
       try {
         await client.close();
       } catch (err: unknown) {
-        logDiagnostic(`Error closing MCP client: ${err instanceof Error ? err.message : String(err)}`);
+        logDiagnostic(`Error closing MCP client: ${err instanceof Error ? err.message : String(err)}`, { level: "WARN" });
       }
     }
   };

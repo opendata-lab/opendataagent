@@ -11,6 +11,7 @@ from typing import Any
 import redis.asyncio as redis
 
 from config import get_settings
+from core.logging_config import task_id_var, topic_id_var
 from core.task_control import PARKED_TASK_STATUSES, CancelReason
 from core.task_submission_service import compute_next_run_at, current_utc_naive, submit_message_task
 from core.task_executor import TaskExecutionInput, execute_task_stream
@@ -141,6 +142,9 @@ class TaskCoordinator:
         asyncio.create_task(self.submit_task(task_id), name=f"dataagent-task-resume-{task_id}")
 
     async def _run_task(self, task_id: str) -> None:
+        # Every log line of this run, and of the asyncio tasks it starts,
+        # carries the task id (this coroutine runs in its own task context).
+        task_id_var.set(task_id)
         topic_id = ""
         stop_heartbeat = asyncio.Event()
         lease_lost = asyncio.Event()
@@ -161,6 +165,7 @@ class TaskCoordinator:
                 if not task:
                     logger.warning("task.run.skip_missing task_id=%s", task_id)
                     return
+                topic_id_var.set(str(task.get("topic_id") or "") or None)
                 if str(task.get("task_status") or "") not in {"waiting", "running"}:
                     logger.info(
                         "task.run.skip_status task_id=%s topic_id=%s task_status=%s",

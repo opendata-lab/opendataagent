@@ -82,8 +82,8 @@ export class DockerSandboxManager {
       const c = this.config;
       const mode = c.networkMode === "host" ? "host" : "bridge";
       const network = c.networkEnabled === true ? mode : "none";
-      // Lands in the backend log as pi_cell.stderr, so the effective network is never a guess.
-      logDiagnostic(`sandbox start name=${this.containerName} network=${network} networkEnabled=${String(c.networkEnabled)} networkMode=${c.networkMode ?? "bridge"}`);
+      // Lands in runtime.log (source=sandbox), so the effective network is never a guess.
+      logDiagnostic(`sandbox start name=${this.containerName} network=${network} networkEnabled=${String(c.networkEnabled)} networkMode=${c.networkMode ?? "bridge"}`, { source: "sandbox" });
       const args = ["run", "-d", "--rm", "--pull=never", "--name", this.containerName,
         `--network=${network}`, "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
         `--memory=${c.memory}`, `--memory-swap=${c.memory}`, `--cpus=${c.cpus}`, `--pids-limit=${c.pidsLimit}`,

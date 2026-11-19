@@ -13,8 +13,18 @@ import { PROTOCOL_VERSION, makeFrame, type OutboundFrameType, type ProtocolFrame
 
 export type FrameHandler = (frame: ProtocolFrame) => Promise<void> | void;
 
-export function logDiagnostic(message: string): void {
-  process.stderr.write(`[PiCell] ${message}\n`);
+export type DiagnosticLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
+
+/**
+ * One JSON line on stderr. stdout carries only protocol frames; the backend
+ * reads stderr into runtime.log, tagging each line with the task id
+ * (docs/design/2026-11-19-logging-standard-design.md).
+ */
+export function logDiagnostic(
+  message: string,
+  { level = "INFO", source = "runtime" }: { level?: DiagnosticLevel; source?: "runtime" | "sandbox" } = {}
+): void {
+  process.stderr.write(JSON.stringify({ level, source, message }) + "\n");
 }
 
 export class CellChannel {
@@ -62,7 +72,7 @@ export class CellChannel {
         return;
       }
       void Promise.resolve(this.handler?.(frame)).catch((err) => {
-        logDiagnostic(`frame handler error: ${String(err)}`);
+        logDiagnostic(`frame handler error: ${String(err)}`, { level: "ERROR" });
       });
     });
   }

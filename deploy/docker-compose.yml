@@ -2,8 +2,18 @@
 # 共用 deploy_mysql-data 等卷并互相识别为孤儿容器。
 name: opendataagent
 
+# Docker's own log is a short buffer for `docker compose logs`; the history lives
+# in ./logs/<service>/ (one-line JSON, rotated daily, kept 30 days), see
+# docs/design/2026-11-19-logging-standard-design.md.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   redis:
+    logging: *default-logging
     image: redis:7.2-alpine
     container_name: dataagent-redis
     restart: always
@@ -22,6 +32,7 @@ services:
       timeout: 5s
       retries: 5
   dataagent-backend:
+    logging: *default-logging
     image: ${ODA_BACKEND_IMAGE:-mikefan2019/oda-backend:latest}
     container_name: dataagent-backend
     restart: always
@@ -44,6 +55,8 @@ services:
       DATAAGENT_RUNTIME_UID: ${DATAAGENT_RUNTIME_UID:-1000}
       DATAAGENT_RUNTIME_GID: ${DATAAGENT_RUNTIME_GID:-1000}
       DATAAGENT_CONFIG: /app/docker/dataagent/dataagent_config.py
+      DATAAGENT_LOG_DIR: /var/log/dataagent-backend
+      DATAAGENT_LOG_LEVEL: ${DATAAGENT_LOG_LEVEL:-INFO}
     ports:
     - 8900:8900
     depends_on:
@@ -62,9 +75,11 @@ services:
     volumes:
     - ${DATAAGENT_HOST_ROOT:-/dataagent_runtime}:/dataagent_runtime
     - ./docker/dataagent:/app/docker/dataagent:ro
+    - ./logs/dataagent-backend:/var/log/dataagent-backend
     - dataagent-skills:/app/.claude/skills
     - ${DATAAGENT_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
   dataagent-frontend:
+    logging: *default-logging
     image: ${ODA_FRONTEND_IMAGE:-mikefan2019/oda-frontend:latest}
     container_name: dataagent-frontend
     restart: always

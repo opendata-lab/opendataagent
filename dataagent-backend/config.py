@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # The three context_* names mirror the ``governance_settings`` wire contract
     # consumed by the Cell (src/protocol/frames.ts); keep them in lockstep.
     dataagent_run_idle_timeout_seconds: int = Field(default=300, gt=0)
+    # Logging (docs/design/2026-11-19-logging-standard-design.md). Empty dir:
+    # console only, as in source runs; Compose sets it to the mounted logs/.
+    dataagent_log_dir: str = ""
+    dataagent_log_level: str = "INFO"
     dataagent_context_max_inline_result_bytes: int = 16 * 1024
     dataagent_context_protect_tail_turns: int = 6
     dataagent_context_max_context_tokens: int = 64_000
