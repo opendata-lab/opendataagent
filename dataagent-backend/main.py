@@ -2,11 +2,9 @@
 DataAgent Backend 入口 — FastAPI 应用
 """
 import logging
-import time
-import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.admin_routes import router as admin_router
@@ -14,7 +12,7 @@ from api.auth_routes import oauth_callback_router, router as auth_router
 from api.eval_routes import router as eval_router
 from api.routes import router
 from config import get_settings, update_settings
-from core.logging_config import configure_logging, request_id_var, valid_request_id
+from core.logging_config import RequestContextMiddleware, configure_logging
 from core.auth import init_auth
 from core.agent_profile_service import bootstrap_default_agent_profile
 from core.skill_admin_service import bootstrap_admin_settings, reindex_documents_from_disk
@@ -47,34 +45,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 
-# Added last so it is the outermost middleware: every request gets an id and
-# one completion line. OntoFoundry sends its own X-Request-ID, so one operation
-# can be found in both services' logs.
-@app.middleware("http")
-async def request_context(request: Request, call_next):
-    request_id = valid_request_id(request.headers.get("x-request-id")) or uuid.uuid4().hex
-    token = request_id_var.set(request_id)
-    started = time.perf_counter()
-    status_code = 500
-    try:
-        response = await call_next(request)
-        status_code = response.status_code
-        response.headers["X-Request-ID"] = request_id
-        return response
-    finally:
-        if not request.url.path.endswith("/health"):
-            request_logger.info(
-                "request completed",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status_code": status_code,
-                    "duration_ms": round((time.perf_counter() - started) * 1000, 1),
-                },
-            )
-        request_id_var.reset(token)
+# Added last so it wraps every other middleware. OntoFoundry sends its own
+# X-Request-ID, so one operation can be found in both services' logs.
+app.add_middleware(RequestContextMiddleware, logger=request_logger, skip_path_suffix="/health")
 
 
 # 注册路由

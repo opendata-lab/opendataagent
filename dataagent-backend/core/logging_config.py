@@ -18,7 +18,9 @@ import os
 import re
 import shutil
 import sys
+import time
 import traceback
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -46,10 +48,13 @@ _EXTRA_FIELDS = (
     "status_code",
     "duration_ms",
 )
+# Any key that names a secret (access_token, client_secret, "password", ...)
+# followed by = or :, quoted or not; "tokens" (usage counts) is not a secret.
+_SECRET_KEY = r"[A-Za-z0-9_\-]*(?:password|passwd|secret|token(?!s)|api[_-]?key|access[_-]?key|credential)[A-Za-z0-9_\-]*"
 _SECRETS = (
-    (re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9_.\-+/=]+"), r"\1 ***"),
+    (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9_.\-+/=]+"), r"\1 ***"),
     (re.compile(r"\b(sk-[A-Za-z0-9_\-]{8})[A-Za-z0-9_\-]+"), r"\1***"),
-    (re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|access[_-]?key)(\"?\s*[:=]\s*\"?)[^\s\"',;&]+"), r"\1\2***"),
+    (re.compile(rf"(?i)(['\"]?{_SECRET_KEY}['\"]?\s*[:=]\s*['\"]?)[^\s'\",;&}}]+"), r"\1***"),
     (re.compile(r"(://[^/\s:@]+):[^/\s@]+@"), r"\1:***@"),
 )
 
@@ -173,3 +178,64 @@ def log_runtime_line(line: str, *, task_id: str) -> None:
         level = "WARN"
     numeric = {"DEBUG": logging.DEBUG, "WARN": logging.WARNING, "ERROR": logging.ERROR}.get(level, logging.INFO)
     logger.log(numeric, message, extra={"source": source, "task_id": task_id})
+
+
+class RequestContextMiddleware:
+    """Request id and one completion line per request, as a plain ASGI middleware.
+
+    Not BaseHTTPMiddleware: its call_next returns as soon as the response
+    starts, so a streaming response would be logged as complete while still
+    open, and an unhandled exception would surface outside the request context
+    with no X-Request-ID on the 500.
+    """
+
+    def __init__(self, app, *, logger: logging.Logger, skip_path_suffix: str) -> None:
+        self.app = app
+        self.logger = logger
+        self.skip_path_suffix = skip_path_suffix
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope.get("headers") or [])
+        incoming = headers.get(b"x-request-id", b"").decode("latin-1")
+        request_id = valid_request_id(incoming) or uuid.uuid4().hex
+        token = request_id_var.set(request_id)
+        started = time.perf_counter()
+        status_code = 500
+        response_started = False
+
+        async def send_with_id(message) -> None:
+            nonlocal status_code, response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+                status_code = message["status"]
+                message = {**message, "headers": [*message.get("headers", []), (b"x-request-id", request_id.encode())]}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_id)
+        except Exception:
+            self.logger.exception("unhandled error", extra={"method": scope.get("method"), "path": scope.get("path")})
+            if not response_started:
+                status_code = 500
+                await send_with_id({"type": "http.response.start", "status": 500,
+                                    "headers": [(b"content-type", b"text/plain; charset=utf-8")]})
+                await send({"type": "http.response.body", "body": b"Internal Server Error"})
+            # Re-raise as Starlette's own error middleware does: it sees the
+            # response already sent and only passes the error on to the server.
+            raise
+        finally:
+            path = scope.get("path") or ""
+            if not path.endswith(self.skip_path_suffix):
+                self.logger.info(
+                    "request completed",
+                    extra={
+                        "method": scope.get("method"),
+                        "path": path,
+                        "status_code": status_code,
+                        "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                    },
+                )
+            request_id_var.reset(token)

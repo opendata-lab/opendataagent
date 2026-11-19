@@ -45,9 +45,14 @@ def test_a_record_is_one_line_of_json_with_context_ids():
 
 
 def test_credentials_are_redacted():
-    text = redact("Authorization: Bearer abc.def key sk-abcdefgh12345678 password=hunter2 mysql://u:pw@db/x")
-    for secret in ("abc.def", "12345678", "hunter2", ":pw@"):
+    text = redact(
+        "Authorization: Bearer abc.def key sk-abcdefgh12345678 password=hunter2 mysql://u:pw@db/x "
+        "access_token=s1 client_secret=s2 {'password': 's3'} Authorization: Basic s4 "
+        "https://mcp.invalid/sse?access_token=s5&x=1"
+    )
+    for secret in ("abc.def", "12345678", "hunter2", ":pw@", "s1", "s2", "s3", "s4", "s5"):
         assert secret not in text
+    assert redact("max_tokens=4096") == "max_tokens=4096"
 
 
 def _configured(tmp_path):
@@ -131,3 +136,76 @@ def test_requests_get_an_id_and_one_completion_line():
     assert passed.headers["X-Request-ID"] == "of-req-7"
     assert replaced.headers["X-Request-ID"] != "not valid!"
     assert [(r.path, r.status_code) for r in collect.records] == [("/", 200), ("/", 200)]
+
+
+def _middleware_app(lines: list[dict]):
+    from fastapi import FastAPI
+    from fastapi.responses import StreamingResponse
+
+    from core.logging_config import RequestContextMiddleware
+
+    app = FastAPI()
+
+    @app.get("/boom")
+    async def boom():
+        raise RuntimeError("password=hunter2 exploded")
+
+    @app.get("/stream")
+    async def stream():
+        async def body():
+            lines.append({"message": "body finished"})
+            yield b"a"
+
+        return StreamingResponse(body())
+
+    app.add_middleware(RequestContextMiddleware, logger=logging.getLogger("dataagent.request"), skip_path_suffix="/health")
+    return app
+
+
+class _Formatted(logging.Handler):
+    """Formats while the request context is still active, as a real handler does."""
+
+    def __init__(self, lines: list[dict]) -> None:
+        super().__init__()
+        self.lines = lines
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(json.loads(JsonFormatter().format(record)))
+
+
+def _with_request_logger(lines, run):
+    handler = _Formatted(lines)
+    request_logger = logging.getLogger("dataagent.request")
+    request_logger.addHandler(handler)
+    previous = request_logger.level
+    request_logger.setLevel(logging.INFO)
+    try:
+        return run()
+    finally:
+        request_logger.removeHandler(handler)
+        request_logger.setLevel(previous)
+
+
+def test_an_unhandled_error_keeps_its_request_id():
+    from fastapi.testclient import TestClient
+
+    lines: list[dict] = []
+    app = _middleware_app(lines)
+    response = _with_request_logger(lines, lambda: TestClient(app, raise_server_exceptions=False).get("/boom", headers={"X-Request-ID": "req-500"}))
+
+    assert response.status_code == 500
+    assert response.headers["X-Request-ID"] == "req-500"
+    error, done = lines
+    assert (error["message"], error["request_id"]) == ("unhandled error", "req-500")
+    assert "RuntimeError" in error["stack_trace"] and "hunter2" not in error["stack_trace"]
+    assert (done["message"], done["status_code"]) == ("request completed", 500)
+
+
+def test_a_streaming_response_is_logged_when_it_ends():
+    from fastapi.testclient import TestClient
+
+    lines: list[dict] = []
+    app = _middleware_app(lines)
+    response = _with_request_logger(lines, lambda: TestClient(app).get("/stream"))
+    assert response.text == "a"
+    assert [line["message"] for line in lines] == ["body finished", "request completed"]
