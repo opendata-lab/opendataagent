@@ -35,7 +35,7 @@
 ```
 
 - 目录名与日志里的 `service` 字段相同，三个项目不重名：`of-backend`、`dataagent-backend`、`opendataworks-backend`。
-- 应用通过环境变量 `<前缀>_LOG_DIR` 得到目录；未设置时（本地源码运行）只输出到控制台，不写文件。
+- 日志位置由环境变量给出：OntoFoundry `ONTOFOUNDRY_LOG_DIR`、DataAgent `DATAAGENT_LOG_DIR`、OpenDataWorks 用 Spring Boot 标准的 `LOGGING_FILE_NAME`。未设置时（本地源码运行）只输出到控制台，不写文件。
 - 宿主机上的日志文件属主是容器内运行服务的用户：OntoFoundry、OpenDataWorks 为 root，DataAgent 为运行时用户（默认 uid 1000，入口脚本负责建目录并授权）。
 
 #### 轮转与保留
@@ -78,7 +78,7 @@ HTTP 入口读取 `X-Request-ID`（1～64 位字母、数字、`-`、`_`），�
 #### 库
 
 - Python：标准库 `logging`，配一个约 40 行的 JSON Formatter；文件用 `TimedRotatingFileHandler(when="midnight", utc=True, backupCount=30)`，用 `namer`/`rotator` 压缩（Python 官方 Logging Cookbook 的写法）。不引入 structlog、loguru。
-- Java：SLF4J + Logback（Spring Boot 自带），用 Spring Boot 的结构化日志和滚动策略配置，不加依赖。
+- Java：SLF4J + Logback（Spring Boot 自带）。Spring Boot 结构化日志接一个约 80 行的格式类，保证字段名和 UTC 时间（内置 logstash 格式跟随 JVM 时区）；滚动策略用 Spring Boot 配置项，不加依赖。
 - Node（DataAgent 运行时）：stdout 只用于协议；诊断以 JSON 行写 stderr，由 Python 后端接收后写入 `runtime.log`。
 
 #### 不在范围内
