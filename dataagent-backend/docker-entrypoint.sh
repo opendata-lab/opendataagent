@@ -8,6 +8,11 @@ if [ ! -f /app/.claude/skills/.bundled-version ] || ! cmp -s /opt/dataagent-bund
   cp -a /opt/dataagent-bundled-skills/. /app/.claude/skills/
 fi
 chown -R "$runtime_uid:$runtime_gid" /dataagent_runtime /app/.claude/skills
+# The service runs as the runtime user and writes its own log files.
+if [ -n "${DATAAGENT_LOG_DIR:-}" ]; then
+  mkdir -p "$DATAAGENT_LOG_DIR"
+  chown -R "$runtime_uid:$runtime_gid" "$DATAAGENT_LOG_DIR"
+fi
 chmod -R u+rwX /dataagent_runtime /app/.claude/skills
 runtime_group=$(getent group "$runtime_gid" | cut -d: -f1 || true)
 if [ -z "$runtime_group" ]; then groupadd -g "$runtime_gid" dataagent; runtime_group=dataagent; fi

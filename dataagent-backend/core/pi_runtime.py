@@ -19,6 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
+from core.logging_config import log_runtime_line
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -257,7 +258,7 @@ class _StderrDiagnostics:
 async def _drain_stderr(
     process: asyncio.subprocess.Process, task_id: str, diagnostics: _StderrDiagnostics | None = None
 ) -> None:
-    """Mirror the child's stderr into the task log; never touches the protocol."""
+    """Mirror the child's stderr into runtime.log; never touches the protocol."""
     stderr = process.stderr
     if stderr is None:
         return
@@ -271,7 +272,7 @@ async def _drain_stderr(
                 diagnostics.tail.append(line)
                 if _HEAP_OOM_MARKER in line.lower():
                     diagnostics.heap_oom = True
-            logger.info("pi_cell.stderr task_id=%s %s", task_id, line)
+            log_runtime_line(line, task_id=task_id)
     except Exception:
         logger.debug("pi_cell.stderr_reader_stopped task_id=%s", task_id, exc_info=True)
 

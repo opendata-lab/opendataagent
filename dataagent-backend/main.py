@@ -2,7 +2,7 @@
 DataAgent Backend 入口 — FastAPI 应用
 """
 import logging
-import sys
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +12,7 @@ from api.auth_routes import oauth_callback_router, router as auth_router
 from api.eval_routes import router as eval_router
 from api.routes import router
 from config import get_settings, update_settings
+from core.logging_config import RequestContextMiddleware, configure_logging
 from core.auth import init_auth
 from core.agent_profile_service import bootstrap_default_agent_profile
 from core.skill_admin_service import bootstrap_admin_settings, reindex_documents_from_disk
@@ -22,13 +23,14 @@ from core.sandbox_config import backend_mounts
 from core.task_coordinator import get_task_coordinator
 from core.topic_task_store import get_topic_task_store
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    stream=sys.stdout,
+# 日志：单行 JSON 到控制台，设置 DATAAGENT_LOG_DIR 时另写按天轮转的文件
+_log_settings = get_settings()
+configure_logging(
+    _log_settings.dataagent_log_level,
+    Path(_log_settings.dataagent_log_dir) if _log_settings.dataagent_log_dir else None,
 )
 logger = logging.getLogger(__name__)
+request_logger = logging.getLogger("dataagent.request")
 
 app = FastAPI(
     title="DataAgent Backend",
@@ -43,7 +45,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+
+# Added last so it wraps every other middleware. OntoFoundry sends its own
+# X-Request-ID, so one operation can be found in both services' logs.
+app.add_middleware(RequestContextMiddleware, logger=request_logger, skip_path_suffix="/health")
+
 
 # 注册路由
 app.include_router(auth_router)

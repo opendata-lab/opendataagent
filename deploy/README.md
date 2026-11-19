@@ -56,8 +56,13 @@ scripts/load-package-and-start.sh --package .   # 加载镜像；deploy/.env 不
 
 ## 日志
 
-- `scripts/dump-logs.sh` 导出全部服务日志到 `deploy/logs/services/`；
-  打包带走：`tar -czf dataagent-logs.tgz -C deploy logs`。
+后端日志写在 `deploy/logs/dataagent-backend/`（[日志统一标准](../docs/design/2026-11-19-logging-standard-design.md)）：
+
+- `app.log` 是服务日志，`runtime.log` 是 Pi 运行时与沙箱的诊断（字段 `source` 为 `runtime` 或 `sandbox`）。每行一条 JSON，时间为 UTC。
+- 每天 UTC 零点轮转为 `*.log.YYYY-MM-DD.gz`，保留 30 天。
+- 任务期间的日志带 `task_id`、`topic_id`；请求日志带 `request_id`，响应头 `X-Request-ID` 返回同值，OntoFoundry 调用时传入的值原样沿用。
+- 查找：`zgrep '"task_id": "<任务ID>"' deploy/logs/dataagent-backend/*.log*`；实时：`tail -f deploy/logs/dataagent-backend/app.log`。级别由 `DATAAGENT_LOG_LEVEL` 控制，默认 `INFO`。
+- Redis、前端只用 Docker 日志（每个容器最多约 30 MB）。需要时 `scripts/dump-logs.sh` 导出到 `deploy/logs/services/`；打包带走：`tar -czf dataagent-logs.tgz -C deploy logs`。
 
 ## 运行配置
 

@@ -257,7 +257,8 @@ export class Cell {
             // draws a broken chart with no sign anything was dropped.
             logDiagnostic(
               `STRUCTURED_OUTPUT_TOO_LARGE: ${uiBytes}B exceeds ${STRUCTURED_OUTPUT_MAX_BYTES}B; ` +
-                `UI copy will hold the digest`
+                `UI copy will hold the digest`,
+              { level: "WARN" }
             );
           }
 
@@ -322,7 +323,7 @@ export class Cell {
             };
           } catch (err) {
             segmentError = `RESULT_STORAGE_FAILED: ${String(err)}`;
-            logDiagnostic(segmentError);
+            logDiagnostic(segmentError, { level: "ERROR" });
             return { content: [{ type: "text" as const, text: segmentError }],
               details: { error: segmentError, segment_failed: true }, isError: true };
           }
@@ -402,7 +403,7 @@ export class Cell {
         // The failed call's turn is replaced, not spent: it must not count
         // toward max_turns, or retries alone could end the task.
         turnCount = Math.max(0, turnCount - 1);
-        logDiagnostic(`model retry ${event.attempt}/${event.maxAttempts} in ${event.delayMs}ms: ${event.errorMessage}`);
+        logDiagnostic(`model retry ${event.attempt}/${event.maxAttempts} in ${event.delayMs}ms: ${event.errorMessage}`, { level: "WARN" });
         // The failed attempt's turn is replaced by the retry; readers drop its
         // partial text so the reply does not appear twice.
         const discardTurnId = normalizer.discardableTurnId;
@@ -497,7 +498,7 @@ export class Cell {
       const modelError = agent.state.errorMessage;
       if (modelError) {
         // The provider's text is for the administrator; the user gets a sentence.
-        logDiagnostic(`model error after ${modelRetries} retries: ${modelError}`);
+        logDiagnostic(`model error after ${modelRetries} retries: ${modelError}`, { level: "ERROR" });
         const message = modelRetries > 0
           ? `模型服务暂时不可用，已自动重试 ${modelRetries} 次仍未成功，请稍后重试；持续出现请联系管理员`
           : "模型服务返回错误，请联系管理员";
@@ -520,7 +521,7 @@ export class Cell {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : message;
-      logDiagnostic(`run failed: ${stack}`);
+      logDiagnostic(`run failed: ${stack}`, { level: "ERROR" });
       // Cancel surfaces as an abort rejection from the agent loop; it is a
       // cancellation, not a failure, and must not be reported as an error.
       if (this.cancelled) {
