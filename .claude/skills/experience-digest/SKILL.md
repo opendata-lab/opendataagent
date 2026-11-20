@@ -29,11 +29,11 @@ tools: [read, write]
 
 ## 输出
 
-写入 `output/experience_candidates.json`，最多 5 条，每条内容不超过 200 字：
+写入 `output/experience_candidates.json`，最多 5 条，每条必须包含标题（不超过 40 字）、适用条件（不超过 120 字）、内容（不超过 500 字）：
 
 ```json
 [
-  {"content": "一句话说明适用情况和做法", "source_task_ids": ["task_xxx", "task_yyy"]}
+  {"title": "先确认关联键唯一", "when": "关联明细表后汇总金额时", "body": "统计前确认关联键是否一对一，否则先聚合再关联。", "source_task_ids": ["task_xxx", "task_yyy"]}
 ]
 ```
 

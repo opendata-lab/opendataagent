@@ -313,6 +313,7 @@
                   ></textarea>
                 </template>
               </details>
+              <AgentExperienceCards v-if="canManage" :agent-id="agentId" :agent-name="form.name" />
             </fieldset>
           </section>
           <section class="panel preview-panel" aria-labelledby="preview-title" :style="{ '--preview-composer-height': `${previewComposerHeight}px` }">
@@ -548,6 +549,7 @@ import { useAuthStore } from "@/stores/auth";
 import { withAgentContext } from "@/router/agentContext";
 import { createNl2SqlTransport } from "./nl2sqlTransport";
 import Icon from "./AgentWorkbenchIcon.vue";
+import AgentExperienceCards from "@/components/experience/AgentExperienceCards.vue";
 import { buildCommands } from "@opendataagent/agent-conversation";
 
 const route = useRoute(),

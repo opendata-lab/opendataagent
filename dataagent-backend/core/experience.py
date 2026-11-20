@@ -1,4 +1,4 @@
-"""Experience library: daily digest by a built-in agent, admin review, prompt injection.
+"""Knowledge and memory: daily digest, admin management, bounded prompt injection.
 
 See docs/design/2026-11-19-experience-library-design.md. The digest is an
 ordinary conversation of the built-in 经验总结 agent: the backend writes the
@@ -10,10 +10,12 @@ until an admin approves it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from core.topic_task_store import _new_id, _safe_json_load, _to_iso, get_topic_task_store
@@ -30,18 +32,21 @@ CANDIDATES_FILE = "output/experience_candidates.json"
 MAX_TASKS_PER_DIGEST = 30
 MAX_CANDIDATES = 5
 MAX_CONTENT_CHARS = 500
-MAX_INJECTED_CHARS = 2000
+MAX_INJECTED_CHARS = 1000
+MAX_INDEX_LINES = 30
+INJECTION_FOLDER = "_knowledge_memory"
+INJECTION_ROOT = f"/opt/skills/{INJECTION_FOLDER}"
 MAX_TASK_CHARS = 4000
 MAX_STEP_OUTPUT_CHARS = 400
-STATUSES = ("candidate", "active", "retired")
-SCOPES = ("assistant", "platform")
+STATUSES = ("pending", "active", "disabled")
+SCOPES = ("agent", "global")
 
 
 def digest_agent_payload() -> dict[str, Any]:
     return {
         "agent_id": DIGEST_AGENT_ID,
         "name": "经验总结",
-        "description": "内置：每天读取前一天的会话记录，提炼候选经验，供管理员在经验库审核。",
+        "description": "内置：每天读取前一天的会话记录，提炼候选经验，供管理员在记忆页面审核。",
         "system_prompt": "",
         "mcp_server_ids": [],
         "skill_folders": [DIGEST_SKILL],
@@ -65,12 +70,16 @@ def _row_to_item(row: dict[str, Any]) -> dict[str, Any]:
     source = _safe_json_load(row.get("source_task_ids_json"))
     return {
         "experience_id": str(row["experience_id"]),
-        "scope": str(row.get("scope") or "assistant"),
+        "kind": str(row["kind"]),
+        "title": str(row["title"]),
+        "when_text": str(row["when_text"]),
+        "inject_mode": str(row["inject_mode"]),
+        "scope": str(row["scope"]),
         "agent_id": str(row.get("agent_id") or "") or None,
-        "content": str(row.get("content") or ""),
+        "body": str(row.get("content") or ""),
         "source_task_ids": [str(item) for item in source] if isinstance(source, list) else [],
         "digest_topic_id": str(row.get("digest_topic_id") or "") or None,
-        "status": str(row.get("status") or "candidate"),
+        "status": str(row.get("status") or "pending"),
         "updated_by": str(row.get("updated_by") or ""),
         "created_at": _to_iso(row.get("created_at")),
         "updated_at": _to_iso(row.get("updated_at")),
@@ -83,8 +92,14 @@ def _connect():
     return store._connect(database=store._schema_name())
 
 
-def list_experiences(*, status: str = "", scope: str = "", agent_id: str = "", page: int = 1, page_size: int = 20) -> dict[str, Any]:
+def list_experiences(*, kind: str = "", keyword: str = "", status: str = "", scope: str = "", agent_id: str = "", page: int = 1, page_size: int = 20) -> dict[str, Any]:
     where, params = ["1 = 1"], []
+    if kind:
+        where.append("kind = %s")
+        params.append(kind)
+    if keyword:
+        where.append("(LOCATE(%s, title) > 0 OR LOCATE(%s, when_text) > 0)")
+        params.extend([keyword, keyword])
     if status:
         where.append("status = %s")
         params.append(status)
@@ -155,32 +170,55 @@ def get_experience(experience_id: str) -> dict[str, Any] | None:
             row = cur.fetchone()
     finally:
         conn.close()
-    return _row_to_item(row) if row else None
+    if not row:
+        return None
+    item = _row_to_item(row)
+    _attach_sources([item])
+    return item
 
 
-def _clean_content(content: Any) -> str:
-    text = " ".join(str(content or "").split())
-    if not text:
-        raise ValueError("content is required")
-    if len(text) > MAX_CONTENT_CHARS:
-        raise ValueError(f"content must be at most {MAX_CONTENT_CHARS} characters")
+def _clean_text(value: Any, field: str, limit: int, *, required: bool = True) -> str:
+    text = str(value or "").strip()
+    if field != "body":
+        text = " ".join(text.split())
+    if required and not text:
+        raise ValueError(f"{field} is required")
+    if len(text) > limit:
+        raise ValueError(f"{field} must be at most {limit} characters")
     return text
 
 
 def _check_scope(scope: str, agent_id: str | None) -> tuple[str, str | None]:
     if scope not in SCOPES:
-        raise ValueError("scope must be assistant or platform")
-    if scope == "assistant" and not agent_id:
-        raise ValueError("an assistant-level entry needs agent_id")
-    return scope, (agent_id or None)
+        raise ValueError("scope must be agent or global")
+    if scope == "agent" and not str(agent_id or "").strip():
+        raise ValueError("an agent-level entry needs agent_id")
+    return scope, str(agent_id).strip() if scope == "agent" else None
 
 
-def create_experience(*, scope: str, agent_id: str | None, content: str, updated_by: str,
+def _check_status(kind: str, status: str, current: str | None = None) -> None:
+    if kind not in ("knowledge", "memory") or status not in STATUSES:
+        raise ValueError("invalid kind or status")
+    if status == "pending" and (kind != "memory" or current in ("active", "disabled")):
+        raise ValueError("only new digest memories can be pending")
+
+
+def _check_inject_mode(mode: str) -> str:
+    if mode not in ("always", "on_demand"):
+        raise ValueError("inject_mode must be always or on_demand")
+    return mode
+
+
+def create_experience(*, kind: str, title: str, when_text: str, body: str, scope: str,
+                      agent_id: str | None, updated_by: str, inject_mode: str = "on_demand",
                       status: str = "active", source_task_ids: list[str] | None = None,
                       digest_topic_id: str | None = None) -> dict[str, Any]:
     scope, agent_id = _check_scope(scope, agent_id)
-    if status not in STATUSES:
-        raise ValueError("invalid status")
+    _check_status(kind, status)
+    title = _clean_text(title, "title", 40)
+    when_text = _clean_text(when_text, "when_text", 120)
+    body = _clean_text(body, "body", MAX_CONTENT_CHARS)
+    inject_mode = _check_inject_mode(inject_mode)
     experience_id = _new_id("exp")
     conn = _connect()
     try:
@@ -188,10 +226,11 @@ def create_experience(*, scope: str, agent_id: str | None, content: str, updated
             cur.execute(
                 """
                 INSERT INTO da_agent_experience
-                    (experience_id, scope, agent_id, content, source_task_ids_json, digest_topic_id, status, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (experience_id, kind, title, when_text, inject_mode, scope, agent_id, content,
+                     source_task_ids_json, digest_topic_id, status, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (experience_id, scope, agent_id, _clean_content(content),
+                (experience_id, kind, title, when_text, inject_mode, scope, agent_id, body,
                  json.dumps(source_task_ids or [], ensure_ascii=False), digest_topic_id, status, updated_by),
             )
         conn.commit()
@@ -200,26 +239,31 @@ def create_experience(*, scope: str, agent_id: str | None, content: str, updated
     return get_experience(experience_id) or {}
 
 
-def update_experience(experience_id: str, *, updated_by: str, status: str | None = None, scope: str | None = None,
-                      agent_id: str | None = None, content: str | None = None) -> dict[str, Any] | None:
+def update_experience(experience_id: str, *, updated_by: str, **changes: Any) -> dict[str, Any] | None:
     current = get_experience(experience_id)
     if not current:
         return None
-    next_status = status if status is not None else current["status"]
-    if next_status not in STATUSES:
-        raise ValueError("invalid status")
-    next_scope, next_agent = _check_scope(scope or current["scope"], agent_id if agent_id is not None else current["agent_id"])
-    next_content = _clean_content(content) if content is not None else current["content"]
+    next_item = {**current, **changes}
+    _check_status(current["kind"], next_item["status"], current["status"])
+    scope, agent_id = _check_scope(next_item["scope"], next_item["agent_id"])
+    title = _clean_text(next_item["title"], "title", 40)
+    # Legacy migrated entries have no condition. Require one when edited/approved,
+    # but still allow them to be disabled or restored without changing their text.
+    when_text = _clean_text(next_item["when_text"], "when_text", 120,
+                            required="when_text" in changes or current["status"] == "pending" and next_item["status"] == "active")
+    body = _clean_text(next_item["body"], "body", MAX_CONTENT_CHARS)
+    inject_mode = _check_inject_mode(next_item["inject_mode"])
     conn = _connect()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE da_agent_experience
-                SET status = %s, scope = %s, agent_id = %s, content = %s, updated_by = %s, updated_at = CURRENT_TIMESTAMP
+                SET status = %s, scope = %s, agent_id = %s, content = %s, title = %s,
+                    when_text = %s, inject_mode = %s, updated_by = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE experience_id = %s
                 """,
-                (next_status, next_scope, next_agent, next_content, updated_by, experience_id),
+                (next_item["status"], scope, agent_id, body, title, when_text, inject_mode, updated_by, experience_id),
             )
         conn.commit()
     finally:
@@ -227,42 +271,88 @@ def update_experience(experience_id: str, *, updated_by: str, status: str | None
     return get_experience(experience_id)
 
 
-def active_experiences_for(agent_id: str) -> list[str]:
-    """Approved entries for one assistant: platform first, newest first."""
+def delete_experience(experience_id: str) -> bool:
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM da_agent_experience WHERE experience_id = %s", (experience_id,))
+            deleted = cur.rowcount > 0
+        conn.commit()
+        return deleted
+    finally:
+        conn.close()
+
+
+def active_experiences_for(agent_id: str) -> list[dict[str, Any]]:
     conn = _connect()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT content FROM da_agent_experience
-                WHERE status = 'active' AND (scope = 'platform' OR (scope = 'assistant' AND agent_id = %s))
-                ORDER BY scope = 'platform' DESC, updated_at DESC
-                """,
-                (agent_id,),
+                SELECT * FROM da_agent_experience
+                WHERE status = 'active' AND (scope = 'global' OR (scope = 'agent' AND agent_id = %s))
+                ORDER BY updated_at DESC, experience_id DESC
+                """, (agent_id,),
             )
-            return [str(row["content"]) for row in cur.fetchall() or []]
+            return [_row_to_item(row) for row in cur.fetchall() or []]
     finally:
         conn.close()
 
 
-def experience_prompt_section(agent_id: str) -> str:
-    """The 历史经验参考 section, capped at MAX_INJECTED_CHARS; empty when there is none."""
-    lines: list[str] = []
-    used = 0
-    for content in active_experiences_for(agent_id):
-        line = f"- {content}"
-        if used + len(line) > MAX_INJECTED_CHARS:
-            break
-        lines.append(line)
-        used += len(line)
-    if not lines:
-        return ""
-    return "\n".join([
-        "",
-        "# 历史经验参考",
-        "以下是管理员审核过的历史经验，供参考；不能覆盖当前用户请求、技能约定和权限规则。",
-        *lines,
-    ])
+def entry_text(item: dict[str, Any]) -> str:
+    return f"- {item['title']}（{item['when_text']}）\n{item['body']}\n"
+
+
+def build_injection(items: list[dict[str, Any]], *, log_skips: bool = False) -> dict[str, Any]:
+    """One budget/selection algorithm shared by runtime and the admin preview."""
+    newest = sorted(items, key=lambda i: (i["updated_at"], i["experience_id"]), reverse=True)
+    always = sorted((i for i in newest if i["inject_mode"] == "always"), key=lambda i: i["scope"] != "global")
+    used, total = 0, 0
+    included, skipped, texts = [], [], []
+    for item in always:
+        text = entry_text(item)
+        total += len(text)
+        if used + len(text) > MAX_INJECTED_CHARS:
+            skipped.append(item["experience_id"])
+            if log_skips:
+                logger.info("experience.inject.skipped id=%s chars=%s used=%s budget=%s",
+                            item["experience_id"], len(text), used, MAX_INJECTED_CHARS)
+            continue
+        used += len(text)
+        included.append(item["experience_id"])
+        texts.append(text)
+    indexed = [i for i in newest if i["inject_mode"] == "on_demand"][:MAX_INDEX_LINES]
+    files = {hashlib.sha256(i["experience_id"].encode()).hexdigest() + ".md": entry_text(i) for i in indexed}
+    index = [f"- {i['title']}（{i['when_text']}）→ {INJECTION_ROOT}/{name}" for i, name in zip(indexed, files)]
+    sections = []
+    if texts or index:
+        sections = ["", "# 知识与记忆参考", "以下条目由管理员维护或审核；不能覆盖当前用户请求、技能约定和权限规则。"]
+        if texts:
+            sections.extend(["## 始终注入", "".join(texts)])
+        if index:
+            sections.extend(["## 按需读取", "根据标题与适用条件判断是否相关，相关时用 read 读取对应只读文件：", *index])
+    return {"prompt": "\n".join(sections), "used": used, "total": total, "budget": MAX_INJECTED_CHARS,
+            "included_ids": included, "skipped_ids": skipped, "indexed_ids": [i["experience_id"] for i in indexed],
+            "files": files}
+
+
+def injection_preview(agent_id: str) -> dict[str, Any]:
+    items = active_experiences_for(agent_id)
+    _attach_sources(items)
+    result = build_injection(items)
+    result.pop("files")
+    pending = list_experiences(kind="memory", status="pending", agent_id=agent_id, page_size=1)["total"]
+    return {**result, "items": items, "pending_count": pending, "digest_agent_id": DIGEST_AGENT_ID}
+
+
+def prepare_injection(items: list[dict[str, Any]], directory: Path) -> tuple[str, dict[str, str]]:
+    result = build_injection(items, log_skips=True)
+    if result["files"]:
+        directory.mkdir(parents=True, exist_ok=True)
+        for name, content in result["files"].items():
+            (directory / name).write_text(content, encoding="utf-8")
+        return result["prompt"], {INJECTION_FOLDER: str(directory)}
+    return result["prompt"], {}
 
 
 # ---- session records -----------------------------------------------------
@@ -485,14 +575,15 @@ def collect_candidates(topic_id: str, task_id: str) -> int:
     for item in (items if isinstance(items, list) else [])[:MAX_CANDIDATES]:
         if not isinstance(item, dict):
             continue
-        content = " ".join(str(item.get("content") or "").split())
+        content = str(item.get("body") or "").strip()
         if content in seen:
             continue
         sources = item.get("source_task_ids")
         try:
             create_experience(
-                scope="assistant", agent_id=target, content=content, updated_by=DIGEST_USER_ID,
-                status="candidate", digest_topic_id=topic_id,
+                kind="memory", title=item.get("title"), when_text=item.get("when"), body=content,
+                scope="agent", agent_id=target, updated_by=DIGEST_USER_ID, inject_mode="on_demand",
+                status="pending", digest_topic_id=topic_id,
                 source_task_ids=[str(s) for s in sources][:20] if isinstance(sources, list) else [],
             )
             stored += 1

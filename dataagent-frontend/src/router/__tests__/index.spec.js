@@ -19,6 +19,9 @@ vi.mock('@/views/evaluation/EvaluationSetDetailView.vue', () => ({ default: { te
 vi.mock('@/views/evaluation/EvaluationResultsView.vue', () => ({ default: { template: '<div>results</div>' } }))
 vi.mock('@/views/evaluation/EvaluationRunDetailView.vue', () => ({ default: { template: '<div>result</div>' } }))
 
+vi.mock('@/views/settings/KnowledgeMemoryView.vue', () => ({ default: { template: '<div>library</div>' } }))
+vi.mock('@/views/settings/FeedbackView.vue', () => ({ default: { template: '<div>feedback</div>' } }))
+
 import { routes } from '../index'
 
 const buildRouter = () => createRouter({
@@ -51,6 +54,9 @@ describe('DataAgent page routing', () => {
 
   it.each([
     ['/chat', 'IntelligentQueryChat'],
+    ['/feedback', 'UserFeedback'],
+    ['/knowledge', 'KnowledgeLibrary'],
+    ['/memories', 'MemoryLibrary'],
     ['/settings/skills', 'IntelligentQuerySkills'],
     ['/agents', 'IntelligentQueryAgents'],
     ['/settings/models', 'IntelligentQueryModels'],
@@ -59,6 +65,17 @@ describe('DataAgent page routing', () => {
     const route = await resolveTo(path)
     expect(route.path).toBe(path)
     expect(route.name).toBe(name)
+  })
+
+  it('puts admin libraries under the main layout and removes the old experience page', () => {
+    const router = buildRouter()
+    for (const path of ['/feedback', '/knowledge', '/memories']) {
+      const matched = router.resolve(path).matched
+      expect(matched[0].path).toBe('/')
+      expect(matched.at(-1).meta.adminOnly).toBe(true)
+    }
+    expect(router.resolve('/settings/experiences').matched).toHaveLength(0)
+    expect(router.resolve('/settings/evaluations').matched.at(-1).meta.adminOnly).toBe(true)
   })
 
   it('keeps canonical business paths independent from the deployment base', () => {

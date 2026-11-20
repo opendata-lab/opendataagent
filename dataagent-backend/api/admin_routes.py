@@ -357,8 +357,10 @@ def _actor(request: Request) -> str:
 
 @settings_router.get("/experiences", response_model=ExperiencePage)
 def admin_list_experiences(
-    status: str = Query(default="", pattern="^(|candidate|active|retired)$"),
-    scope: str = Query(default="", pattern="^(|assistant|platform)$"),
+    kind: str = Query(default="", pattern="^(|knowledge|memory)$"),
+    keyword: str = Query(default="", max_length=160),
+    status: str = Query(default="", pattern="^(|pending|active|disabled)$"),
+    scope: str = Query(default="", pattern="^(|agent|global)$"),
     agent_id: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
@@ -366,7 +368,7 @@ def admin_list_experiences(
     """Experience library for review. The two switches are deployment config
     (DATAAGENT_EXPERIENCE_DIGEST_ENABLED / _INJECTION_ENABLED), shown read-only."""
     settings = get_settings()
-    payload = experience.list_experiences(status=status, scope=scope, agent_id=agent_id or "", page=page, page_size=page_size)
+    payload = experience.list_experiences(kind=kind, keyword=keyword, status=status, scope=scope, agent_id=agent_id or "", page=page, page_size=page_size)
     return ExperiencePage(
         **payload,
         digest_enabled=bool(settings.dataagent_experience_digest_enabled),
@@ -378,18 +380,29 @@ def admin_list_experiences(
 @settings_router.post("/experiences", response_model=Experience)
 def admin_create_experience(payload: ExperienceCreateRequest, request: Request):
     try:
-        return experience.create_experience(scope=payload.scope, agent_id=payload.agent_id, content=payload.content,
-                                            updated_by=_actor(request), status="active")
+        return experience.create_experience(**payload.model_dump(), updated_by=_actor(request), status="active")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@settings_router.get("/experiences/injection-preview")
+def admin_injection_preview(agent_id: str = Query(min_length=1)):
+    return {**experience.injection_preview(agent_id),
+            "injection_enabled": bool(get_settings().dataagent_experience_injection_enabled)}
+
+
+@settings_router.delete("/experiences/{experience_id}")
+def admin_delete_experience(experience_id: str):
+    if not experience.delete_experience(experience_id):
+        raise HTTPException(status_code=404, detail="experience not found")
+    return {"ok": True}
 
 
 @settings_router.patch("/experiences/{experience_id}", response_model=Experience)
 def admin_update_experience(experience_id: str, payload: ExperienceUpdateRequest, request: Request):
     try:
         updated = experience.update_experience(
-            experience_id, updated_by=_actor(request), status=payload.status, scope=payload.scope,
-            agent_id=payload.agent_id, content=payload.content,
+            experience_id, updated_by=_actor(request), **payload.model_dump(exclude_unset=True, exclude_none=True),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

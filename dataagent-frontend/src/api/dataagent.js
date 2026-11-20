@@ -199,6 +199,14 @@ export const dataagentApi = {
     return dataagentRequest.post('/v1/nl2sql-admin/experiences', data)
   },
 
+  deleteExperience(experienceId) {
+    return dataagentRequest.delete(`/v1/nl2sql-admin/experiences/${encodeURIComponent(experienceId)}`)
+  },
+
+  getExperienceInjectionPreview(agentId) {
+    return dataagentRequest.get('/v1/nl2sql-admin/experiences/injection-preview', { params: { agent_id: agentId } })
+  },
+
   listAdminTopics(params = {}) {
     return dataagentRequest.get('/v1/nl2sql-admin/topics', { params })
   },

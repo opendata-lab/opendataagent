@@ -93,6 +93,26 @@ export const routes = [
         meta: { tab: 'chat-v2', title: '智能问数' }
       },
       {
+        path: 'feedback',
+        name: 'UserFeedback',
+        component: () => import('@/views/settings/FeedbackView.vue'),
+        meta: { tab: 'feedback', title: '用户反馈', adminOnly: true }
+      },
+      {
+        path: 'knowledge',
+        name: 'KnowledgeLibrary',
+        component: () => import('@/views/settings/KnowledgeMemoryView.vue'),
+        props: { kind: 'knowledge' },
+        meta: { tab: 'knowledge', title: '知识', adminOnly: true }
+      },
+      {
+        path: 'memories',
+        name: 'MemoryLibrary',
+        component: () => import('@/views/settings/KnowledgeMemoryView.vue'),
+        props: { kind: 'memory' },
+        meta: { tab: 'memories', title: '记忆', adminOnly: true }
+      },
+      {
         path: 'agents',
         name: 'IntelligentQueryAgents',
         component: () => import('@/views/intelligence/AgentStudio.vue'),
@@ -145,18 +165,6 @@ export const routes = [
         name: 'IntelligentQueryWidget',
         component: () => import('@/views/settings/WidgetAccessConfig.vue'),
         meta: { tab: 'widget', title: 'Widget 接入', adminOnly: true }
-      },
-      {
-        path: 'feedback',
-        name: 'UserFeedback',
-        component: () => import('@/views/settings/FeedbackView.vue'),
-        meta: { tab: 'feedback', title: '用户反馈', adminOnly: true }
-      },
-      {
-        path: 'experiences',
-        name: 'ExperienceLibrary',
-        component: () => import('@/views/settings/ExperienceView.vue'),
-        meta: { tab: 'experiences', title: '经验库', adminOnly: true }
       },
       {
         path: 'evaluations',

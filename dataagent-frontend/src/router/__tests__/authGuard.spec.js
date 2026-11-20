@@ -77,6 +77,13 @@ describe('auth router guard', () => {
     expect(route.path).toBe('/chat')
   })
 
+  it.each(['/feedback', '/knowledge', '/memories'])('blocks regular users from %s', async path => {
+    authState.enabled = true
+    authState.currentUser = { display_name: 'alice', role: 'user' }
+    authState.isAdmin = false
+    expect((await navigate(path)).path).toBe('/chat')
+  })
+
   it('keeps agent_id when a non-admin user falls back from an admin page', async () => {
     authState.enabled = true
     authState.currentUser = { display_name: 'alice', role: 'user' }
