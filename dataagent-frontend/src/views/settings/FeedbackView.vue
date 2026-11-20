@@ -116,7 +116,8 @@ async function load() {
     counts.dislikes = Number(data?.dislikes || 0)
   } catch (error) {
     items.value = []
-    ElMessage.error(error?.message || '加载用户反馈失败')
+    // The request layer already toasts most failures.
+    if (!error?.__odwNotified) ElMessage.error(error?.message || '加载用户反馈失败')
   } finally {
     loading.value = false
   }
