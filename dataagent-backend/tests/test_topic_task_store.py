@@ -462,15 +462,16 @@ def test_predicate_auth_enabled_matrix(monkeypatch):
     sql, params = store._topic_context_predicate(  # noqa: SLF001
         {"source": "web", "auth_user_id": "SSO:42", "auth_role": "user"}, alias="t"
     )
-    assert sql == "t.source = %s AND t.auth_user_id = %s AND t.is_agent_preview = 0"
-    assert params == ["web", "SSO:42"]
+    owner = "t.auth_user_id = %s AND CAST(t.auth_user_id AS BINARY) = CAST(%s AS BINARY)"
+    assert sql == f"t.source IN (%s, %s) AND {owner} AND t.is_agent_preview = 0"
+    assert params == ["web", "widget", "SSO:42", "SSO:42"]
 
-    # admin 聊天列表：web 全量（跨源全量走管理端点 context=None）。
+    # 管理员运行接口同样按自己归属过滤，自己的 Web 调试话题可访问。
     sql, params = store._topic_context_predicate(  # noqa: SLF001
         {"source": "web", "auth_user_id": "local:admin", "auth_role": "admin"}, alias="t"
     )
-    assert sql == "t.source = %s"
-    assert params == ["web"]
+    assert sql == f"t.source IN (%s, %s) AND {owner} AND (t.is_agent_preview = 0 OR t.source = %s)"
+    assert params == ["web", "widget", "local:admin", "local:admin", "web"]
 
     # context=None（管理端点）不过滤。
     sql, params = store._topic_context_predicate(None, alias="t")  # noqa: SLF001
@@ -480,7 +481,7 @@ def test_predicate_auth_enabled_matrix(monkeypatch):
 
 def test_predicate_widget_branch_unchanged_regardless_of_auth(monkeypatch):
     widget_context = {"source": "widget", "website_id": "demo", "external_user_id": "u1"}
-    expected_sql = "t.source = %s AND t.website_id = %s AND t.external_user_id = %s"
+    expected_sql = "t.source = %s AND t.website_id = %s AND t.auth_user_id = '' AND t.external_user_id = %s"
     store = TopicTaskStore()
 
     for enabled in (True, False):

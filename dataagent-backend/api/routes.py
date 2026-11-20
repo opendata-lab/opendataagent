@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import mimetypes
 import hashlib
 import hmac
 import json
@@ -10,8 +9,9 @@ from typing import Any, AsyncIterator
 
 import anyio
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
+from api.topic_file_response import topic_file_response
 from config import get_settings
 from core.agent_profile_service import DEFAULT_AGENT_ID, build_agent_snapshot, get_agent_profile
 from core.provider_runtime import normalize_api_format
@@ -24,7 +24,7 @@ from core.skill_admin_service import current_settings_payload, resolved_chat_set
 from core.permission_gate import normalize_permission_decision
 from core.task_coordinator import get_task_coordinator
 from core.task_submission_service import compute_next_run_at, current_utc_naive, submit_message_task
-from core.topic_files import TopicFileError, list_files, safe_workspace_file, save_upload
+from core.topic_files import TopicFileError, list_files, save_upload
 from core.topic_task_store import get_topic_task_store
 from models.schemas import (
     CancelTaskResponse,
@@ -226,6 +226,31 @@ def _request_context(request: Request) -> dict[str, str]:
             logger.warning(f"Widget origin rejected: origin={req_origin!r} allowed={allowed_origins!r}")
             raise HTTPException(status_code=403, detail="Widget origin is not allowed")
 
+    if request.headers.get("X-DataAgent-Widget-Identity") == "platform":
+        origin = request.headers.get("Origin", "").rstrip("/")
+        fetch_site = request.headers.get("Sec-Fetch-Site", "")
+        request_origin = f"{request.url.scheme}://{request.url.netloc}"
+        if (isinstance(server_side, dict) and server_side.get("enabled") is True) or (
+            fetch_site not in {"", "same-origin", "none"}
+            or (origin and fetch_site != "same-origin" and origin != request_origin)
+        ):
+            raise HTTPException(status_code=403, detail="Widget platform session requires a same-origin browser")
+        identity = resolve_identity(request)
+        if identity is None:
+            raise HTTPException(status_code=401, detail={
+                "code": "WIDGET_LOGIN_REQUIRED",
+                "message": "请先登录后使用智能问数",
+            })
+        return {
+            "source": "widget",
+            "website_id": website_id,
+            "external_user_id": "",
+            "visitor_id": "",
+            "auth_user_id": identity.user_id,
+            "auth_display_name": identity.display_name,
+            "auth_role": identity.role,
+        }
+
     if not external_user_id and (not visitor_id or matched_site.get("allow_anonymous") is not True):
         raise HTTPException(
             status_code=401,
@@ -369,16 +394,6 @@ def api_list_topic_messages(
     return TopicMessagePageResponse.model_validate(payload)
 
 
-# Content types safe to render inline in the browser; anything else (notably
-# text/html) is served as an attachment so direct navigation cannot execute it.
-_INLINE_SAFE_CONTENT_TYPES = {
-    "application/json",
-    "application/pdf",
-    "text/csv",
-    "text/plain",
-}
-
-
 @topic_router.post("/{topic_id}/files", response_model=WorkspaceFile)
 async def api_upload_topic_file(topic_id: str, request: Request, file: UploadFile = File(...)):
     _require_topic(topic_id, _request_context(request))
@@ -407,22 +422,7 @@ def api_download_topic_file(
     download: int = Query(default=0),
 ):
     _require_topic(topic_id, _request_context(request))
-    try:
-        path = safe_workspace_file(topic_id, rel_path)
-    except TopicFileError:
-        raise HTTPException(status_code=404, detail="file not found")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="file not found")
-    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    force_inline = not download and content_type in _INLINE_SAFE_CONTENT_TYPES
-    disposition = "inline" if force_inline else "attachment"
-    return FileResponse(
-        path,
-        media_type=content_type,
-        filename=path.name,
-        content_disposition_type=disposition,
-        headers={"X-Content-Type-Options": "nosniff"},
-    )
+    return topic_file_response(topic_id, rel_path, download=bool(download))
 
 
 @topic_router.put("/{topic_id}/messages/{message_id}/feedback", response_model=TopicMessage)
@@ -1078,8 +1078,7 @@ def _require_topic(topic_id: str, context: dict[str, str] | None = None) -> dict
 def _context_identity(context: dict | None) -> AuthIdentity | None:
     """从 ``_request_context`` 结果还原认证身份。
 
-    仅 dataagent 独立 SPA 分支携带 ``auth_user_id``/``auth_role``；widget 与
-    门户嵌入的匿名上下文返回 None。
+    平台和复用已验证平台登录的 Widget 携带身份；其他接入返回 None。
     """
     auth_user_id = str((context or {}).get("auth_user_id") or "").strip()
     if not auth_user_id:

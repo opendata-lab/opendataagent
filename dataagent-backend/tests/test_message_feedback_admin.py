@@ -15,8 +15,8 @@ from core.topic_task_store import TopicTaskStore  # noqa: E402
 pytestmark = pytest.mark.skipif(os.environ.get("DATAAGENT_TEST_MYSQL") != "1", reason="local MySQL integration opt-in")
 
 
-def _turn(store: TopicTaskStore, *, agent_id: str, question: str) -> tuple[str, str]:
-    topic = store.create_topic(title=question, agent_snapshot={"agent_id": agent_id, "name": agent_id})
+def _turn(store: TopicTaskStore, *, agent_id: str, question: str, context=None) -> tuple[str, str]:
+    topic = store.create_topic(title=question, agent_snapshot={"agent_id": agent_id, "name": agent_id}, context=context)
     task = store.create_task(topic_id=topic["topic_id"], prompt=question, provider_id="local-test", model="stub",
         database_hint=None, debug=False, timeout_seconds=1800, sql_read_timeout_seconds=300, sql_write_timeout_seconds=60)
     store.append_user_message(topic_id=topic["topic_id"], task_id=task["task_id"], content=question)
@@ -28,7 +28,8 @@ def _turn(store: TopicTaskStore, *, agent_id: str, question: str) -> tuple[str, 
 def turns():
     store = TopicTaskStore()
     made = {
-        "liked": _turn(store, agent_id="agent_fb_a", question="上月销售额是多少"),
+        "liked": _turn(store, agent_id="agent_fb_a", question="上月销售额是多少",
+                       context={"auth_user_id": "local:reviewer", "auth_display_name": "预览用户"}),
         "disliked": _turn(store, agent_id="agent_fb_b", question="各渠道退款率"),
         "unrated": _turn(store, agent_id="agent_fb_a", question="没有评价的问题"),
     }
@@ -59,6 +60,10 @@ def test_lists_rated_answers_with_question_counts_and_filters(turns):
     assert disliked["agent_id"] == "agent_fb_b"
     assert disliked["source"] == "web"
     assert disliked["feedback_at"]
+    assert disliked["user_id"] is None
+    assert disliked["user_display_name"] is None
+    liked = next(item for item in mine if item["feedback"] == "like")
+    assert (liked["user_id"], liked["user_display_name"]) == ("local:reviewer", "预览用户")
     assert made["unrated"][1] not in _ids(page)
 
     only_b = store.list_message_feedback(agent_id="agent_fb_b", **scope)

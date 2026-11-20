@@ -7,6 +7,7 @@ export function normalizeTopic(topic) {
   return {
     topic_id: String(topic?.topic_id || ''),
     title: String(topic?.title || '新话题'),
+    source: topic?.source === 'widget' ? 'widget' : 'web',
     agent_id: String(topic?.agent_id || rawAgent?.agent_id || ''),
     agent: rawAgent
       ? {
@@ -24,6 +25,11 @@ export function normalizeTopic(topic) {
     permission_mode: String(topic?.permission_mode || ''),
     created_at: String(topic?.created_at || new Date().toISOString()),
     updated_at: String(topic?.updated_at || new Date().toISOString()),
+    // Admin listing only: whether this user may continue the conversation, and
+    // whose it is when they may not.
+    ...(typeof topic?.can_continue === 'boolean' ? { can_continue: topic.can_continue } : {}),
+    ...Object.fromEntries(['auth_user_id', 'auth_display_name', 'external_user_id', 'visitor_id']
+      .filter((key) => topic?.[key]).map((key) => [key, String(topic[key])])),
   }
 }
 

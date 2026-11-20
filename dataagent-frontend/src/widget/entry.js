@@ -582,6 +582,7 @@ export function installWidget(scriptOrConfig = resolveCurrentScript()) {
     config.projectName = config.projectName || '智能问数'
     config.projectColor = config.projectColor || '#4A90A4'
     config.allowAnonymous = parseBooleanFlag(config.allowAnonymous)
+    config.usePlatformSession = parseBooleanFlag(config.usePlatformSession)
     config.loginUrl = String(config.loginUrl || '').trim()
     config.fullscreenUrl = resolveFullscreenUrl(config.fullscreenUrl)
     if (!config.headers) {
@@ -589,14 +590,17 @@ export function installWidget(scriptOrConfig = resolveCurrentScript()) {
       if (websiteId) {
         const userId = String(config.userId || '').trim()
         config.headers = { 'X-DataAgent-Client': 'widget', 'X-DataAgent-Website-Id': websiteId }
-        if (userId) {
+        if (!config.usePlatformSession && userId) {
           config.headers['X-DataAgent-User-Id'] = userId
-        } else if (config.allowAnonymous) {
+        } else if (!config.usePlatformSession && config.allowAnonymous) {
           config.headers['X-DataAgent-Visitor-Id'] = config.visitorId || resolveVisitorId(websiteId)
         }
       } else {
         config.headers = {}
       }
+    }
+    if (config.usePlatformSession) {
+      config.headers = { ...config.headers, 'X-DataAgent-Widget-Identity': 'platform' }
     }
     config.agentId = config.agentId || ''
     config.apiBaseUrl = config.apiBaseUrl ?? ''

@@ -34,6 +34,9 @@
       <el-table-column label="评价时间" width="170">
         <template #default="{ row }">{{ formatTime(row.feedback_at) }}</template>
       </el-table-column>
+      <el-table-column label="用户" width="150" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.user_display_name || row.user_id || '匿名用户' }}</template>
+      </el-table-column>
       <el-table-column label="助手" width="140" show-overflow-tooltip>
         <template #default="{ row }">{{ agentName(row.agent_id) }}</template>
       </el-table-column>
@@ -52,8 +55,7 @@
       </el-table-column>
       <el-table-column label="会话" width="110">
         <template #default="{ row }">
-          <el-link v-if="row.source === 'web'" type="primary" :data-testid="`feedback-open-${row.message_id}`" @click="openConversation(row)">打开会话</el-link>
-          <el-tag v-else size="small" type="info" title="Widget 会话不能从这里打开，问题与回答见左侧">Widget</el-tag>
+          <el-link type="primary" :data-testid="`feedback-open-${row.message_id}`" @click="openConversation(row)">打开会话</el-link>
         </template>
       </el-table-column>
     </el-table>
@@ -74,6 +76,7 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { dataagentApi } from '@/api/dataagent'
+import { conversationLocation } from '@/router/agentContext'
 
 const router = useRouter()
 const pageSize = 20
@@ -130,10 +133,8 @@ async function load() {
   }
 }
 
-// The chat page drops a conversation whose agent differs from the selected
-// one, so the link always names the agent as well.
 function openConversation(row) {
-  router.push({ path: '/chat', query: { agent_id: row.agent_id, topic_id: row.topic_id, message_id: row.message_id } })
+  router.push(conversationLocation(row))
 }
 
 watch(() => [filters.agentId, filters.feedback, filters.range], () => {

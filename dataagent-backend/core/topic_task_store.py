@@ -431,33 +431,22 @@ class TopicTaskStore(SessionCheckpointStore):
             self.init_schema()
 
     def _normalize_context(self, context: dict[str, Any] | None = None) -> dict[str, str]:
-        source = str((context or {}).get("source") or "web").strip().lower()
-        if source != "widget":
-            normalized = {
-                "source": "web",
-                "website_id": "",
-                "external_user_id": "",
-                "visitor_id": "",
-            }
-            # 认证键仅在 dataagent SPA 已登录时由 _request_context 附加；
-            # 缺失即匿名 web（含门户嵌入页），与无认证时代同形。
-            auth_user_id = str((context or {}).get("auth_user_id") or "").strip()
-            if auth_user_id:
-                normalized["auth_user_id"] = auth_user_id
-                normalized["auth_display_name"] = str((context or {}).get("auth_display_name") or "").strip()
-                role = str((context or {}).get("auth_role") or "user").strip().lower()
-                normalized["auth_role"] = role if role in {"admin", "user"} else "user"
-            return normalized
-
-        website_id = str((context or {}).get("website_id") or "").strip()
-        external_user_id = str((context or {}).get("external_user_id") or "").strip()
-        visitor_id = str((context or {}).get("visitor_id") or "").strip()
-        return {
-            "source": "widget",
-            "website_id": website_id,
+        ctx = context or {}
+        widget = str(ctx.get("source") or "").strip().lower() == "widget"
+        auth_user_id = str(ctx.get("auth_user_id") or "").strip()
+        external_user_id = str(ctx.get("external_user_id") or "").strip() if widget and not auth_user_id else ""
+        normalized = {
+            "source": "widget" if widget else "web",
+            "website_id": str(ctx.get("website_id") or "").strip() if widget else "",
             "external_user_id": external_user_id,
-            "visitor_id": "" if external_user_id else visitor_id,
+            "visitor_id": str(ctx.get("visitor_id") or "").strip() if widget and not (auth_user_id or external_user_id) else "",
         }
+        if auth_user_id:
+            normalized["auth_user_id"] = auth_user_id
+            normalized["auth_display_name"] = str(ctx.get("auth_display_name") or "").strip()
+            role = str(ctx.get("auth_role") or "").strip().lower()
+            normalized["auth_role"] = role if role in {"admin", "user"} else "user"
+        return normalized
 
     def _topic_context_predicate(self, context: dict[str, Any] | None = None, *, alias: str = "t") -> tuple[str, list[str]]:
         if context is None:
@@ -465,28 +454,37 @@ class TopicTaskStore(SessionCheckpointStore):
 
         normalized = self._normalize_context(context)
         prefix = f"{alias}." if alias else ""
+        auth_user_id = normalized.get("auth_user_id") or ""
+        # Keep the indexed comparison, then require an exact stable ID even
+        # under the default case-insensitive MySQL collation.
+        owner = (
+            f"{prefix}auth_user_id = %s AND CAST({prefix}auth_user_id AS BINARY) = CAST(%s AS BINARY)"
+        )
+        owner_params = [auth_user_id, auth_user_id]
+        regular_topic = f"{prefix}is_agent_preview = 0"
         if normalized["source"] != "widget":
-            # 谓词矩阵（docs/design/2026-07-01-dataagent-auth-design.md 3.5）。
-            # is_auth_enabled()==False（env 未设置或显式关闭）走旧谓词逐字一致，
-            # 无 owner 过滤——关闭即恢复"无认证共享池"的完整旧语义。
             if not is_auth_enabled():
                 return f"COALESCE({prefix}source, 'web') = %s", ["web"]
-            if normalized.get("auth_role") == "admin":
-                return f"{prefix}source = %s", ["web"]
-            auth_user_id = normalized.get("auth_user_id") or ""
             if auth_user_id:
-                return f"{prefix}source = %s AND {prefix}auth_user_id = %s AND {prefix}is_agent_preview = 0", ["web", auth_user_id]
-            # 匿名池：等值比较（列 NOT NULL DEFAULT ''，可走索引），不泄漏用户会话。
+                scope = regular_topic
+                if normalized.get("auth_role") == "admin":
+                    # Workbench previews are writable by the administrator who created them.
+                    scope = f"({regular_topic} OR {prefix}source = %s)"
+                    return f"{prefix}source IN (%s, %s) AND {owner} AND {scope}", ["web", "widget", *owner_params, "web"]
+                return f"{prefix}source IN (%s, %s) AND {owner} AND {scope}", ["web", "widget", *owner_params]
             return f"{prefix}source = %s AND {prefix}auth_user_id = '' AND {prefix}is_agent_preview = 0", ["web"]
 
-        if normalized["external_user_id"]:
+        if auth_user_id:
             return (
-                f"{prefix}source = %s AND {prefix}website_id = %s AND {prefix}external_user_id = %s",
-                ["widget", normalized["website_id"], normalized["external_user_id"]],
+                f"({prefix}source = %s OR ({prefix}source = %s AND {prefix}website_id = %s)) AND {owner} AND {regular_topic}",
+                ["web", "widget", normalized["website_id"], *owner_params],
             )
 
+        legacy = f"{prefix}source = %s AND {prefix}website_id = %s AND {prefix}auth_user_id = ''"
+        if normalized["external_user_id"]:
+            return f"{legacy} AND {prefix}external_user_id = %s", ["widget", normalized["website_id"], normalized["external_user_id"]]
         return (
-            f"{prefix}source = %s AND {prefix}website_id = %s AND {prefix}external_user_id = '' AND {prefix}visitor_id = %s",
+            f"{legacy} AND {prefix}external_user_id = '' AND {prefix}visitor_id = %s",
             ["widget", normalized["website_id"], normalized["visitor_id"]],
         )
 
@@ -1372,7 +1370,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     SELECT m.message_id, m.topic_id, m.task_id, m.feedback,
                            COALESCE(m.feedback_at, m.updated_at) AS feedback_at,
                            LEFT(m.content, 300) AS answer,
-                           t.title, t.source, t.website_id, t.auth_user_id, t.external_user_id,
+                           t.title, t.source, t.website_id, t.auth_user_id, t.auth_username, t.external_user_id,
                            COALESCE(NULLIF(k.agent_id, ''), t.agent_id) AS agent_id,
                            (SELECT LEFT(u.content, 300) FROM da_agent_message u
                              WHERE u.task_id = m.task_id AND u.sender_type = 'user'
@@ -1401,6 +1399,7 @@ class TopicTaskStore(SessionCheckpointStore):
                 "source": str(row.get("source") or "web"),
                 "website_id": str(row.get("website_id") or "") or None,
                 "user_id": str(row.get("auth_user_id") or row.get("external_user_id") or "") or None,
+                "user_display_name": str(row.get("auth_username") or "").strip() or None,
             }
             for row in rows
         ]

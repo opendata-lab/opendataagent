@@ -1,7 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createPinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 import { defineAgentConversation } from '@opendataagent/agent-conversation'
 
 // The page renders the conversation as a custom element. Registering it is the
@@ -46,9 +47,11 @@ const routeState = vi.hoisted(() => ({
 const routerReplace = vi.hoisted(() => vi.fn())
 
 const dataagentApiMock = vi.hoisted(() => ({
-  listWidgetTopics: vi.fn(),
+  listAdminTopics: vi.fn(),
   listWidgetUsers: vi.fn(),
-  getWidgetTopicMessages: vi.fn()
+  getAdminTopic: vi.fn(),
+  getAdminTopicMessages: vi.fn(),
+  listAdminTopicFiles: vi.fn()
 }))
 
 vi.mock('@/api/nl2sql', () => ({
@@ -152,9 +155,17 @@ const topicMessages = {
 const scrollbarSetScrollTop = vi.fn()
 const mountedWrappers = []
 
-const mountChat = ({ withAgent = true } = {}) => {
+const mountChat = ({ withAgent = true, admin = false } = {}) => {
   if (withAgent && !Object.prototype.hasOwnProperty.call(routeState.query, 'agent_id')) {
     routeState.query = { ...routeState.query, agent_id: 'agent_default' }
+  }
+  const pinia = createPinia()
+  if (admin) {
+    // Login on, signed in as an administrator.
+    setActivePinia(pinia)
+    const auth = useAuthStore()
+    auth.enabled = true
+    auth.currentUser = { user_id: 'local:admin', display_name: 'Admin', role: 'admin' }
   }
   const wrapper = mount(NL2SqlChatV2, {
   // A registered custom element starts its Vue app from connectedCallback.
@@ -162,7 +173,7 @@ const mountChat = ({ withAgent = true } = {}) => {
   // would be skipped for a reason that cannot happen in the real page.
   attachTo: document.body,
   global: {
-    plugins: [createPinia()],
+    plugins: [pinia],
     stubs: {
       ElScrollbar: {
         name: 'ElScrollbar',
@@ -248,9 +259,9 @@ describe('NL2SqlChatV2 URL location', () => {
     routerReplace.mockReset()
     scrollbarSetScrollTop.mockReset()
 
-    dataagentApiMock.listWidgetTopics.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 })
+    dataagentApiMock.listAdminTopics.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 })
     dataagentApiMock.listWidgetUsers.mockResolvedValue({ items: [] })
-    dataagentApiMock.getWidgetTopicMessages.mockResolvedValue({
+    dataagentApiMock.getAdminTopicMessages.mockResolvedValue({
       topic_id: '', page: 1, page_size: 500, order: 'asc', total: 0, items: []
     })
 
@@ -605,25 +616,95 @@ describe('NL2SqlChatV2 URL location', () => {
   // Pi content completion lives in `agentEventReducer.spec.js`; reasoning/cursor
   // rendering lives in SDK `thinkingBlock.spec.js` and `textRendering.spec.js`.
 
-  it('forwards the selected assistant to the widget topic query', async () => {
-    routeState.query = { agent_id: 'agent_sales' }
-    apiMocks.agentApi.listAgents.mockResolvedValue([
-      { agent_id: 'agent_default', name: 'Default agent', is_default: true },
-      { agent_id: 'agent_sales', name: 'Sales agent', is_default: false }
-    ])
+  it('shows both sources in one editable list and keeps the selected conversation editable', async () => {
+    apiMocks.topicApi.listTopics.mockResolvedValue({
+      list: [
+        { ...makeTopic('topic-1', 'Platform topic'), source: 'web' },
+        { ...makeTopic('topic-2', 'Widget topic'), source: 'widget' }
+      ]
+    })
     const wrapper = mountChat()
-
-    await flushPromises()
-    await nextTick()
-
-    const widgetTab = wrapper.findAll('.v2-source-tab').find((b) => b.text() === 'Widget')
-    expect(widgetTab).toBeTruthy()
-    await widgetTab.trigger('click')
     await flushPromises()
 
-    expect(dataagentApiMock.listWidgetTopics).toHaveBeenCalled()
-    expect(dataagentApiMock.listWidgetTopics).toHaveBeenLastCalledWith(
-      expect.objectContaining({ agent_id: 'agent_sales' })
+    expect(wrapper.findAll('.v2-session-item').map((row) => row.find('.v2-session-source-badge').text()))
+      .toEqual(['平台', 'Widget'])
+    await wrapper.get('#conversation-source').setValue('widget')
+    expect(wrapper.findAll('.v2-session-item')).toHaveLength(1)
+    await wrapper.get('.v2-session-item').trigger('click')
+    await flushPromises()
+    expect(conversation(wrapper).disabled).toBe(false)
+    expect(apiMocks.topicApi.getTopicMessages).toHaveBeenCalledWith('topic-2', expect.any(Object))
+    expect(dataagentApiMock.listAdminTopics).not.toHaveBeenCalled()
+  })
+
+  it('lets an administrator chat in their own conversation and read others without switching modes', async () => {
+    localStorage.removeItem('nl2sql.artifactsPanelOpen')
+    dataagentApiMock.listAdminTopics.mockResolvedValue({
+      items: [
+        { ...makeTopic('topic-1', 'My topic'), source: 'web', auth_user_id: 'local:admin', can_continue: true },
+        { ...makeTopic('topic-other', 'Their topic'), source: 'widget', auth_user_id: 'sso:alice', auth_display_name: 'Alice', can_continue: false }
+      ],
+      total: 2, page: 1, page_size: 50
+    })
+    dataagentApiMock.listAdminTopicFiles.mockResolvedValue({
+      files: [{ name: 'chart.png', rel_path: 'output/chart.png', size: 12, kind: 'output' }]
+    })
+    const wrapper = mountChat({ admin: true })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('管理查看')
+    expect(dataagentApiMock.listAdminTopics).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: 'agent_default', source: '' }))
+    expect(apiMocks.topicApi.listTopics).not.toHaveBeenCalled()
+    const rows = wrapper.findAll('.v2-session-item')
+    // The first row is the admin's own: an ordinary, editable conversation.
+    await rows[0].trigger('click')
+    await flushPromises()
+    expect(conversation(wrapper).disabled).toBe(false)
+    expect(apiMocks.topicApi.getTopicMessages).toHaveBeenCalledWith('topic-1', expect.any(Object))
+    expect(wrapper.find('.v2-readonly-label').exists()).toBe(false)
+
+    expect(rows[1].find('.v2-session-owner').text()).toBe('Alice')
+    expect(rows[0].find('.v2-session-owner').exists()).toBe(false)
+    await rows[1].trigger('click')
+    await flushPromises()
+    expect(conversation(wrapper).disabled).toBe(true)
+    expect(wrapper.get('.v2-readonly-label').text()).toBe('Alice 的会话 · 只读')
+    expect(dataagentApiMock.getAdminTopicMessages).toHaveBeenCalledWith('topic-other', expect.any(Object))
+    await wrapper.get('.v2-artifacts-toggle').trigger('click')
+    await flushPromises()
+    expect(dataagentApiMock.listAdminTopicFiles).toHaveBeenCalledWith('topic-other')
+    expect(wrapper.get('.v2-artifact-name').text()).toBe('chart.png')
+
+    // Starting a new conversation is always available.
+    await wrapper.get('.v2-btn-new').trigger('click')
+    await flushPromises()
+    expect(conversation(wrapper).disabled).toBe(false)
+    localStorage.removeItem('nl2sql.artifactsPanelOpen')
+  })
+
+  it('opens a linked conversation beyond the first page by its own access, ignoring the old view=audit flag', async () => {
+    routeState.query = { view: 'audit', topic_id: 'topic-widget' }
+    dataagentApiMock.getAdminTopic.mockResolvedValue({
+      ...makeTopic('topic-widget', 'Widget review'), source: 'widget', auth_user_id: 'sso:bob', can_continue: false
+    })
+    const wrapper = mountChat({ admin: true })
+    await flushPromises()
+    expect(dataagentApiMock.getAdminTopic).toHaveBeenCalledWith('topic-widget')
+    expect(conversation(wrapper).disabled).toBe(true)
+    expect(dataagentApiMock.getAdminTopicMessages).toHaveBeenCalledWith('topic-widget', expect.any(Object))
+  })
+
+  it('filters the administrator list by source on the server', async () => {
+    mountChat({ admin: true })
+    await flushPromises()
+    const wrapper = document.body
+    expect(dataagentApiMock.listAdminTopics).toHaveBeenLastCalledWith(expect.objectContaining({ source: '' }))
+    const select = wrapper.querySelector('#conversation-source')
+    select.value = 'widget'
+    select.dispatchEvent(new Event('change'))
+    await flushPromises()
+    expect(dataagentApiMock.listAdminTopics).toHaveBeenLastCalledWith(
+      expect.objectContaining({ agent_id: 'agent_default', source: 'widget' })
     )
   })
 })

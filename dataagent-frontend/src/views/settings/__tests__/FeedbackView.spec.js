@@ -43,11 +43,27 @@ describe('FeedbackView', () => {
     wrapper.unmount()
   })
 
-  it('opens a main-site conversation by agent, topic and message; widget rows have no link', async () => {
+  it('opens both sources with the same read-only location', async () => {
     const wrapper = await mountView()
-    expect(wrapper.find('[data-testid="feedback-open-msg-2"]').exists()).toBe(false)
     await wrapper.get('[data-testid="feedback-open-msg-1"]').trigger('click')
     expect(push).toHaveBeenCalledWith({ path: '/chat', query: { agent_id: 'agent_a', topic_id: 'topic-1', message_id: 'msg-1' } })
+    await wrapper.get('[data-testid="feedback-open-msg-2"]').trigger('click')
+    expect(push).toHaveBeenLastCalledWith({ path: '/chat', query: { agent_id: 'agent_a', topic_id: 'topic-2', message_id: 'msg-2' } })
+    wrapper.unmount()
+  })
+
+  it('shows the display name, user ID, or anonymous label in the user column', async () => {
+    apiMocks.listFeedback.mockResolvedValue(page([
+      { ...webRow, user_display_name: '预览用户', user_id: 'local:reviewer' },
+      { ...widgetRow, user_id: 'widget-user-42' },
+      { ...webRow, message_id: 'msg-3' },
+    ]))
+    const wrapper = await mountView()
+    const columns = wrapper.findAll('thead th')
+    const userColumn = columns.findIndex(column => column.text() === '用户')
+    expect(userColumn).toBeGreaterThanOrEqual(0)
+    expect(wrapper.findAll('tbody tr').map(row => row.findAll('td')[userColumn].text()))
+      .toEqual(['预览用户', 'widget-user-42', '匿名用户'])
     wrapper.unmount()
   })
 

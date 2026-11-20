@@ -69,8 +69,9 @@ export function parseWidgetConfig(script = resolveCurrentScript()) {
   const websiteId = String(dataset.websiteId || '').trim()
   const userId = String(dataset.userId || '').trim()
   const agentId = String(dataset.agentId || '').trim()
+  const usePlatformSession = parseBooleanFlag(dataset.usePlatformSession)
   const allowAnonymous = parseBooleanFlag(dataset.allowAnonymous)
-  const visitorId = userId || !allowAnonymous ? '' : resolveVisitorId(websiteId)
+  const visitorId = usePlatformSession || userId || !allowAnonymous ? '' : resolveVisitorId(websiteId)
   const loginUrl = String(dataset.loginUrl || '').trim()
   const apiBaseUrl = trimTrailingSlash(dataset.apiBaseUrl || (script?.src ? new URL(script.src, window.location.href).origin : ''))
   const projectName = String(dataset.projectName || DEFAULT_PROJECT_NAME).trim() || DEFAULT_PROJECT_NAME
@@ -83,7 +84,9 @@ export function parseWidgetConfig(script = resolveCurrentScript()) {
     'X-DataAgent-Client': 'widget',
     'X-DataAgent-Website-Id': websiteId
   }
-  if (userId) {
+  if (usePlatformSession) {
+    headers['X-DataAgent-Widget-Identity'] = 'platform'
+  } else if (userId) {
     headers['X-DataAgent-User-Id'] = userId
   } else if (visitorId) {
     headers['X-DataAgent-Visitor-Id'] = visitorId
@@ -92,6 +95,7 @@ export function parseWidgetConfig(script = resolveCurrentScript()) {
   return {
     websiteId,
     userId,
+    usePlatformSession,
     agentId,
     visitorId,
     allowAnonymous,
@@ -112,6 +116,7 @@ export function parseWidgetConfig(script = resolveCurrentScript()) {
 }
 
 export function isWidgetLoginRequired(config = {}) {
+  if (config.usePlatformSession) return false // the API validates the platform session
   const websiteId = String(config.websiteId || config.headers?.['X-DataAgent-Website-Id'] || '').trim()
   if (!websiteId) return false
   const userId = String(config.userId || config.headers?.['X-DataAgent-User-Id'] || '').trim()

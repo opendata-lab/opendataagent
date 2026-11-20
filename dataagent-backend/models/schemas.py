@@ -623,6 +623,7 @@ class TopicSummary(BaseModel):
     chat_topic_id: str
     chat_conversation_id: str
     agent_id: str = ""
+    source: str = "web"
     agent: Optional[AgentSummary] = None
     permission_mode: str = "default"
     current_task_id: Optional[str] = None
@@ -639,6 +640,7 @@ class TopicDetail(BaseModel):
     chat_topic_id: str
     chat_conversation_id: str
     agent_id: str = ""
+    source: str = "web"
     agent: Optional[AgentSummary] = None
     permission_mode: str = "default"
     current_task_id: Optional[str] = None
@@ -657,16 +659,14 @@ class TopicMessagePageResponse(BaseModel):
 
 
 class AdminWidgetTopicSummary(TopicSummary):
-    """Topic summary for the admin (read-only) widget-session view. Extends
-    TopicSummary with the isolation dimensions so operators can tell which
-    site / external user / visitor a conversation belongs to."""
+    """Administrator history row with ownership and caller-specific access."""
 
-    source: str = "web"
     website_id: str = ""
     external_user_id: str = ""
     visitor_id: str = ""
     auth_user_id: str = ""
     auth_display_name: str = ""
+    can_continue: bool = False
 
 
 class AdminWidgetTopicPage(BaseModel):
@@ -691,6 +691,7 @@ class AdminFeedbackItem(BaseModel):
     source: str = "web"          # 'web' links to /chat; 'widget' is shown inline only
     website_id: Optional[str] = None
     user_id: Optional[str] = None
+    user_display_name: Optional[str] = None
 
 
 class AdminFeedbackPage(BaseModel):

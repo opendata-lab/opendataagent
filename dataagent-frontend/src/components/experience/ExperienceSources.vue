@@ -6,21 +6,19 @@
     <ul>
       <li v-for="(src, index) in item.sources || []" :key="src.task_id">
         <span>{{ src.question || `来源 ${index + 1}` }}</span>
-        <el-link v-if="src.source === 'web'" type="primary" @click="openSource(src)">打开会话</el-link>
-        <template v-else>
-          <span class="muted">Widget 会话</span>
-          <p v-if="src.answer" class="source-answer">{{ src.answer }}</p>
-        </template>
+        <el-link v-if="src.topic_id" type="primary" @click="openSource(src)">打开会话</el-link>
+        <p v-if="src.source === 'widget' && src.answer" class="source-answer">{{ src.answer }}</p>
       </li>
     </ul>
   </section>
 </template>
 <script setup>
 import { useRouter } from 'vue-router'
+import { conversationLocation } from '@/router/agentContext'
 const props = defineProps({ item: { type: Object, required: true }, digestAgentId: { type: String, required: true } })
 const router = useRouter()
-function openDigest() { router.push({ path: '/chat', query: { agent_id: props.digestAgentId, topic_id: props.item.digest_topic_id } }) }
-function openSource(src) { router.push({ path: '/chat', query: { agent_id: src.agent_id, topic_id: src.topic_id } }) }
+function openDigest() { openSource({ agent_id: props.digestAgentId, topic_id: props.item.digest_topic_id }) }
+function openSource(src) { router.push(conversationLocation(src)) }
 </script>
 <style scoped>
 h3 { font-size: 14px; margin: 24px 0 12px; }

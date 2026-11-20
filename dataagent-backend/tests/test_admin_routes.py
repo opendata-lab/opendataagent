@@ -936,3 +936,33 @@ def test_knowledge_memory_admin_contract(monkeypatch, tmp_path):
         assert client.delete(root + "/missing", headers=headers).status_code == 404
     finally:
         auth.reset_auth_for_tests()
+
+
+def test_admin_can_download_other_conversation_files_with_read_only_routes(monkeypatch, tmp_path):
+    from core import topic_files
+
+    auth = _enable_auth(monkeypatch, tmp_path)
+    try:
+        monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: _FakeWidgetStore())
+        monkeypatch.setattr(topic_files, "_workspace_root", lambda topic_id: tmp_path)
+        output = tmp_path / "output"
+        output.mkdir()
+        (output / "report.html").write_text("<p>report</p>")
+        (tmp_path / ".private").write_text("private")
+        client = TestClient(app)
+        url = "/api/v1/nl2sql-admin/topics/topic_widget_1/files"
+        admin_headers = _bearer(auth, role="admin")
+
+        assert client.get(url).status_code == 401
+        assert client.get(url + "/output/report.html", headers=_bearer(auth, role="user")).status_code == 403
+        listing = client.get(url, headers=admin_headers)
+        assert listing.status_code == 200
+        assert "output/report.html" in {file["rel_path"] for file in listing.json()["files"]}
+        response = client.get(url + "/output/report.html", headers=admin_headers)
+        assert response.text == "<p>report</p>"
+        assert response.headers["content-disposition"].startswith("attachment")
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert client.get(url + "/.private", headers=admin_headers).status_code == 404
+        assert client.post(url, headers=admin_headers).status_code == 405
+    finally:
+        auth.reset_auth_for_tests()
