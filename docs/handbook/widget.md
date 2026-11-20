@@ -42,6 +42,12 @@ Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入�
 | `data-allow-anonymous` | 否 | `false` | 客户端匿名开关，还需在管理端为该站点开启匿名访问 |
 | `data-fullscreen-url` | 否 | — | 全屏按钮打开的完整页面地址，支持宿主相对路由和 HTTP(S) 地址 |
 
+## 与平台继续同一条会话
+
+如果 Widget 和 DataAgent 平台通过同一浏览器来源访问同一个 DataAgent 后端，并启用了平台登录，可配置 `data-use-platform-session="true"`（JavaScript API 使用 `usePlatformSession: true`）。API 使用平台登录会话，不需要传 `data-user-id`；没有有效登录时提示登录。配置现有的 Widget 站点白名单，并把 `data-api-base-url` 指向同源 API。独立登录的第三方站点继续使用原接入方式。
+
+平台和 Widget 历史会显示当前账号有权继续的会话。悬浮 Widget 默认可以全屏打开平台 Chat，并带上当前助手和会话；自定义 `onFullscreen` 仍可覆盖该动作。现有匿名历史和原先仅靠宿主用户 ID 的历史继续按原方式访问，它们不会自动合并到平台账户。
+
 ## 显示模式
 
 ### 悬浮模式（Floating）

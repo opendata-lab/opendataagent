@@ -10,6 +10,7 @@ import hashlib
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 
+from api.topic_file_response import topic_file_response
 from core.auth import AuthIdentity, is_auth_enabled, require_admin, require_user, resolve_identity
 from core.agent_draft_service import agent_drafts, DraftConflict, check_revision
 from core.task_submission_service import submit_message_task
@@ -55,6 +56,7 @@ from core.skill_discovery import resolve_skills_root_dir
 from config import get_settings
 from core import experience
 from core.topic_task_store import get_topic_task_store
+from core.topic_files import list_files
 from models.schemas import (
     WidgetAccessKeyResponse,
     AdminAuthUser,
@@ -99,6 +101,7 @@ from models.schemas import (
     SkillRuntimeUpdateRequest,
     SkillUninstallResponse,
     TopicMessagePageResponse,
+    WorkspaceFileListResponse,
 )
 
 router = APIRouter()
@@ -411,6 +414,14 @@ def admin_update_experience(experience_id: str, payload: ExperienceUpdateRequest
     return updated
 
 
+def _admin_topic_summary(topic: dict, identity: AuthIdentity | None) -> AdminWidgetTopicSummary:
+    source = topic.get("source") or "web"
+    can_continue = source == "web" if identity is None else (
+        source in {"web", "widget"} and topic.get("auth_user_id") == identity.user_id
+    )
+    return AdminWidgetTopicSummary.model_validate({**topic, "can_continue": can_continue})
+
+
 @settings_router.get("/topics", response_model=AdminWidgetTopicPage)
 def admin_list_all_topics(
     source: str = Query(default="", pattern="^(|web|widget)$"),
@@ -424,10 +435,11 @@ def admin_list_all_topics(
     end: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
+    identity: AuthIdentity | None = Depends(require_admin),
 ):
     """Read-only admin listing across ALL conversation sources (web
     anonymous pool, authenticated users, widget). `source=''` means no
-    source filter. Backs the admin "all sessions" view."""
+    source filter. The access flag selects the conversation UI for each row."""
     payload = get_topic_task_store().admin_list_topics(
         source=source,
         website_id=website_id,
@@ -442,7 +454,7 @@ def admin_list_all_topics(
         page_size=page_size,
     )
     return AdminWidgetTopicPage(
-        items=[AdminWidgetTopicSummary.model_validate(item) for item in payload.get("items") or []],
+        items=[_admin_topic_summary(item, identity) for item in payload.get("items") or []],
         total=int(payload.get("total") or 0),
         page=int(payload.get("page") or page),
         page_size=int(payload.get("page_size") or page_size),
@@ -460,6 +472,7 @@ def admin_list_widget_topics(
     end: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
+    identity: AuthIdentity | None = Depends(require_admin),
 ):
     """Read-only admin listing of widget-sourced conversations across all
     sites/users. Bypasses per-user isolation by design; web session
@@ -477,7 +490,7 @@ def admin_list_widget_topics(
         page_size=page_size,
     )
     return AdminWidgetTopicPage(
-        items=[AdminWidgetTopicSummary.model_validate(item) for item in payload.get("items") or []],
+        items=[_admin_topic_summary(item, identity) for item in payload.get("items") or []],
         total=int(payload.get("total") or 0),
         page=int(payload.get("page") or page),
         page_size=int(payload.get("page_size") or page_size),
@@ -514,8 +527,21 @@ def admin_list_auth_users(
     return AdminAuthUserList(items=[AdminAuthUser.model_validate(row) for row in rows])
 
 
+def _require_audit_topic(store, topic_id: str) -> dict:
+    topic = store.get_topic(topic_id, context=None)
+    if not topic or topic.get("is_agent_preview"):
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return topic
+
+
+@settings_router.get("/topics/{topic_id}", response_model=AdminWidgetTopicSummary)
+def admin_get_topic(topic_id: str, identity: AuthIdentity | None = Depends(require_admin)):
+    return _admin_topic_summary(_require_audit_topic(get_topic_task_store(), topic_id), identity)
+
+
+@settings_router.get("/topics/{topic_id}/messages", response_model=TopicMessagePageResponse)
 @settings_router.get("/widget-topics/{topic_id}/messages", response_model=TopicMessagePageResponse)
-def admin_list_widget_topic_messages(
+def admin_list_topic_messages(
     topic_id: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=200, ge=1, le=500),
@@ -525,12 +551,23 @@ def admin_list_widget_topic_messages(
     topic_id without owner check, since `context=None` reuses the existing
     `1 = 1` predicate path in the store."""
     store = get_topic_task_store()
-    if not store.get_topic(topic_id, context=None):
-        raise HTTPException(status_code=404, detail="Topic not found")
+    _require_audit_topic(store, topic_id)
     payload = store.list_topic_messages_page(
         topic_id=topic_id, page=page, page_size=page_size, order=order, context=None
     )
     return TopicMessagePageResponse.model_validate(payload)
+
+
+@settings_router.get("/topics/{topic_id}/files", response_model=WorkspaceFileListResponse)
+def admin_list_topic_files(topic_id: str):
+    _require_audit_topic(get_topic_task_store(), topic_id)
+    return WorkspaceFileListResponse(files=list_files(topic_id))
+
+
+@settings_router.get("/topics/{topic_id}/files/{rel_path:path}")
+def admin_download_topic_file(topic_id: str, rel_path: str, download: int = Query(default=1)):
+    _require_audit_topic(get_topic_task_store(), topic_id)
+    return topic_file_response(topic_id, rel_path, download=bool(download))
 
 
 @user_router.get("/skills/documents", response_model=list[SkillDocumentSummary])
@@ -580,10 +617,21 @@ def create_agent(request: AgentProfileCreateRequest):
         raise _draft_error(exc) from exc
 
 
+def _preview_owner_context(identity: AuthIdentity | None) -> dict[str, str]:
+    return {
+        "source": "web", "auth_user_id": identity.user_id if identity else "",
+        "auth_display_name": identity.display_name if identity else "", "auth_role": "admin",
+    }
+
+
 @skills_router.get("/agents/{agent_id}/draft")
-def get_agent_draft(agent_id: str):
+def get_agent_draft(agent_id: str, identity: AuthIdentity | None = Depends(require_admin)):
     try:
-        return agent_drafts.get(agent_id)
+        draft = agent_drafts.get(agent_id)
+        preview_id = draft.get("preview_topic_id")
+        if identity and preview_id and not get_topic_task_store().get_topic(preview_id, context=_preview_owner_context(identity)):
+            return {**draft, "preview_topic_id": None, "preview_task_id": None, "preview_status": None}
+        return draft
     except ValueError as exc:
         raise _draft_error(exc) from exc
 
@@ -602,20 +650,19 @@ def create_agent_preview_topic(agent_id: str, request: AgentDraftRevisionRequest
     try:
         draft = agent_drafts.get(agent_id)
         check_revision(draft, request.expected_revision)
-        context = {"source": "web", "auth_user_id": identity.user_id if identity else "",
-                   "auth_display_name": identity.display_name if identity else "", "auth_role": "admin"}
         return get_topic_task_store().create_topic(title=f"调试 · {draft['name']}",
-            agent_snapshot=build_agent_snapshot(draft), context=context, is_agent_preview=True)
+            agent_snapshot=build_agent_snapshot(draft), context=_preview_owner_context(identity), is_agent_preview=True)
     except ValueError as exc:
         raise _draft_error(exc) from exc
 
 
 @skills_router.post("/agents/{agent_id}/preview-tasks")
-async def submit_agent_preview(agent_id: str, request: AgentPreviewMessageRequest):
+async def submit_agent_preview(agent_id: str, request: AgentPreviewMessageRequest,
+                               identity: AuthIdentity | None = Depends(require_admin)):
     try:
         draft = agent_drafts.get(agent_id)
         check_revision(draft, request.expected_revision)
-        topic = get_topic_task_store().get_topic(request.topic_id)
+        topic = get_topic_task_store().get_topic(request.topic_id, context=_preview_owner_context(identity))
         if not topic or not topic.get("is_agent_preview") or topic.get("agent_id") != agent_id:
             raise ValueError("preview topic not found")
         # Row-lock acquisition must not block the event loop while another

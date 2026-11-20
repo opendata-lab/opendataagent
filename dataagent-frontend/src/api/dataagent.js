@@ -18,6 +18,10 @@ export function setDataagentUnauthorizedHandler(handler) {
   unauthorizedHandler = typeof handler === 'function' ? handler : null
 }
 
+const adminTopicPath = (topicId) => `/v1/nl2sql-admin/topics/${encodeURIComponent(topicId)}`
+const adminTopicFilePath = (topicId, relPath) =>
+  `${adminTopicPath(topicId)}/files/${String(relPath).split('/').map(encodeURIComponent).join('/')}`
+
 dataagentRequest.interceptors.response.use(
   (response) => {
     const payload = response.data
@@ -223,8 +227,24 @@ export const dataagentApi = {
     return dataagentRequest.get('/v1/nl2sql-admin/auth-users', { params })
   },
 
-  getWidgetTopicMessages(topicId, params = {}) {
-    return dataagentRequest.get(`/v1/nl2sql-admin/widget-topics/${encodeURIComponent(topicId)}/messages`, { params })
+  getAdminTopic(topicId) {
+    return dataagentRequest.get(adminTopicPath(topicId))
+  },
+
+  getAdminTopicMessages(topicId, params = {}) {
+    return dataagentRequest.get(`${adminTopicPath(topicId)}/messages`, { params })
+  },
+
+  listAdminTopicFiles(topicId) {
+    return dataagentRequest.get(`${adminTopicPath(topicId)}/files`)
+  },
+
+  adminTopicFileUrl(topicId, relPath) {
+    return `/api${adminTopicFilePath(topicId, relPath)}`
+  },
+
+  fetchAdminTopicFile(topicId, relPath) {
+    return dataagentRequest.get(adminTopicFilePath(topicId, relPath), { responseType: 'blob' })
   },
 
   // ---- Evaluation datasets ----

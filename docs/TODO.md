@@ -10,6 +10,11 @@
 
 ## DataAgent 运行时与插件
 
+### 独立登录 Widget 的跨端历史
+
+- **现状**（2026-11-19，用户提出统一会话和跨端续聊）：同源共享平台会话可使用已验证的账号。此前 Widget 记录只保留站点与宿主用户 ID 或访客 ID，不能据此自动匹配平台身份。
+- **要做**：如需支持独立宿主登录或接入既有记录，先核对生产站点登录和稳定账号标识，并确定可信验证方式及旧数据归属。见[设计](design/2026-11-19-unified-conversation-history-design.md)和[计划](plans/2026-11-19-unified-conversation-history-plan.md)。
+
 ### 会话历史分页加载（大会话打开慢）
 
 - **现状**（2026-11-13 实测）：点击会话时前端一次读取 `GET /api/v1/nl2sql/topics/{topic_id}/messages` 的全部历史（默认 `page_size=200`、`order=asc`）。本地某会话 `topic_47941a2a…` 响应 4.0 MB（接口 100–120 ms），其余 0.2–0.7 MB；慢主要在浏览器渲染整段历史。接口已支持 `page`、`page_size`（≤500）、`order=asc|desc`。

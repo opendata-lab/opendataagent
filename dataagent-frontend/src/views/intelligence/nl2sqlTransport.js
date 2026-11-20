@@ -232,7 +232,7 @@ export function createNl2SqlTransport(api, topicId, context = {}) {
  * owns history access; no mutating capability is exposed, so a disabled SDK
  * element cannot accidentally act on somebody else's conversation.
  */
-export function createNl2SqlAuditTransport(api, adminApi, topicId) {
+export function createNl2SqlAuditTransport(adminApi, topicId) {
   const readonly = async () => {
     throw new Error('审计会话为只读')
   }
@@ -241,7 +241,7 @@ export function createNl2SqlAuditTransport(api, adminApi, topicId) {
     async loadConversation() {
       if (!topicId) return { messages: [], run: null }
       const messages = await loadAllMessages(
-        (page) => adminApi.getWidgetTopicMessages(topicId, { page, page_size: 500, order: 'asc' }),
+        (page) => adminApi.getAdminTopicMessages(topicId, { page, page_size: 500, order: 'asc' }),
       )
       return { messages, run: null }
     },
@@ -249,10 +249,10 @@ export function createNl2SqlAuditTransport(api, adminApi, topicId) {
     cancelRun: readonly,
     submitInteraction: readonly,
     fileUrl(relPath) {
-      return api.topicApi.fileUrl(topicId, relPath)
+      return adminApi.adminTopicFileUrl(topicId, relPath)
     },
     readFile(relPath) {
-      return api.topicApi.fetchFileBlob(topicId, relPath)
+      return adminApi.fetchAdminTopicFile(topicId, relPath)
     },
   }
 }

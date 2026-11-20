@@ -1,5 +1,5 @@
 <template>
-  <section v-if="!hasValidAgent" class="v2-agent-welcome">
+  <section v-if="!hasWorkspace" class="v2-agent-welcome">
     <div class="v2-agent-welcome-inner">
       <div class="v2-agent-welcome-logo-wrap">
         <img class="v2-agent-welcome-logo" :src="brandLogo" alt="DataAgent">
@@ -24,7 +24,7 @@
     </div>
   </section>
 
-  <div v-else class="v2-workbench" :class="{ 'artifacts-open': artifactsPanelOpen && !isWidgetMode }">
+  <div v-else class="v2-workbench" :class="{ 'artifacts-open': artifactsPanelOpen && activeTopicId }">
     <!-- Sidebar: assistant selector + topic list -->
     <aside class="v2-sidebar">
       <div class="v2-sidebar-head">
@@ -51,14 +51,14 @@
             :value="agent.agent_id"
           />
         </el-select>
-        <button v-if="!isWidgetMode" class="v2-btn-new" @click="handleNewTopic">
+        <button class="v2-btn-new" @click="handleNewTopic">
           <svg class="v2-btn-new-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
           新建会话
         </button>
       </div>
 
       <div class="v2-sidebar-toolbar">
-        <input v-model="searchKeyword" class="v2-search-input" type="text" placeholder="搜索话题">
+        <input v-model="searchKeyword" class="v2-search-input" type="text" aria-label="搜索会话" placeholder="搜索会话">
         <el-popover
           v-model:visible="filterPopoverVisible"
           placement="bottom-end"
@@ -78,31 +78,14 @@
           </template>
           <div class="v2-filter-panel">
             <div class="v2-filter-group">
-              <div class="v2-filter-label">来源</div>
-              <div class="v2-source-tabs" role="tablist">
-                <button
-                  type="button"
-                  class="v2-source-tab"
-                  :class="{ active: sourceMode === 'web' }"
-                  @click="handleSourceChange('web')"
-                >门户</button>
-                <button
-                  v-if="authStore.isAdmin"
-                  type="button"
-                  class="v2-source-tab"
-                  :class="{ active: sourceMode === 'widget' }"
-                  @click="handleSourceChange('widget')"
-                >Widget</button>
-                <button
-                  v-if="authStore.isAdmin"
-                  type="button"
-                  class="v2-source-tab"
-                  :class="{ active: sourceMode === 'all' }"
-                  @click="handleSourceChange('all')"
-                >全部</button>
-              </div>
+              <label class="v2-filter-label" for="conversation-source">来源</label>
+              <select id="conversation-source" class="v2-filter-source" :value="filterSource" @change="handleSourceChange($event.target.value)">
+                <option value="">全部来源</option>
+                <option value="web">平台</option>
+                <option value="widget">Widget</option>
+              </select>
             </div>
-            <div v-if="sourceMode === 'widget'" class="v2-filter-group">
+            <div v-if="usesAdminList && filterSource === 'widget'" class="v2-filter-group">
               <div class="v2-filter-label">用户</div>
               <el-select
                 v-model="filterUser"
@@ -156,17 +139,13 @@
             v-for="topic in filteredTopics"
             :key="topic.topic_id"
             class="v2-session-item"
-            :class="{ active: topic.topic_id === activeTopicId }"
+            :class="{ active: topic.topic_id === activeTopicId, 'is-readonly': topic.can_continue === false }"
             @click="handleSelectTopic(topic.topic_id)"
           >
-            <span class="v2-session-title">{{ topic.title || '新话题' }}</span>
-            <span v-if="isAllMode" class="v2-session-origin">
-              <span class="v2-session-source-badge" :class="`is-${topic.source || 'web'}`">
-                {{ topic.source === 'widget' ? 'Widget' : '门户' }}
-              </span>
-              <span v-if="topicOwnerLabel(topic)" class="v2-session-owner" :title="topicOwnerLabel(topic)">
-                {{ topicOwnerLabel(topic) }}
-              </span>
+            <span class="v2-session-title" :title="topic.title">{{ topic.title || '新话题' }}</span>
+            <span class="v2-session-origin">
+              <span class="v2-session-source-badge">{{ topic.source === 'widget' ? 'Widget' : '平台' }}</span>
+              <span v-if="topic.can_continue === false" class="v2-session-owner" :title="topicOwnerLabel(topic)">{{ topicOwnerLabel(topic) }}</span>
             </span>
             <span v-if="isTopicWorking(topic)" class="v2-session-loading" title="正在分析中...">
               <svg class="v2-session-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -191,11 +170,13 @@
     <main class="v2-main">
       <div class="v2-main-top-bar">
         <h2 class="v2-agent-title">{{ currentAgentName }}</h2>
+        <span v-if="isReadonlyTopic" class="v2-readonly-label" :title="topicOwnerLabel(currentTopic)">{{ topicOwnerLabel(currentTopic) }} 的会话 · 只读</span>
         <button
-          v-if="!isWidgetMode && activeTopicId"
+          v-if="activeTopicId"
           type="button"
           class="v2-artifacts-toggle"
           :class="{ active: artifactsPanelOpen }"
+          :aria-expanded="artifactsPanelOpen"
           title="会话文件 / 产物"
           @click="toggleArtifactsPanel"
         >
@@ -204,24 +185,19 @@
         </button>
       </div>
 
-      <!-- Read-only banner for widget sessions -->
-      <div v-if="isWidgetMode" class="v2-readonly-bar">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
-        <span>Widget 会话为只读审计视图，不能发送消息</span>
-      </div>
-
       <!-- `.prop` writes the key verbatim, so these must be camelCase: the
            kebab spelling lands on `el['transport-factory']`, a property nothing
            reads, and the element silently runs with no transport at all. -->
       <dataagent-conversation
+        :key="isReadonlyTopic ? 'readonly' : 'chat'"
         ref="conversationRef"
         class="v2-conversation conversation-surface"
-        :class="{ 'is-readonly': isWidgetMode }"
+        :class="{ 'is-readonly': isReadonlyTopic }"
         :endpoint="activeTopicId"
-        :disabled="isWidgetMode"
+        :disabled="isReadonlyTopic"
         placeholder="输入数据问题…（输入 / 调用命令）"
         :transportFactory.prop="conversationTransportFactory"
-        :endpointResolver.prop="isWidgetMode ? null : resolveConversationEndpoint"
+        :endpointResolver.prop="isReadonlyTopic ? null : resolveConversationEndpoint"
         :composerConfig.prop="conversationComposerConfig"
         @dataagent-run-change="handleConversationRunChange"
         @dataagent-complete="handleConversationComplete"
@@ -229,7 +205,7 @@
         @dataagent-ready="handleConversationReady"
       >
         <div slot="empty" class="v2-sdk-empty">
-          <template v-if="!isWidgetMode">
+          <template v-if="!isReadonlyTopic">
             <div v-if="!settings.providers.length" class="v2-config-empty">
               <div class="v2-config-empty-title">还没有可用的模型</div>
               <div class="v2-config-empty-text">请先完成模型配置。</div>
@@ -243,7 +219,7 @@
     </main>
 
     <!-- Right-side conversation artifact panel -->
-    <aside v-if="artifactsPanelOpen && !isWidgetMode" class="v2-artifacts-panel">
+    <aside v-if="artifactsPanelOpen && activeTopicId" class="v2-artifacts-panel" aria-label="会话文件">
       <div class="v2-artifacts-head">
         <span class="v2-artifacts-title">会话文件</span>
         <span class="v2-artifacts-actions">
@@ -258,6 +234,7 @@
 
       <el-scrollbar class="v2-artifacts-scroll">
         <div v-if="artifactsLoading" class="v2-artifacts-empty">加载中…</div>
+        <div v-else-if="artifactsError" class="v2-artifacts-empty" role="alert">{{ artifactsError }}</div>
         <div v-else-if="!artifacts.length" class="v2-artifacts-empty">暂无文件</div>
         <div v-else class="v2-artifact-tree">
           <div
@@ -331,7 +308,8 @@
             </span>
           </div>
           <div class="v2-artifact-modal-body">
-            <div v-if="previewError" class="v2-artifact-empty">{{ previewError }}</div>
+            <div v-if="previewLoading" class="v2-artifact-empty">正在加载预览…</div>
+            <div v-else-if="previewError" class="v2-artifact-empty" role="alert">{{ previewError }}</div>
             <iframe
               v-else-if="isHtmlArtifact(previewArtifact)"
               class="v2-artifact-modal-frame"
@@ -355,7 +333,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createNl2SqlApiClient, DATAAGENT_CLIENT_HEADERS } from '@/api/nl2sql'
@@ -412,19 +390,18 @@ const isStreaming = computed(() => Boolean(activeTaskId.value))
 const conversationRef = ref(null)
 const pendingMessageId = ref('')
 
-// Session-list source / filter / sort. Web sessions stay editable; widget
-// sessions are a read-only audit view served by the admin endpoint.
-const sourceMode = ref('web')        // 'web' | 'widget' | 'all'（all = 管理员全量审计视图）
-const filterStatus = ref('')            // '' | 'running' | 'error' | 'suspended' | 'finished'
-const filterUser = ref('')              // widget only: 'ext:<id>' | 'vis:<id>'
-const sortOrder = ref('updated_desc')   // 'updated_desc' | 'created_desc' | 'title_asc'
+// With login off everyone shares one pool through the ordinary listing.
+const usesAdminList = computed(() => authStore.enabled && authStore.isAdmin)
+// Sources are metadata. Administrators list everyone's conversations; each row's
+// can_continue decides whether it opens as a chat or read-only, so there is no
+// separate review mode to switch into.
+const filterSource = ref('')
+const filterStatus = ref('')
+const filterUser = ref('')
+const sortOrder = ref('updated_desc')
 const filterPopoverVisible = ref(false)
-// widget 与 all 共享同一套只读审计行为（不可发送、不镜像路由、经管理端点读消息），
-// 沿用 isWidgetMode 这个既有开关名以避免大范围改名。
-const isWidgetMode = computed(() => sourceMode.value !== 'web')
-const isAllMode = computed(() => sourceMode.value === 'all')
 const hasActiveFilters = computed(() =>
-  sourceMode.value !== 'web' || filterStatus.value !== '' || sortOrder.value !== 'updated_desc' || filterUser.value !== ''
+  filterSource.value !== '' || filterStatus.value !== '' || sortOrder.value !== 'updated_desc' || filterUser.value !== ''
 )
 
 const sortedAgents = computed(() => [...agents.value].sort((left, right) => {
@@ -438,6 +415,7 @@ const activeAgent = computed(() => (
 const hasValidAgent = computed(() => (
   !agentLoading.value && !agentLoadError.value && Boolean(activeAgent.value)
 ))
+const hasWorkspace = hasValidAgent
 const currentAgentName = computed(() => activeAgent.value?.name || '智能数据助手')
 
 // ── Computed ─────────────────────────────────────────────────────────────────
@@ -457,6 +435,8 @@ const filteredTopics = computed(() => {
   let list = kw
     ? topics.value.filter((t) => (t.title || '').toLowerCase().includes(kw))
     : topics.value.slice()
+
+  if (filterSource.value) list = list.filter((t) => (t.source || 'web') === filterSource.value)
 
   if (filterStatus.value) {
     const wanted = STATUS_FILTER_KIND[filterStatus.value]
@@ -490,7 +470,7 @@ function userOptionFromRow(row) {
 }
 
 async function fetchWidgetUsers(query = '') {
-  if (!isWidgetMode.value) return
+  if (!usesAdminList.value || filterSource.value !== 'widget') return
   widgetUsersLoading.value = true
   try {
     const data = await dataagentApi.listWidgetUsers({ keyword: String(query || '').trim(), limit: 100 })
@@ -509,7 +489,7 @@ async function fetchWidgetUsers(query = '') {
 }
 
 function handleUserSelectVisible(visible) {
-  if (visible && isWidgetMode.value) fetchWidgetUsers('')
+  if (visible && usesAdminList.value) fetchWidgetUsers('')
 }
 
 const activeTopic = computed(() => topics.value.find((t) => t.topic_id === activeTopicId.value) || null)
@@ -581,6 +561,7 @@ function replaceRouteAgent(agentId) {
 
 function replaceRouteTopic(topicId, messageId = '') {
   const query = { ...route.query }
+  delete query.view
   const normalizedTopicId = normalizeQueryValue(topicId)
   const normalizedMessageId = normalizeQueryValue(messageId)
 
@@ -676,14 +657,12 @@ function currentAgentFilterId() {
   return String(agentSelectValue.value || '').trim() || normalizeQueryValue(route.query.agent_id)
 }
 
+let adminListSequence = 0
+
 async function loadTopics(options = {}) {
   const { selectDefault = true, skipRouteTopic = false } = options
-  if (sourceMode.value === 'widget') {
-    await loadWidgetTopics()
-    return
-  }
-  if (sourceMode.value === 'all') {
-    await loadAllTopics()
+  if (usesAdminList.value) {
+    await loadAdminTopics({ openLinkedTopic: !skipRouteTopic, selectDefault })
     return
   }
   try {
@@ -691,6 +670,7 @@ async function loadTopics(options = {}) {
     const agentId = currentAgentFilterId()
     if (agentId) params.agent_id = agentId
     const data = await topicApi.listTopics(params)
+    if (agentId !== currentAgentFilterId()) return
     const rawTopics = Array.isArray(data?.list) ? data.list : (Array.isArray(data) ? data : [])
     topics.value = rawTopics.map(normalizeTopic).filter((topic) => topic.topic_id)
     const requestedTopicId = skipRouteTopic ? '' : routeTopicId()
@@ -711,8 +691,15 @@ async function validateRequestedTopic(topicId) {
   let topic = topics.value.find((item) => item.topic_id === normalizedTopicId) || null
   if (!topic) {
     try {
-      topic = normalizeTopic(await topicApi.getTopic(normalizedTopicId))
-    } catch {
+      topic = normalizeTopic(await (usesAdminList.value
+        ? dataagentApi.getAdminTopic(normalizedTopicId)
+        : topicApi.getTopic(normalizedTopicId)))
+    } catch (error) {
+      if (error?.response?.status === 404) {
+        ElMessage.warning('该会话不存在或你没有续聊权限')
+        replaceRouteTopic('')
+        return ''
+      }
       return normalizedTopicId
     }
   }
@@ -736,62 +723,50 @@ function resetActiveConversationView() {
   closeArtifactPreview()
 }
 
-// Read-only widget session list (admin endpoint). Unlike web topics we never
-// mirror the selection into the route, so a reload defaults back to web.
-async function loadWidgetTopics() {
+// Administrators read every user's conversations for this assistant through the
+// admin listing; the per-row can_continue flag says which ones they may continue.
+async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true } = {}) {
+  const seq = ++adminListSequence
   try {
-    const params = { page: 1, page_size: 50 }
-    // Assistant filter mirrors web mode so the same agent selector narrows
-    // both sources; the admin widget endpoint accepts agent_id server-side.
+    const params = { page: 1, page_size: 50, source: filterSource.value }
     const agentId = currentAgentFilterId()
     if (agentId) params.agent_id = agentId
-    // User filter is applied server-side so it stays accurate across pages.
-    if (filterUser.value.startsWith('ext:')) params.external_user_id = filterUser.value.slice(4)
-    else if (filterUser.value.startsWith('vis:')) params.visitor_id = filterUser.value.slice(4)
-    const data = await dataagentApi.listWidgetTopics(params)
-    topics.value = Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : [])
-    const stillListed = topics.value.some((t) => t.topic_id === activeTopicId.value)
-    if (topics.value.length && (!activeTopicId.value || !stillListed)) {
-      await selectTopic(topics.value[0].topic_id)
+    if (params.source === 'widget') {
+      if (filterUser.value.startsWith('ext:')) params.external_user_id = filterUser.value.slice(4)
+      else if (filterUser.value.startsWith('vis:')) params.visitor_id = filterUser.value.slice(4)
     }
-  } catch {
-    topics.value = []
-  }
-}
-
-// 管理员全量会话（web 匿名池 + 登录用户 + widget），只读审计视图，
-// 复用 widget 审计的选择/消息钻取路径。
-async function loadAllTopics() {
-  try {
-    const params = { page: 1, page_size: 50, source: '' }
-    const agentId = currentAgentFilterId()
-    if (agentId) params.agent_id = agentId
     const data = await dataagentApi.listAdminTopics(params)
-    topics.value = Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : [])
-    const stillListed = topics.value.some((t) => t.topic_id === activeTopicId.value)
-    if (topics.value.length && (!activeTopicId.value || !stillListed)) {
+    if (seq !== adminListSequence) return
+    topics.value = (Array.isArray(data?.items) ? data.items : []).map(normalizeTopic).filter((topic) => topic.topic_id)
+    const linkedId = openLinkedTopic ? routeTopicId() : ''
+    if (linkedId) {
+      const validTopicId = await validateRequestedTopic(linkedId)
+      if (seq !== adminListSequence) return
+      if (validTopicId) await selectTopic(validTopicId, { messageId: routeMessageId() })
+      return
+    }
+    if (activeTopicId.value && !topics.value.some((topic) => topic.topic_id === activeTopicId.value)) {
+      await ensureTopicListed(activeTopicId.value)
+    } else if (selectDefault && topics.value.length && !activeTopicId.value) {
       await selectTopic(topics.value[0].topic_id)
     }
   } catch {
-    topics.value = []
+    // non-fatal
   }
 }
 
-// 全量视图里一行会话的归属人：登录显示名称 > widget 外部用户 > widget 访客 > 匿名。
 function topicOwnerLabel(topic) {
-  if (topic?.auth_display_name) return topic.auth_display_name
-  if (topic?.auth_user_id) return topic.auth_user_id
-  if (topic?.external_user_id) return topic.external_user_id
-  if (topic?.visitor_id) return `访客 ${String(topic.visitor_id).slice(0, 8)}`
-  if ((topic?.source || 'web') === 'web') return '匿名'
-  return ''
+  return topic?.auth_display_name || topic?.auth_user_id || topic?.external_user_id
+    || (topic?.visitor_id ? `访客 ${String(topic.visitor_id).slice(0, 8)}` : '匿名用户')
 }
 
 async function ensureTopicListed(topicId) {
   const normalizedTopicId = normalizeQueryValue(topicId)
   if (!normalizedTopicId || topics.value.some((topic) => String(topic?.topic_id || '') === normalizedTopicId)) return
   try {
-    const topic = await topicApi.getTopic(normalizedTopicId)
+    const topic = await (usesAdminList.value
+      ? dataagentApi.getAdminTopic(normalizedTopicId)
+      : topicApi.getTopic(normalizedTopicId))
     if (topic?.topic_id) {
       topics.value.unshift(normalizeTopic(topic))
     }
@@ -806,9 +781,7 @@ async function selectTopic(topicId, options = {}) {
   pendingMessageId.value = normalizeQueryValue(options.messageId)
   activeTaskId.value = ''
   activeTopicId.value = normalizedTopicId
-  if (!isWidgetMode.value) {
-    await ensureTopicListed(normalizedTopicId)
-  }
+  await ensureTopicListed(normalizedTopicId)
 }
 
 
@@ -845,34 +818,22 @@ const suggestions = computed(() => {
 })
 
 // ── Source / filter ──────────────────────────────────────────────────────
-async function handleSourceChange(mode) {
-  if (mode === sourceMode.value) return
-  sourceMode.value = mode
-  activeTopicId.value = ''
-  activeTaskId.value = ''
-  pendingMessageId.value = ''
-  searchKeyword.value = ''
-  filterStatus.value = ''
+function handleSourceChange(source) {
+  if (source === filterSource.value) return
+  filterSource.value = source
   filterUser.value = ''
-  widgetUserOptions.value = []
-  topics.value = []
-  await loadTopics()
-  if (sourceMode.value === 'widget') fetchWidgetUsers('')
+  if (usesAdminList.value) {
+    loadAdminTopics({ selectDefault: false })
+    if (source === 'widget') fetchWidgetUsers('')
+  }
 }
 
-// Re-query the widget list server-side when the user filter changes so results
-// reflect all matching sessions, not just those on the currently loaded page.
-watch(filterUser, async () => {
-  if (sourceMode.value !== 'widget') return
-  activeTopicId.value = ''
-  activeTaskId.value = ''
-  await loadWidgetTopics()
+watch(filterUser, () => {
+  if (usesAdminList.value && filterSource.value === 'widget') loadAdminTopics({ selectDefault: false })
 })
 
 function resetFilters() {
-  if (sourceMode.value !== 'web') {
-    handleSourceChange('web')
-  }
+  handleSourceChange('')
   filterStatus.value = ''
   filterUser.value = ''
   sortOrder.value = 'updated_desc'
@@ -880,21 +841,18 @@ function resetFilters() {
 
 // ── Topic management ───────────────────────────────────────────────────────
 async function handleNewTopic() {
-  if (isWidgetMode.value) return
   resetActiveConversationView()
   replaceRouteTopic('')
 }
 
 async function handleSelectTopic(topicId) {
   if (topicId === activeTopicId.value) {
-    if (!isWidgetMode.value) {
-      pendingMessageId.value = ''
-      replaceRouteTopic(topicId)
-    }
+    pendingMessageId.value = ''
+    replaceRouteTopic(topicId)
     return
   }
   await selectTopic(topicId)
-  if (!isWidgetMode.value) replaceRouteTopic(topicId)
+  replaceRouteTopic(topicId)
 }
 
 async function requestAgentChange(agentId) {
@@ -953,6 +911,10 @@ async function retryLoadAgents() {
 // switches immediately (the next task picks up the new mode; deliver-message also
 // carries it as a fallback). New (topic-less) sessions use the pill value at create.
 const currentTopic = computed(() => (topics.value || []).find((t) => t.topic_id === activeTopicId.value) || null)
+// Only the admin listing sets can_continue=false: another user's conversation,
+// opened read-only through the admin message and file endpoints.
+const isTopicReadonly = (topicId) => (topics.value || []).some((t) => t.topic_id === topicId && t.can_continue === false)
+const isReadonlyTopic = computed(() => Boolean(activeTopicId.value) && isTopicReadonly(activeTopicId.value))
 watch(currentTopic, (topic) => {
   if (topic && topic.permission_mode) permissionMode.value = topic.permission_mode
 }, { immediate: true })
@@ -971,13 +933,13 @@ const conversationComposerConfig = computed(() => ({
 }))
 
 function conversationTransportFactory(topicId) {
-  return isWidgetMode.value
-    ? createNl2SqlAuditTransport(api, dataagentApi, topicId)
+  return isTopicReadonly(topicId)
+    ? createNl2SqlAuditTransport(dataagentApi, topicId)
     : createNl2SqlTransport(api, topicId, { getAgentId: () => agentSelectValue.value })
 }
 
 async function resolveConversationEndpoint(context = {}) {
-  if (isWidgetMode.value) return ''
+  if (isReadonlyTopic.value) return ''
   if (activeTopicId.value) return activeTopicId.value
   const content = String(context.content || '').trim()
   const created = normalizeTopic(await topicApi.createTopic(content ? content.slice(0, 60) : '新话题', {
@@ -1091,10 +1053,14 @@ function toggleArtifactDir(path) {
   collapsedArtifactDirs.value = next
 }
 const artifactsLoading = ref(false)
+const artifactsError = ref('')
 const previewArtifact = ref(null)
+const previewLoading = ref(false)
 const previewText = ref('')
 const previewError = ref('')
 const previewImageUrl = ref('')
+let artifactListSequence = 0
+let previewSequence = 0
 
 function readArtifactsPref() {
   try { return localStorage.getItem(ARTIFACTS_PREF_KEY) === '1' } catch (_e) { return false }
@@ -1107,17 +1073,27 @@ function toggleArtifactsPanel() {
 }
 
 async function refreshArtifacts() {
+  const seq = ++artifactListSequence
   const topicId = activeTopicId.value
-  if (!topicId) { artifacts.value = []; return }
+  const audit = isTopicReadonly(topicId)
+  artifactsError.value = ''
+  if (!topicId) { artifacts.value = []; artifactsLoading.value = false; return }
   artifactsLoading.value = true
   try {
-    const res = await topicApi.listFiles(topicId)
+    const res = await (audit ? dataagentApi.listAdminTopicFiles(topicId) : topicApi.listFiles(topicId))
+    if (seq !== artifactListSequence) return
     artifacts.value = Array.isArray(res?.files) ? res.files : []
-  } catch (_error) {
-    // keep the previous list; listing is best-effort
+  } catch {
+    if (seq === artifactListSequence) artifactsError.value = '会话文件加载失败，请刷新重试。'
   } finally {
-    artifactsLoading.value = false
+    if (seq === artifactListSequence) artifactsLoading.value = false
   }
+}
+
+function readArtifactBlob(topicId, relPath) {
+  return isTopicReadonly(topicId)
+    ? dataagentApi.fetchAdminTopicFile(topicId, relPath)
+    : topicApi.fetchFileBlob(topicId, relPath)
 }
 
 // 登录态下浏览器裸链接导航带不上 dataagent 标记头，SPA 的文件下载统一走
@@ -1126,7 +1102,7 @@ async function downloadArtifactBlob(relPath, fileName = '') {
   const topicId = activeTopicId.value
   if (!topicId || !relPath) return
   try {
-    const blob = await topicApi.fetchFileBlob(topicId, relPath)
+    const blob = await readArtifactBlob(topicId, relPath)
     const objectUrl = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = objectUrl
@@ -1136,7 +1112,7 @@ async function downloadArtifactBlob(relPath, fileName = '') {
     anchor.remove()
     URL.revokeObjectURL(objectUrl)
   } catch (error) {
-    ElMessage.error('下载失败: ' + (error?.message || error))
+    if (!error?.__odwNotified) ElMessage.error('下载失败: ' + (error?.message || error))
   }
 }
 
@@ -1154,24 +1130,29 @@ function isTextArtifact(file) {
   return /^text\/|application\/json|csv/.test(file?.content_type || '') || /\.(txt|csv|json|md|log|yaml|yml)$/i.test(file?.name || '')
 }
 async function openArtifact(file) {
+  const seq = ++previewSequence
+  const topicId = activeTopicId.value
   previewArtifact.value = file
+  previewLoading.value = false
   previewText.value = ''
   previewError.value = ''
   releasePreviewImage()
-  if (isHtmlArtifact(file) || isTextArtifact(file)) {
-    try {
-      previewText.value = await topicApi.fetchFileText(activeTopicId.value, file.rel_path)
-    } catch (error) {
-      previewError.value = String(error?.message || '加载失败')
-    }
-  } else if (isImageArtifact(file)) {
-    // 图片同样经带标记头的 fetch 取 Blob（<img src> 裸链接带不上标记头）。
-    try {
-      const blob = await topicApi.fetchFileBlob(activeTopicId.value, file.rel_path)
+  const image = isImageArtifact(file)
+  if (!topicId || !(image || isHtmlArtifact(file) || isTextArtifact(file))) return
+  previewLoading.value = true
+  try {
+    const blob = await readArtifactBlob(topicId, file.rel_path)
+    if (image) {
+      if (seq !== previewSequence) return
       previewImageUrl.value = URL.createObjectURL(blob)
-    } catch (error) {
-      previewError.value = String(error?.message || '加载失败')
+    } else {
+      const content = await blob.text()
+      if (seq === previewSequence) previewText.value = content
     }
+  } catch (error) {
+    if (seq === previewSequence) previewError.value = String(error?.message || '加载失败')
+  } finally {
+    if (seq === previewSequence) previewLoading.value = false
   }
 }
 function releasePreviewImage() {
@@ -1181,7 +1162,9 @@ function releasePreviewImage() {
   }
 }
 function closeArtifactPreview() {
+  ++previewSequence
   previewArtifact.value = null
+  previewLoading.value = false
   previewText.value = ''
   previewError.value = ''
   releasePreviewImage()
@@ -1201,9 +1184,10 @@ watch(isStreaming, (now, prev) => {
 })
 watch(activeTopicId, () => {
   closeArtifactPreview()
+  artifacts.value = []
   if (artifactsPanelOpen.value) refreshArtifacts()
-  else artifacts.value = []
 })
+onBeforeUnmount(closeArtifactPreview)
 
 // Following the stream and resizing the composer now belong to the element:
 // it owns the scroll container and the textarea, so the shell has nothing to
@@ -1248,9 +1232,6 @@ watch(
   () => [route.query.topic_id, route.query.message_id],
   async ([topicId, messageId]) => {
     if (!hasValidAgent.value) return
-    // Widget sessions are not mirrored into the route; ignore route-driven
-    // topic selection while viewing them to avoid loading a widget id as web.
-    if (isWidgetMode.value) return
     const normalizedTopicId = normalizeQueryValue(topicId)
     const normalizedMessageId = normalizeQueryValue(messageId)
     if (!normalizedTopicId) return
@@ -1586,29 +1567,14 @@ watch(
 
 .v2-sidebar-toolbar .v2-search-input:focus { border-color: var(--odw-primary); }
 
-.v2-source-tabs {
-  display: inline-flex;
-  padding: 2px;
-  border-radius: 8px;
-  background: #f0f3f8;
-}
-
-.v2-source-tab {
-  padding: 5px 14px;
-  border: none;
+.v2-filter-source {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid #dbe3ef;
   border-radius: 6px;
-  background: transparent;
-  color: #606878;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background var(--odw-transition), color var(--odw-transition);
-}
-
-.v2-source-tab.active {
-  background: #ffffff;
-  color: var(--odw-primary);
-  font-weight: 600;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  background: #fff;
+  color: #414d60;
+  font: inherit;
 }
 
 .v2-filter-btn {
@@ -1673,6 +1639,18 @@ watch(
 
 .v2-session-item:hover { background: #f0f3f8; }
 .v2-session-item.active { background: #e8eef8; }
+.v2-session-item.is-readonly {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+}
+.v2-session-item.is-readonly .v2-session-origin {
+  grid-area: 2 / 1 / 3 / -1;
+  max-width: none;
+}
+.v2-session-item.is-readonly :is(.v2-session-meta, .v2-session-loading) {
+  grid-area: 1 / 2;
+}
 
 .v2-session-title {
   flex: 1;
@@ -1692,10 +1670,9 @@ watch(
   border-radius: 7px;
   font-size: 10px;
   line-height: 15px;
-  color: #2f7bf0;
-  background: #eaf1fd;
+  color: #526175;
+  background: #eef2f7;
 }
-.v2-session-source-badge.is-widget { color: #7b52c8; background: #f1ebfb; }
 .v2-session-owner {
   min-width: 0;
   overflow: hidden;
@@ -2184,21 +2161,15 @@ watch(
   50% { opacity: 0; }
 }
 
-/* ── Read-only banner (widget sessions) ──────────────────────────────────── */
-.v2-readonly-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 14px 24px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, #ffffff 45%);
-  color: #8a96a6;
-  font-size: 13px;
+.v2-readonly-label {
+  font-size: 12px;
+  color: #526175;
+  flex: none;
+}
+
+.v2-conversation.is-readonly::part(composer),
+.v2-conversation.is-readonly::part(suggestions) {
+  display: none;
 }
 
 /* ── Composer ────────────────────────────────────────────────────────────── */

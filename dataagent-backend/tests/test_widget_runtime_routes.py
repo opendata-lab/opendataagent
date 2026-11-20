@@ -559,3 +559,27 @@ def test_dataagent_client_is_plain_example_when_auth_disabled(monkeypatch):
     assert response.status_code == 200
     context = store.calls[-1][1]
     assert context == {"source": "web", "website_id": "", "external_user_id": "", "visitor_id": ""}
+
+
+def test_platform_session_widget_uses_verified_user_and_requires_same_origin(monkeypatch, tmp_path):
+    auth = _enable_auth(monkeypatch, tmp_path)
+    try:
+        install_widget_settings(monkeypatch)
+        store = install_fake_store(monkeypatch)
+        client = TestClient(app, base_url="https://host.example.com")
+        headers = {**widget_headers("untrusted-id"), "X-DataAgent-Widget-Identity": "platform", "Sec-Fetch-Site": "same-origin"}
+        url = "/api/v1/nl2sql/topics"
+
+        assert client.get(url, headers=headers).status_code == 401
+        client.cookies.update(_session_cookie(auth))
+        response = client.get(url, headers=headers)
+        assert response.status_code == 200
+        context = store.calls[-1][1]
+        assert (context["source"], context["website_id"]) == ("widget", "demo")
+        assert context["auth_user_id"] == "SSO:42"
+        assert context["external_user_id"] == context["visitor_id"] == ""
+
+        denied = client.get(url, headers={**headers, "Sec-Fetch-Site": "same-site"})
+        assert denied.status_code == 403
+    finally:
+        auth.reset_auth_for_tests()

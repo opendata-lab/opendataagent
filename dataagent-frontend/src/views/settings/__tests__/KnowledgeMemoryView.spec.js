@@ -10,7 +10,7 @@ import ExperienceDrawer from '@/components/experience/ExperienceDrawer.vue'
 const candidate = { experience_id: 'e1', kind: 'memory', title: '确认关联键', when_text: '汇总前', body: '先去重再汇总', scope: 'agent', agent_id: 'a', inject_mode: 'on_demand', status: 'pending',
   digest_topic_id: 'digest', updated_at: '2026-11-19', sources: [
     { task_id: 't1', source: 'web', agent_id: 'a', topic_id: 'source-topic', question: '销售趋势' },
-    { task_id: 't2', source: 'widget', question: '退款率', answer: '来源摘要' }
+    { task_id: 't2', source: 'widget', agent_id: 'a', topic_id: 'widget-source', question: '退款率', answer: '来源摘要' }
   ] }
 const response = items => ({ items, total: items.length, digest_agent_id: 'digest-agent', digest_enabled: true, injection_enabled: false })
 let wrappers = []
@@ -72,15 +72,16 @@ describe('Knowledge and memory pages', () => {
     await wrapper.vm.changeStatus({ ...candidate, status: 'disabled' }, 'active')
     expect(api.updateExperience).toHaveBeenLastCalledWith('e1', { status: 'active' })
   })
-  it('opens digest and web sources with their agent context, while widget stays text', async () => {
+  it('opens the digest and both source types in administration review', async () => {
     const wrapper = await create('memory')
     const links = wrapper.findAll('.entry-sources .el-link')
-    expect(links).toHaveLength(2)
+    expect(links).toHaveLength(3)
     await links[0].trigger('click')
     expect(push).toHaveBeenLastCalledWith({ path: '/chat', query: { agent_id: 'digest-agent', topic_id: 'digest' } })
     await links[1].trigger('click')
     expect(push).toHaveBeenLastCalledWith({ path: '/chat', query: { agent_id: 'a', topic_id: 'source-topic' } })
-    expect(wrapper.find('.entry-sources').text()).toContain('Widget 会话')
+    await links[2].trigger('click')
+    expect(push).toHaveBeenLastCalledWith({ path: '/chat', query: { agent_id: 'a', topic_id: 'widget-source' } })
     expect(wrapper.find('.entry-sources').text()).toContain('来源摘要')
   })
   it('switches injection mode and promotes through the row menu', async () => {

@@ -8,6 +8,17 @@ export function agentContextQuery(sourceQuery = {}) {
   return agentId ? { agent_id: agentId } : {}
 }
 
+export function conversationLocation({ agent_id, topic_id, message_id }) {
+  return {
+    path: '/chat',
+    query: {
+      ...agentContextQuery({ agent_id }),
+      topic_id,
+      ...(message_id ? { message_id } : {})
+    }
+  }
+}
+
 // Page navigation carries only the selected assistant. Chat-local topic/message
 // coordinates must never leak into Skills, agent administration, or settings.
 export function withAgentContext(location, sourceQuery = {}) {
