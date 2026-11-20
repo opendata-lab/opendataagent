@@ -158,3 +158,39 @@ def test_daily_digest_starts_once_per_agent_and_collects_candidates(store, monke
     assert stored == len(candidates) == 3  # five read, two invalid skipped
     assert {item["digest_topic_id"] for item in candidates} == {topics[0]}
     assert all(item["scope"] == "assistant" for item in candidates)
+
+
+def test_follow_up_without_new_output_collects_nothing_and_sources_resolve(store, monkeypatch, tmp_path):
+    from core import topic_files
+
+    topic_id, task_id = _task(store, question="来源问题", answer="x")
+    output = tmp_path / "experience_candidates.json"
+    output.write_text(json.dumps([{"content": "TEST-来源候选", "source_task_ids": [task_id, "task_gone"]}]), encoding="utf-8")
+    monkeypatch.setattr(topic_files, "safe_workspace_file", lambda topic_id, rel: output)
+    monkeypatch.setattr(experience, "_digest_target_agent", lambda topic: AGENT)
+    monkeypatch.setattr(store, "get_topic", lambda tid, context=None: {"topic_id": tid, "agent_id": experience.DIGEST_AGENT_ID})
+    monkeypatch.setattr(experience, "get_topic_task_store", lambda: store)
+
+    # A follow-up in the digest conversation that did not rewrite the file.
+    assert experience.collect_candidates("topic_digest", "task_followup", ["output/answer.md"]) == 0
+    assert experience.collect_candidates("topic_digest", "task_digest", [experience.CANDIDATES_FILE]) == 1
+
+    item = experience.list_experiences(status="candidate", agent_id=AGENT)["items"][0]
+    assert item["sources"] == [{"task_id": task_id, "topic_id": topic_id, "agent_id": AGENT, "source": "web"}]
+
+
+def test_one_assistant_failing_does_not_stop_the_others(monkeypatch):
+    from core import agent_profile_service
+
+    started = []
+
+    async def fake_start(store, digest_agent, agent_id, day):
+        if agent_id == "agent_broken":
+            raise RuntimeError("upload failed")
+        started.append(agent_id)
+        return f"topic_{agent_id}"
+
+    monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: {"agent_id": agent_id})
+    monkeypatch.setattr(experience, "agents_with_tasks", lambda day: ["agent_broken", "agent_ok"])
+    monkeypatch.setattr(experience, "_start_digest", fake_start)
+    assert asyncio.run(experience.run_daily_digest(experience.db_now().date())) == ["topic_agent_ok"]

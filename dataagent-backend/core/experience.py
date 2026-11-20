@@ -54,8 +54,9 @@ def digest_agent_payload() -> dict[str, Any]:
     }
 
 
-def digest_title(agent_name: str, day: date) -> str:
-    return f"经验总结 · {agent_name} · {day.isoformat()}"
+def digest_title(agent_name: str, agent_id: str, day: date) -> str:
+    # The agent id makes the title unique: display names may repeat.
+    return f"经验总结 · {agent_name}（{agent_id}）· {day.isoformat()}"
 
 
 # ---- storage -------------------------------------------------------------
@@ -108,7 +109,36 @@ def list_experiences(*, status: str = "", scope: str = "", agent_id: str = "", p
             rows = cur.fetchall() or []
     finally:
         conn.close()
-    return {"items": [_row_to_item(row) for row in rows], "total": total, "page": page, "page_size": page_size}
+    items = [_row_to_item(row) for row in rows]
+    _attach_sources(items)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+def _attach_sources(items: list[dict[str, Any]]) -> None:
+    """Resolve source task ids to their conversations so a reviewer can open them."""
+    task_ids = sorted({task_id for item in items for task_id in item["source_task_ids"]})
+    found: dict[str, dict[str, Any]] = {}
+    if task_ids:
+        conn = _connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT k.task_id, t.topic_id, t.source, COALESCE(NULLIF(k.agent_id, ''), t.agent_id) AS agent_id
+                    FROM da_agent_task k JOIN da_agent_topic t ON t.topic_id = k.topic_id
+                    WHERE k.task_id IN ({", ".join(["%s"] * len(task_ids))})
+                    """,
+                    task_ids,
+                )
+                found = {str(row["task_id"]): row for row in cur.fetchall() or []}
+        finally:
+            conn.close()
+    for item in items:
+        item["sources"] = [
+            {"task_id": task_id, "topic_id": str(row["topic_id"]), "agent_id": str(row.get("agent_id") or ""),
+             "source": str(row.get("source") or "web")}
+            for task_id in item["source_task_ids"] if (row := found.get(task_id))
+        ]
 
 
 def get_experience(experience_id: str) -> dict[str, Any] | None:
@@ -367,8 +397,6 @@ def digest_exists(title: str) -> bool:
 async def run_daily_digest(day: date) -> list[str]:
     """Start one digest conversation per assistant that had tasks on `day`; returns topic ids."""
     from core.agent_profile_service import get_agent_profile
-    from core.task_submission_service import submit_message_task
-    from core.topic_files import save_upload
 
     digest_agent = get_agent_profile(DIGEST_AGENT_ID)
     if not digest_agent:
@@ -377,31 +405,53 @@ async def run_daily_digest(day: date) -> list[str]:
     store = get_topic_task_store()
     started: list[str] = []
     for agent_id in agents_with_tasks(day):
-        profile = get_agent_profile(agent_id) or {}
-        title = digest_title(str(profile.get("name") or agent_id), day)
-        if digest_exists(title):
+        try:
+            topic_id = await _start_digest(store, digest_agent, agent_id, day)
+        except Exception:
+            # One assistant's failure must not cost the others their digest.
+            logger.exception("experience.digest.start_failed agent_id=%s day=%s", agent_id, day)
             continue
-        records, count = build_session_records(agent_id, day)
-        if not count:
-            continue
-        topic = store.create_topic(title=title, agent_snapshot=digest_agent,
-                                   context={"source": "web", "auth_user_id": DIGEST_USER_ID})
-        filename = f"sessions-{day.isoformat()}.md"
-        save_upload(topic["topic_id"], filename, records.encode("utf-8"))
-        await submit_message_task(
-            topic_id=topic["topic_id"], message_type="text", agent_id=DIGEST_AGENT_ID,
-            message_content=(
-                f"请按 {DIGEST_SKILL} 技能总结 uploads/{filename} 中助手「{profile.get('name') or agent_id}」"
-                f"（agent_id: {agent_id}）在 {day.isoformat()} 的会话记录，候选写入 {CANDIDATES_FILE}。"
-            ),
-        )
-        logger.info("experience.digest.started agent_id=%s day=%s tasks=%s topic_id=%s", agent_id, day, count, topic["topic_id"])
-        started.append(topic["topic_id"])
+        if topic_id:
+            started.append(topic_id)
     return started
 
 
-def collect_candidates(topic_id: str, task_id: str) -> int:
-    """Store the candidates a finished digest task wrote; returns how many."""
+async def _start_digest(store, digest_agent: dict[str, Any], agent_id: str, day: date) -> str | None:
+    from core.agent_profile_service import get_agent_profile
+    from core.task_submission_service import submit_message_task
+    from core.topic_files import save_upload
+
+    profile = get_agent_profile(agent_id) or {}
+    title = digest_title(str(profile.get("name") or agent_id), agent_id, day)
+    if digest_exists(title):
+        return None
+    records, count = build_session_records(agent_id, day)
+    if not count:
+        return None
+    topic = store.create_topic(title=title, agent_snapshot=digest_agent,
+                               context={"source": "web", "auth_user_id": DIGEST_USER_ID})
+    filename = f"sessions-{day.isoformat()}.md"
+    save_upload(topic["topic_id"], filename, records.encode("utf-8"))
+    await submit_message_task(
+        topic_id=topic["topic_id"], message_type="text", agent_id=DIGEST_AGENT_ID,
+        message_content=(
+            f"请按 {DIGEST_SKILL} 技能总结 uploads/{filename} 中助手「{profile.get('name') or agent_id}」"
+            f"（agent_id: {agent_id}）在 {day.isoformat()} 的会话记录，候选写入 {CANDIDATES_FILE}。"
+        ),
+    )
+    logger.info("experience.digest.started agent_id=%s day=%s tasks=%s topic_id=%s", agent_id, day, count, topic["topic_id"])
+    return topic["topic_id"]
+
+
+def collect_candidates(topic_id: str, task_id: str, changed_files: list[str] | None = None) -> int:
+    """Store the candidates a finished digest task wrote; returns how many.
+
+    Only when this task wrote or changed the candidates file: a follow-up
+    question in the digest conversation must not re-import entries an admin
+    already reviewed.
+    """
+    if changed_files is not None and CANDIDATES_FILE not in changed_files:
+        return 0
     from core.topic_files import safe_workspace_file
 
     store = get_topic_task_store()

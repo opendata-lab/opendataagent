@@ -702,6 +702,13 @@ class AdminFeedbackPage(BaseModel):
     dislikes: int = 0
 
 
+class ExperienceSource(BaseModel):
+    task_id: str
+    topic_id: str
+    agent_id: str = ""
+    source: str = "web"          # 'web' can be opened in /chat; 'widget' cannot
+
+
 class Experience(BaseModel):
     """An experience-library entry: a digest candidate or an approved entry."""
 
@@ -710,6 +717,7 @@ class Experience(BaseModel):
     agent_id: Optional[str] = None
     content: str
     source_task_ids: List[str] = Field(default_factory=list)
+    sources: List[ExperienceSource] = Field(default_factory=list)  # resolved in listings only
     digest_topic_id: Optional[str] = None
     status: Literal["candidate", "active", "retired"]
     updated_by: str = ""

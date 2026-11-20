@@ -281,7 +281,7 @@ class TaskCoordinator:
                 self.store.finish_task(task_id=task_id, task_status=result.task_status, error=result.error)
                 if str(task.get("agent_id") or "") == DIGEST_AGENT_ID and result.task_status == "finished":
                     try:
-                        collect_candidates(topic_id, task_id)
+                        collect_candidates(topic_id, task_id, [str(item.get("rel_path") or "") for item in attachments])
                     except Exception:
                         logger.exception("experience.digest.collect_failed topic_id=%s task_id=%s", topic_id, task_id)
                 logger.info(

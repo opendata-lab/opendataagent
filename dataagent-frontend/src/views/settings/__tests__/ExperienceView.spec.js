@@ -32,6 +32,10 @@ const candidateRow = {
   agent_id: 'agent_a',
   content: '查询订单表时优先过滤已取消状态',
   source_task_ids: ['task-1', 'task-2'],
+  sources: [
+    { task_id: 'task-1', topic_id: 'topic-src-1', agent_id: 'agent_a', source: 'web' },
+    { task_id: 'task-2', topic_id: 'topic-src-2', agent_id: 'agent_a', source: 'widget' }
+  ],
   digest_topic_id: 'topic-digest-1',
   status: 'candidate',
   updated_by: 'system:experience-digest',
@@ -91,7 +95,7 @@ describe('ExperienceView', () => {
     expect(wrapper.get('[data-testid="experience-injection-status"]').text()).toContain('注入 未开启')
     expect(wrapper.text()).toContain('查询订单表时优先过滤已取消状态')
     expect(wrapper.text()).toContain('问数助手')
-    expect(wrapper.text()).toContain('2 个来源任务')
+    expect(wrapper.text()).toContain('来源 1')
     wrapper.unmount()
   })
 
@@ -168,6 +172,18 @@ describe('ExperienceView', () => {
       agent_id: 'agent_a',
       content: '需要指定助手才能生效'
     })
+    wrapper.unmount()
+  })
+
+  it('opens a main-site source conversation and only names a Widget one', async () => {
+    apiMocks.listAgentProfiles.mockResolvedValue([{ agent_id: 'agent_a', name: '问数助手' }])
+    apiMocks.listExperiences.mockResolvedValue(listResponse([candidateRow]))
+    const wrapper = mount(ExperienceView, { global: { plugins: [ElementPlus] }, attachTo: document.body })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="experience-source-task-2"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Widget 来源 2')
+    await wrapper.get('[data-testid="experience-source-task-1"]').trigger('click')
+    expect(push).toHaveBeenCalledWith({ path: '/chat', query: { agent_id: 'agent_a', topic_id: 'topic-src-1' } })
     wrapper.unmount()
   })
 })

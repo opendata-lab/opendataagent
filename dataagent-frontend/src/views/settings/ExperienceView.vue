@@ -59,7 +59,7 @@
           {{ row.scope === 'platform' ? '全部助手' : agentName(row.agent_id) }}
         </template>
       </el-table-column>
-      <el-table-column label="来源" width="160">
+      <el-table-column label="来源" width="200">
         <template #default="{ row }">
           <div class="experience-view__source">
             <el-link
@@ -70,10 +70,18 @@
             >
               查看总结会话
             </el-link>
-            <span v-if="row.digest_topic_id || sourceTaskCount(row) > 0" class="experience-view__source-count">
-              {{ sourceTaskCount(row) }} 个来源任务
-            </span>
-            <span v-else class="experience-view__source-muted">人工新增</span>
+            <!-- The tasks the entry was drawn from: main-site ones open in /chat;
+                 Widget conversations cannot be opened by URL, so they are only named. -->
+            <template v-for="(src, index) in row.sources || []" :key="src.task_id">
+              <el-link
+                v-if="src.source === 'web'"
+                type="primary"
+                :data-testid="`experience-source-${src.task_id}`"
+                @click="openSource(src)"
+              >来源 {{ index + 1 }}</el-link>
+              <el-tag v-else size="small" type="info" title="Widget 会话无法从这里打开">Widget 来源 {{ index + 1 }}</el-tag>
+            </template>
+            <span v-if="!row.digest_topic_id && !sourceTaskCount(row)" class="experience-view__source-muted">人工新增</span>
           </div>
         </template>
       </el-table-column>
@@ -342,6 +350,10 @@ function openDigestTopic(row) {
     path: '/chat',
     query: { agent_id: digestAgentId.value, topic_id: row.digest_topic_id }
   })
+}
+
+function openSource(src) {
+  router.push({ path: '/chat', query: { agent_id: src.agent_id, topic_id: src.topic_id } })
 }
 
 async function applyUpdate(row, payload, successText) {
