@@ -131,12 +131,12 @@ describe('agent draft workbench', () => {
     wrapper.unmount()
   })
   it('saves the MCP switch as a draft and shows the address only after publishing', async () => {
-    const url = 'https://dataagent.example.com/api/v1/remote-agents/agent_1/mcp'
-    const enabled = { ...profile, remote_mcp_available: true, remote_mcp_enabled: true, remote_mcp_url: '' }
+    const path = '/api/v1/remote-agents/agent_1/mcp'
+    const enabled = { ...profile, remote_mcp_available: true, remote_mcp_enabled: true, remote_mcp_path: '' }
     dataagentApi.getAgentDraft.mockResolvedValueOnce({ ...enabled, remote_mcp_enabled: false })
     dataagentApi.updateAgent.mockResolvedValueOnce({ ...enabled, revision: 4 })
     dataagentApi.publishAgent.mockResolvedValueOnce({
-      ...enabled, revision: 4, published_version: 2, remote_mcp_url: url, can_publish: false, has_changes: false,
+      ...enabled, revision: 4, published_version: 2, remote_mcp_path: path, can_publish: false, has_changes: false,
     })
     const wrapper = mount()
     await flushPromises()
@@ -149,7 +149,7 @@ describe('agent draft workbench', () => {
     wrapper.vm.openPublish()
     wrapper.vm.publishAck = true
     await wrapper.vm.handlePublish()
-    expect(wrapper.get('.mcp-address').element.value).toBe(url)
+    expect(wrapper.get('.mcp-address').element.value).toBe(`${window.location.origin}${path}`)
     expect(wrapper.get('.mcp-address-copy').element.disabled).toBe(false)
     wrapper.unmount()
   })

@@ -28,12 +28,6 @@ class Settings(BaseSettings):
     port: int = 8900
     debug: bool = False
 
-    # ---- Published assistant MCP ----
-    remote_mcp_public_origin: str = ""
-    remote_mcp_oauth_issuer: str = ""
-    remote_mcp_oauth_jwks_url: str = ""
-    remote_mcp_oauth_subject_claim: str = "sub"
-
     # ---- LLM Provider / Model ----
     llm_provider: str = ""  # anthropic | openrouter | anyrouter | anthropic_compatible
     claude_model: str = ""

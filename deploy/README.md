@@ -150,9 +150,10 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint pyth
 
 ## 单助手 MCP 发布
 
-1. 先启用上节的企业 OAuth。在身份提供方注册目标 MCP 客户端及其回调地址，允许授权码 + PKCE。设置 `REMOTE_MCP_PUBLIC_ORIGIN`、`REMOTE_MCP_OAUTH_ISSUER` 和 `REMOTE_MCP_OAUTH_JWKS_URL`，均使用 HTTPS。公开域名由入口代理保留在 `Host`，同域下将 MCP、OAuth 资源元数据和产物路由转发给后端。
-2. 为每个 MCP 地址配置 OAuth 资源。身份提供方需支持资源发现和客户端所需的注册方式，并签发 RS256 JWT。访问令牌的 `scope` 包含 `dataagent:ask`；`aud` 为完整助手 MCP 地址（支持 RFC 8707 的 IdP），或共用的 `https://<host>/api/v1/remote-agents`（Keycloak 等不支持 RFC 8707 的 IdP：在 `dataagent:ask` scope 上加 audience mapper）。令牌中 `REMOTE_MCP_OAUTH_SUBJECT_CLAIM` 指定的主体字段（默认 `sub`）必须和站内 OAuth UserInfo 钩子返回的稳定 `sub` 一致。站内 Cookie 仅供浏览器使用。
-3. 升级数据库迁移并重启服务。在助手上开启「MCP 访问」并发布。用户复制该地址进客户端，完成首次浏览器登录后即可查询和续聊。
+1. 先启用上节的企业 OAuth，并在 `OAUTH_PROVIDERS[0]["remote_app"]` 中填写 `server_metadata_url`（身份提供方的 OIDC 发现地址，如 `https://sso.example.com/.well-known/openid-configuration`）。服务从中读取 issuer 和签名公钥，不需要其他配置。在身份提供方注册目标 MCP 客户端及其回调地址，允许授权码 + PKCE。
+2. 用户通过 HTTPS 访问 DataAgent。MCP 地址取用户访问时的域名：入口代理保留 `Host` 并传 `X-Forwarded-Proto`，同域下将 MCP、OAuth 资源元数据和产物路由转发给后端；后端信任代理传来的协议头，所以 8900 端口不对外暴露。
+3. 为每个 MCP 地址配置 OAuth 资源。身份提供方需支持资源发现和客户端所需的注册方式，并签发 RS256 JWT。访问令牌的 `scope` 包含 `dataagent:ask`；`aud` 为完整助手 MCP 地址（支持 RFC 8707 的 IdP），或共用的 `https://<host>/api/v1/remote-agents`（Keycloak 等不支持 RFC 8707 的 IdP：在 `dataagent:ask` scope 上加 audience mapper）。令牌的 `sub` 必须和站内 OAuth UserInfo 钩子返回的稳定 `sub` 一致。站内 Cookie 仅供浏览器使用。
+4. 升级数据库迁移并重启服务。在助手上开启「MCP 访问」并发布。用户复制该地址进客户端，完成首次浏览器登录后即可查询和续聊。
 
 MCP 会话就是该用户的普通会话：可见范围、工具和数据权限与网页一致，网页上也能看到并续聊。区别只是无人值守——不提供追问和计划工具，需要用户确认的操作一律不执行。功能默认关闭，关闭「MCP 访问」并发布即撤销该地址。签名令牌由服务验签并在到期后拒绝，助手可见范围在每次调用时检查。用目标客户端分别验收登录、续期、会话隔离和带令牌下载。参见 [MCP 工具契约](../docs/handbook/api.md#单助手-mcp)。
 

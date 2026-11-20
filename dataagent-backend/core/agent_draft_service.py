@@ -66,14 +66,16 @@ class AgentDraftStore:
         return row
 
     def _result(self, row: dict) -> dict:
-        from core.remote_mcp_policy import enabled, endpoint
+        from core.remote_mcp_policy import PREFIX, enabled
         draft = json.loads(row["draft_json"])
         published = json.loads(row.get("published_json") or "{}")
         available = enabled()
         return {**configuration(draft), "remote_mcp_enabled": bool(draft.get("remote_mcp_enabled")),
                 "remote_mcp_available": available,
-                # The address works once the switch is published.
-                "remote_mcp_url": endpoint(draft["agent_id"]) if available and published.get("remote_mcp_enabled") else "",
+                # The address works once the switch is published. A path: the page
+                # prefixes the origin it was opened from, as MCP clients will use.
+                "remote_mcp_path": f"{PREFIX}/{draft['agent_id']}/mcp"
+                if available and published.get("remote_mcp_enabled") else "",
                 "revision": int(row["revision"]),
                 "published_version": int(row["published_version"]),
                 "has_changes": row.get("published_json") != row["draft_json"],

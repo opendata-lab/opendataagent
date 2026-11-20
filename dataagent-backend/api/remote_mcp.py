@@ -13,7 +13,7 @@ import hashlib
 import re
 from time import monotonic
 from typing import Annotated, Any, Literal
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import pymysql
 from fastapi import APIRouter, HTTPException, Request
@@ -27,7 +27,6 @@ from starlette.routing import Route, Router
 
 from api.routes import _require_agent_profile
 from api.topic_file_response import topic_file_response
-from config import get_settings
 from core import remote_mcp_policy as policy
 from core.agent_profile_service import build_agent_snapshot
 from core.auth import AuthIdentity
@@ -36,7 +35,8 @@ from core.task_submission_service import submit_message_task
 from core.topic_task_store import get_topic_task_store
 
 router = APIRouter()
-_caller: ContextVar[tuple[str, dict[str, str]]] = ContextVar("published_mcp_caller")
+# (agent ID, request context, the public origin the caller used)
+_caller: ContextVar[tuple[str, dict[str, str], str]] = ContextVar("published_mcp_caller")
 Identifier = Annotated[str, Field(min_length=1, max_length=64)]
 RequestKey = Annotated[str, Field(min_length=8, max_length=128)]
 Question = Annotated[str, Field(min_length=1, max_length=16384)]
@@ -60,20 +60,19 @@ def _context(identity: AuthIdentity) -> dict[str, str]:
 
 
 def _thread(thread_id: str) -> dict[str, Any]:
-    agent_id, context = _caller.get()
+    agent_id, context, _ = _caller.get()
     topic = get_topic_task_store().get_topic(thread_id, context=context)
     if not topic or topic.get("agent_id") != agent_id:
         raise policy.RemoteMcpError("not_found", "找不到该会话")
     return topic
 
 
-def _file_url(agent_id: str, topic_id: str, rel_path: str) -> str:
-    return (f"{get_settings().remote_mcp_public_origin}{policy.PREFIX}/{agent_id}/threads/{topic_id}"
-            f"/files/{quote(rel_path)}")
+def _file_url(topic_id: str, rel_path: str) -> str:
+    agent_id, _, origin = _caller.get()
+    return f"{origin}{policy.PREFIX}/{agent_id}/threads/{topic_id}/files/{quote(rel_path)}"
 
 
 def _run(run_id: str) -> dict[str, Any]:
-    agent_id, _ = _caller.get()
     store = get_topic_task_store()
     task = store.get_task(run_id)
     if not task:
@@ -91,7 +90,7 @@ def _run(run_id: str) -> dict[str, Any]:
               "answer": answer.get("content", "")}
     if status == "finished":
         result["files"] = [{"name": item.get("name"), "rel_path": item.get("rel_path"), "size": item.get("size"),
-                            "download_url": _file_url(agent_id, topic_id, str(item.get("rel_path") or ""))}
+                            "download_url": _file_url(topic_id, str(item.get("rel_path") or ""))}
                            for item in answer.get("attachments") or []]
     else:
         result["error"] = task.get("error") or {"code": "run_failed", "message": "本次运行未完成，请重新发问。"}
@@ -100,7 +99,7 @@ def _run(run_id: str) -> dict[str, Any]:
 
 async def ask(question: Question, request_key: RequestKey, thread_id: Identifier | None = None) -> dict[str, Any]:
     """Ask the connected assistant. Reuse the request key on retry and pass the thread ID for follow-ups."""
-    agent_id, context = _caller.get()
+    agent_id, context, _ = _caller.get()
     store = get_topic_task_store()
     question = question.strip()
     # Keys are scoped to the caller and assistant; the stored task holds the
@@ -148,7 +147,7 @@ async def ask(question: Question, request_key: RequestKey, thread_id: Identifier
 
 async def list_threads(query: Search = "", page: Page = 1, page_size: PageSize = 10) -> dict[str, Any]:
     """Find this user's conversations with this assistant (web, Widget and MCP), optionally by title."""
-    agent_id, context = _caller.get()
+    agent_id, context, _ = _caller.get()
     topics = await asyncio.to_thread(get_topic_task_store().list_topics, context=context, agent_id=agent_id)
     query = query.strip()
     matched = [t for t in topics if not query or query in str(t.get("title") or "")]
@@ -194,7 +193,7 @@ async def feedback(thread_id: Identifier, message_id: Identifier, rating: Litera
 
 
 def create_server() -> FastMCP:
-    # Host and Origin are checked against the configured public origin below.
+    # Origin is checked against the address the caller used, in _authenticate.
     server = FastMCP("DataAgent assistant", stateless_http=True, json_response=True,
                      transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
     server.add_tool(ask, annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True))
@@ -206,8 +205,13 @@ def create_server() -> FastMCP:
     return server
 
 
-def _metadata_url(agent_id: str) -> str:
-    return f"{get_settings().remote_mcp_public_origin}/.well-known/oauth-protected-resource{policy.PREFIX}/{agent_id}/mcp"
+def _origin(request: StarletteRequest) -> str:
+    # The address the caller used; the proxy keeps Host and X-Forwarded-Proto.
+    return f"{request.url.scheme}://{request.url.netloc}"
+
+
+def _metadata_url(origin: str, agent_id: str) -> str:
+    return f"{origin}/.well-known/oauth-protected-resource{policy.PREFIX}/{agent_id}/mcp"
 
 
 def _published(agent_id: str, identity: AuthIdentity) -> dict[str, str]:
@@ -225,29 +229,24 @@ def _published(agent_id: str, identity: AuthIdentity) -> dict[str, str]:
 async def _authenticate(request: StarletteRequest, agent_id: str) -> dict[str, str]:
     if not policy.enabled():
         raise HTTPException(404)
-    origin = request.headers.get("origin")
-    if origin and origin != get_settings().remote_mcp_public_origin:
+    origin = _origin(request)
+    if request.headers.get("origin", origin) != origin:
         raise HTTPException(403)
-    audience = urlsplit(policy.endpoint(agent_id))
     try:
-        valid_host = (request.url.hostname == audience.hostname
-                      and (request.url.port or 443) == (audience.port or 443))
-    except ValueError:
-        valid_host = False
-    if not valid_host:
-        raise HTTPException(421, "Invalid MCP host")
-    try:
-        identity = await asyncio.to_thread(policy.verify_identity, request.headers.get("authorization", ""), agent_id)
+        identity = await asyncio.to_thread(policy.verify_identity, request.headers.get("authorization", ""),
+                                           agent_id, origin)
         return await asyncio.to_thread(_published, agent_id, identity)
     except policy.RemoteMcpError as exc:
         if exc.code == "unauthorized":
             raise HTTPException(401, str(exc), headers={
-                "WWW-Authenticate": f'Bearer resource_metadata="{_metadata_url(agent_id)}", scope="{policy.SCOPE}"',
+                "WWW-Authenticate": f'Bearer resource_metadata="{_metadata_url(origin, agent_id)}", scope="{policy.SCOPE}"',
             }) from exc
         if exc.code == "forbidden":
             raise HTTPException(403, str(exc), headers={
                 "WWW-Authenticate": f'Bearer error="insufficient_scope", scope="{policy.SCOPE}"',
             }) from exc
+        if exc.code == "unavailable":
+            raise HTTPException(503, str(exc)) from exc
         raise HTTPException(404, str(exc)) from exc
 
 
@@ -263,7 +262,7 @@ class RemoteTransport:
             headers = exc.headers if isinstance(exc, HTTPException) else None
             await JSONResponse({"detail": detail}, status, headers)(scope, receive, send)
             return
-        token = _caller.set((agent_id, context))
+        token = _caller.set((agent_id, context, _origin(request)))
         try:
             await scope["app"].state.remote_mcp.session_manager.handle_request(scope, receive, send)
         finally:
@@ -274,11 +273,15 @@ transport = Router(routes=[Route("/{agent_id}/mcp", RemoteTransport())], redirec
 
 
 @router.get("/.well-known/oauth-protected-resource" + policy.PREFIX + "/{agent_id}/mcp")
-def resource_metadata(agent_id: str):
+def resource_metadata(agent_id: str, request: Request):
     if not policy.enabled() or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", agent_id):
         raise HTTPException(404)
-    return {"resource": policy.endpoint(agent_id),
-            "authorization_servers": [get_settings().remote_mcp_oauth_issuer],
+    try:
+        issuer = policy.issuer()
+    except policy.RemoteMcpError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"resource": policy.endpoint(_origin(request), agent_id),
+            "authorization_servers": [issuer],
             "scopes_supported": [policy.SCOPE], "bearer_methods_supported": ["header"]}
 
 

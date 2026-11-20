@@ -42,18 +42,18 @@
           <input
             class="mcp-address"
             aria-label="MCP 连接地址"
-            :value="draft.remote_mcp_url"
-            :title="draft.remote_mcp_url"
+            :value="mcpAddress"
+            :title="mcpAddress"
             :placeholder="form.remote_mcp_enabled ? '发布后显示地址' : '开启并发布后显示地址'"
             readonly
-            :disabled="!draft.remote_mcp_url"
+            :disabled="!mcpAddress"
           />
           <button
             class="icon-button mcp-address-copy"
             type="button"
             aria-label="复制 MCP 地址"
             title="复制 MCP 地址"
-            :disabled="!draft.remote_mcp_url"
+            :disabled="!mcpAddress"
             @click="copyMcpAddress"
           ><Icon name="copy" class="small" /></button>
         </section>
@@ -525,7 +525,7 @@
             {{ form.mcp_server_ids.length }} MCP
           </dd>
         </div>
-        <div v-if="form.remote_mcp_enabled || draft.remote_mcp_url">
+        <div v-if="form.remote_mcp_enabled || mcpAddress">
           <dt>MCP 访问</dt>
           <dd>{{ form.remote_mcp_enabled ? '开启' : '关闭' }}</dd>
         </div>
@@ -626,8 +626,12 @@ const draft = reactive({
   can_publish: false,
   preview_status: null,
   remote_mcp_available: false,
-  remote_mcp_url: "",
+  remote_mcp_path: "",
 });
+// The backend returns a path; MCP clients use the address this page was opened from.
+const mcpAddress = computed(() =>
+  draft.remote_mcp_path ? `${window.location.origin}${draft.remote_mcp_path}` : "",
+);
 const builtinPrompt = ref(""),
   envVarsText = ref("{}"),
   baseline = ref("");
@@ -790,7 +794,7 @@ function applyAgent(agent) {
     "preview_topic_id",
     "preview_status",
     "remote_mcp_available",
-    "remote_mcp_url",
+    "remote_mcp_path",
   ])
     delete form[key];
   envVarsText.value = JSON.stringify(form.env_vars, null, 2);
@@ -805,7 +809,7 @@ function syncDraft(agent) {
     "can_publish",
     "preview_status",
     "remote_mcp_available",
-    "remote_mcp_url",
+    "remote_mcp_path",
   ])
     if (key in agent) draft[key] = agent[key];
 }
@@ -842,9 +846,9 @@ function buildPayload() {
   };
 }
 async function copyMcpAddress() {
-  if (!draft.remote_mcp_url) return;
+  if (!mcpAddress.value) return;
   try {
-    await navigator.clipboard.writeText(draft.remote_mcp_url);
+    await navigator.clipboard.writeText(mcpAddress.value);
     ElMessage.success("已复制 MCP 地址");
   } catch {
     ElMessage.error("无法访问剪贴板，请选择地址后手动复制");
