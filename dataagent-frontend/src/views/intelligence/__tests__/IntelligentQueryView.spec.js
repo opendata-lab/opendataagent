@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 
@@ -18,6 +18,9 @@ vi.mock('vue-router', async (importOriginal) => ({
     push: routerPush
   })
 }))
+
+const listExperiences = vi.hoisted(() => vi.fn().mockResolvedValue({ total: 3 }))
+vi.mock('@/api/dataagent', () => ({ dataagentApi: { listExperiences } }))
 
 import IntelligentQueryView from '../IntelligentQueryView.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -91,12 +94,12 @@ describe('IntelligentQueryView', () => {
 
   it('highlights the menu entry from the matched route meta', () => {
     const wrapper = mountView({
-      path: '/skills',
-      name: 'IntelligentQuerySkills',
-      meta: { tab: 'skills' }
+      path: '/knowledge',
+      name: 'KnowledgeLibrary',
+      meta: { tab: 'knowledge' }
     })
 
-    expect(wrapper.find('.el-menu-stub').attributes('data-active')).toBe('skills')
+    expect(wrapper.find('.el-menu-stub').attributes('data-active')).toBe('knowledge')
   })
 
   it('falls back to chat when the route meta has no tab', () => {
@@ -112,14 +115,14 @@ describe('IntelligentQueryView', () => {
   it('navigates to the real route when a menu entry is selected', async () => {
     const wrapper = mountView()
 
-    await wrapper.vm.handleMenuSelect('models')
-    expect(routerPush).toHaveBeenCalledWith({ path: '/models', query: {} })
+    await wrapper.vm.handleMenuSelect('feedback')
+    expect(routerPush).toHaveBeenCalledWith({ path: '/feedback', query: {} })
 
-    await wrapper.vm.handleMenuSelect('skills')
-    expect(routerPush).toHaveBeenCalledWith({ path: '/skills', query: {} })
+    await wrapper.vm.handleMenuSelect('knowledge')
+    expect(routerPush).toHaveBeenCalledWith({ path: '/knowledge', query: {} })
 
-    await wrapper.vm.handleMenuSelect('widget')
-    expect(routerPush).toHaveBeenCalledWith({ path: '/widget-access', query: {} })
+    await wrapper.vm.handleMenuSelect('memories')
+    expect(routerPush).toHaveBeenCalledWith({ path: '/memories', query: {} })
   })
 
   it('preserves only agent_id when switching page menus', async () => {
@@ -129,34 +132,23 @@ describe('IntelligentQueryView', () => {
       meta: { tab: 'chat-v2' }
     })
 
-    await wrapper.vm.handleMenuSelect('skills')
+    await wrapper.vm.handleMenuSelect('knowledge')
 
     expect(routerPush).toHaveBeenCalledWith({
-      path: '/skills',
+      path: '/knowledge',
       query: { agent_id: 'agent_sales' }
     })
   })
 
   it('does not navigate when selecting the already active route', async () => {
     const wrapper = mountView({
-      path: '/models',
+      path: '/feedback',
       name: 'IntelligentQueryModels',
       meta: { tab: 'models' }
     })
 
-    await wrapper.vm.handleMenuSelect('models')
+    await wrapper.vm.handleMenuSelect('feedback')
     expect(routerPush).not.toHaveBeenCalled()
-  })
-
-  it('keeps Skills highlighted on the skill detail route', () => {
-    const wrapper = mountView({
-      path: '/skills/marketing-insights',
-      name: 'IntelligentQuerySkillDetail',
-      params: { folder: 'marketing-insights' },
-      meta: { tab: 'skills' }
-    })
-
-    expect(wrapper.find('.el-menu-stub').attributes('data-active')).toBe('skills')
   })
 
   it('keeps 智能体 highlighted on the agent detail route', () => {
@@ -170,6 +162,14 @@ describe('IntelligentQueryView', () => {
     expect(wrapper.find('.el-menu-stub').attributes('data-active')).toBe('agents')
   })
 
+  it('shows admin work menus with a pending memory count', async () => {
+    const wrapper = mountView({}, { display_name: 'Admin', role: 'admin' })
+    await flushPromises()
+    for (const label of ['用户反馈', '知识', '记忆']) expect(wrapper.text()).toContain(label)
+    expect(wrapper.find('.pending-count').text()).toBe('3')
+    expect(listExperiences).toHaveBeenCalledWith({ kind: 'memory', status: 'pending', page_size: 1 })
+  })
+
   it('shows readable menus without a role label for regular users', () => {
     const wrapper = mountView({}, { display_name: 'Alice', role: 'user' })
 
@@ -181,6 +181,7 @@ describe('IntelligentQueryView', () => {
     expect(wrapper.text()).not.toContain('模型管理')
     expect(wrapper.text()).not.toContain('Widget 接入')
     expect(wrapper.text()).not.toContain('评测集')
+    for (const label of ['用户反馈', '知识', '记忆']) expect(wrapper.text()).not.toContain(label)
     expect(wrapper.text()).toContain('Alice')
     expect(wrapper.text()).not.toContain('普通用户')
     expect(wrapper.text()).not.toContain('管理员')

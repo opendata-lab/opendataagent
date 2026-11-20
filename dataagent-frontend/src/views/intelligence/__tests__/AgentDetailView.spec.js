@@ -262,3 +262,16 @@ describe('agent draft workbench', () => {
     wrapper.unmount()
   })
 })
+
+
+it('limits knowledge and memory cards to admin agent editors', async () => {
+  const wrapper = mount()
+  await flushPromises()
+  expect(wrapper.findComponent({ name: 'AgentExperienceCards' }).exists()).toBe(true)
+  wrapper.unmount()
+  authState.isAdmin = false
+  const readonly = mount()
+  await flushPromises()
+  expect(readonly.findComponent({ name: 'AgentExperienceCards' }).exists()).toBe(false)
+  readonly.unmount()
+})

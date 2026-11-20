@@ -22,6 +22,11 @@
           <el-icon><User /></el-icon>
           <span>智能体</span>
         </el-menu-item>
+        <template v-if="authStore.isAdmin">
+          <el-menu-item index="feedback"><el-icon><ChatLineSquare /></el-icon><span>用户反馈</span></el-menu-item>
+          <el-menu-item index="knowledge"><el-icon><Collection /></el-icon><span>知识</span></el-menu-item>
+          <el-menu-item index="memories"><el-icon><Notebook /></el-icon><span>记忆</span><span v-if="pendingMemoryCount" class="pending-count" aria-label="待审核记忆">{{ pendingMemoryCount }}</span></el-menu-item>
+        </template>
       </el-menu>
       <div class="intelligent-query-footer">
         <div v-if="authStore.enabled && authStore.currentUser" class="intelligent-query-user">
@@ -58,11 +63,12 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { MagicStick, Setting, User } from '@element-plus/icons-vue'
+import { ChatLineSquare, Collection, MagicStick, Notebook, Setting, User } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { withAgentContext } from '@/router/agentContext'
+import { pendingMemoryCount, refreshMemoryCount, clearMemoryCount } from '@/composables/experienceCounts'
 
 const route = useRoute()
 const router = useRouter()
@@ -79,14 +85,16 @@ const handleUserCommand = async (command) => {
 // Each menu entry maps directly to a user-facing page route.
 const MENU_TO_PATH = {
   'chat-v2': '/chat',
-  skills: '/skills',
   agents: '/agents',
-  models: '/models',
-  mcp: '/mcp',
-  widget: '/widget-access',
-  evaluations: '/evaluations',
-  'eval-results': '/evaluation-results'
+  feedback: '/feedback',
+  knowledge: '/knowledge',
+  memories: '/memories'
 }
+
+watch(() => [authStore.isAdmin, route.fullPath], () => {
+  if (authStore.isAdmin) refreshMemoryCount()
+  else clearMemoryCount()
+}, { immediate: true })
 
 const brandLogo = `${import.meta.env.BASE_URL}dataagent-icon.svg`
 
@@ -107,6 +115,7 @@ const handleMenuSelect = (index) => {
 </script>
 
 <style scoped>
+.pending-count { margin-left: auto; color: #64748b; background: #f1f5f9; border-radius: 4px; font-size: 12px; line-height: 20px; padding: 0 6px; }
 .intelligent-query-view {
   height: 100%;
   min-height: 0;
