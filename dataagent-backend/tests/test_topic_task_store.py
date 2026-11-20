@@ -463,15 +463,15 @@ def test_predicate_auth_enabled_matrix(monkeypatch):
         {"source": "web", "auth_user_id": "SSO:42", "auth_role": "user"}, alias="t"
     )
     owner = "t.auth_user_id = %s AND CAST(t.auth_user_id AS BINARY) = CAST(%s AS BINARY)"
-    assert sql == f"t.source IN (%s, %s) AND {owner} AND t.is_agent_preview = 0"
-    assert params == ["web", "widget", "SSO:42", "SSO:42"]
+    assert sql == f"t.source IN (%s, %s, %s) AND {owner} AND t.is_agent_preview = 0"
+    assert params == ["web", "widget", "remote", "SSO:42", "SSO:42"]
 
     # 管理员运行接口同样按自己归属过滤，自己的 Web 调试话题可访问。
     sql, params = store._topic_context_predicate(  # noqa: SLF001
         {"source": "web", "auth_user_id": "local:admin", "auth_role": "admin"}, alias="t"
     )
-    assert sql == f"t.source IN (%s, %s) AND {owner} AND (t.is_agent_preview = 0 OR t.source = %s)"
-    assert params == ["web", "widget", "local:admin", "local:admin", "web"]
+    assert sql == f"t.source IN (%s, %s, %s) AND {owner} AND (t.is_agent_preview = 0 OR t.source = %s)"
+    assert params == ["web", "widget", "remote", "local:admin", "local:admin", "web"]
 
     # context=None（管理端点）不过滤。
     sql, params = store._topic_context_predicate(None, alias="t")  # noqa: SLF001

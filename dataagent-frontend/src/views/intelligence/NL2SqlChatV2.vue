@@ -83,6 +83,7 @@
                 <option value="">全部来源</option>
                 <option value="web">平台</option>
                 <option value="widget">Widget</option>
+                <option value="remote">MCP</option>
               </select>
             </div>
             <div v-if="usesAdminList && filterSource === 'widget'" class="v2-filter-group">
@@ -144,7 +145,7 @@
           >
             <span class="v2-session-title" :title="topic.title">{{ topic.title || '新话题' }}</span>
             <span class="v2-session-origin">
-              <span class="v2-session-source-badge">{{ topic.source === 'widget' ? 'Widget' : '平台' }}</span>
+              <span class="v2-session-source-badge">{{ TOPIC_SOURCE_LABELS[topic.source] || '平台' }}</span>
               <span v-if="topic.can_continue === false" class="v2-session-owner" :title="topicOwnerLabel(topic)">{{ topicOwnerLabel(topic) }}</span>
             </span>
             <span v-if="isTopicWorking(topic)" class="v2-session-loading" title="正在分析中...">
@@ -341,6 +342,7 @@ import { dataagentApi } from '@/api/dataagent'
 import { useAuthStore } from '@/stores/auth'
 import { topicStatusKind } from './topicStatus'
 import { normalizeTopic } from './chatMessage'
+import { TOPIC_SOURCE_LABELS } from './topicHelpers.js'
 import { createNl2SqlAuditTransport, createNl2SqlTransport } from './nl2sqlTransport'
 import AgentSelector from './AgentSelector.vue'
 import { buildCommands } from '@opendataagent/agent-conversation'

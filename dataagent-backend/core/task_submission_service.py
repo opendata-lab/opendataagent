@@ -68,6 +68,8 @@ async def submit_message_task(
     source_queue_id: str | None = None,
     source_schedule_id: str | None = None,
     source_schedule_log_id: str | None = None,
+    interactive: bool = True,
+    request_key: str | None = None,
     store: TopicTaskStore | None = None,
     coordinator: Any | None = None,
 ) -> dict[str, Any]:
@@ -102,6 +104,8 @@ async def submit_message_task(
         source_queue_id=source_queue_id,
         source_schedule_id=source_schedule_id,
         source_schedule_log_id=source_schedule_log_id,
+        interactive=interactive,
+        request_key=request_key,
     )
     task_id = str(task.get("task_id") or "")
     logger.info(

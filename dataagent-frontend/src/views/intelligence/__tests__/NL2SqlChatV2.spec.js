@@ -694,6 +694,17 @@ describe('NL2SqlChatV2 URL location', () => {
     expect(dataagentApiMock.getAdminTopicMessages).toHaveBeenCalledWith('topic-widget', expect.any(Object))
   })
 
+  it('labels conversations started from the MCP endpoint', async () => {
+    apiMocks.topicApi.listTopics.mockResolvedValue({
+      list: [{ ...makeTopic('topic-mcp', 'MCP topic'), source: 'remote' }]
+    })
+    const wrapper = mountChat()
+    await flushPromises()
+    expect(wrapper.get('.v2-session-source-badge').text()).toBe('MCP')
+    await wrapper.get('#conversation-source').setValue('remote')
+    expect(wrapper.findAll('.v2-session-item')).toHaveLength(1)
+  })
+
   it('filters the administrator list by source on the server', async () => {
     mountChat({ admin: true })
     await flushPromises()

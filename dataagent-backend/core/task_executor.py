@@ -73,6 +73,8 @@ class TaskExecutionInput:
     # Internal control-plane -> child contract, not a public request override.
     runtime_limits: dict[str, int] | None = None
     workspace_before: dict[str, tuple[int, str]] | None = None
+    # False when nobody can answer questions or approve operations (MCP).
+    interactive: bool = True
 
 
 @dataclass
@@ -121,7 +123,8 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
     if min(limits["total_timeout_seconds"],limits["max_turns"]) <= 0 or limits["max_tool_calls"] < 0:
         raise ValueError("PI_LIMIT_EXCEEDED: cumulative task budget exhausted")
     limits["bash_timeout_seconds"] = min(limits["bash_timeout_seconds"],limits["total_timeout_seconds"])
-    mode = normalize_permission_mode(params.permission_mode)
+    # Plan, accept-edits and bypass are choices a person makes for a session.
+    mode = normalize_permission_mode(params.permission_mode) if params.interactive else "default"
     plan_approved = bool(state.get("plan_approved"))
     runtime_env = {"DATAAGENT_PYTHON_BIN":"/usr/local/bin/python", "SKILLS_ROOT_DIR":"/opt/skills",
         "DATAAGENT_SKILL_ROOT": "/opt/skills/" + str(skills.get("primary_folder") or ""),
@@ -161,6 +164,8 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         system_prompt += injection_prompt
         if mode == "plan" and not plan_approved:
             system_prompt += "\n" + (Path(__file__).parents[1]/"prompts/plan_mode.md").read_text()
+        if not params.interactive:
+            system_prompt += "\n" + (Path(__file__).parents[1]/"prompts/non_interactive_mode.md").read_text()
         await asyncio.to_thread(store.record_task_system_prompt,params.task_id,system_prompt)
         servers = _build_mcp_servers(cfg,(snapshot or {}).get("mcp_server_ids"),agent_snapshot=snapshot)
         ctx = PiRunContext(task_id=params.task_id,topic_id=params.topic_id,run_id=run_id,
@@ -171,6 +176,7 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
             plan_approved=plan_approved,resume_operation=operation,permission_mode=mode,
             turn_offset=int(previous_usage.get("turns",0)),
             allow_questions=cfg.dataagent_ask_user_question_enabled,
+            interactive=params.interactive,
             skills=[{"name":name,"root_path":f"/opt/skills/{name}"} for name in roots],
             mcp_servers=[{"name":name,**conf} for name,conf in servers.items()],
             max_output_tokens=target.get("max_output_tokens"),context_window=target.get("context_window"),

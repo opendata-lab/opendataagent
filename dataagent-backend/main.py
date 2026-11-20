@@ -11,6 +11,7 @@ from api.admin_routes import router as admin_router
 from api.auth_routes import oauth_callback_router, router as auth_router
 from api.eval_routes import router as eval_router
 from api.routes import router
+from api import remote_mcp
 from config import get_settings, update_settings
 from core.logging_config import RequestContextMiddleware, configure_logging
 from core.auth import init_auth
@@ -59,6 +60,8 @@ app.include_router(oauth_callback_router)
 app.include_router(router)
 app.include_router(admin_router)
 app.include_router(eval_router)
+app.include_router(remote_mcp.router)
+app.mount(remote_mcp.policy.PREFIX, remote_mcp.transport)
 
 
 @app.get("/")
@@ -148,10 +151,16 @@ async def startup():
     except Exception as e:
         logger.exception("Task coordinator bootstrap failed: %s", e)
         raise
+    app.state.remote_mcp = remote_mcp.create_server()
+    app.state.remote_mcp_session = app.state.remote_mcp.session_manager.run()
+    await app.state.remote_mcp_session.__aenter__()
 
 
 @app.on_event("shutdown")
 async def shutdown():
+    session = getattr(app.state, "remote_mcp_session", None)
+    if session is not None:
+        await session.__aexit__(None, None, None)
     try:
         await get_task_coordinator().stop()
     except Exception as e:

@@ -11,6 +11,7 @@ defineProps({ name: { type: String, default: 'file' } })
 // Fixed, local SVG paths from the approved workbench prototype.
 const icons = {
   'arrow-left': '<path d="m12 5-7 7 7 7M5 12h14"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   chevron: '<path d="m9 5 7 7-7 7"/>',
   spark:
     '<path d="m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6ZM20 2v4m-2-2h4"/>',

@@ -26,6 +26,37 @@
             >
           </div>
         </div>
+        <section v-if="canManage && !loading && !loadError" class="mcp-access" aria-label="MCP 访问">
+          <label class="mcp-access-label" for="remote-mcp-switch">MCP 访问</label>
+          <button
+            id="remote-mcp-switch"
+            type="button"
+            role="switch"
+            class="mcp-access-switch"
+            aria-label="MCP 访问"
+            :aria-checked="form.remote_mcp_enabled"
+            :disabled="busy || (!draft.remote_mcp_available && !form.remote_mcp_enabled)"
+            :title="draft.remote_mcp_available ? '发布后生效' : '需要管理员配置外部 MCP OAuth'"
+            @click="form.remote_mcp_enabled = !form.remote_mcp_enabled"
+          />
+          <input
+            class="mcp-address"
+            aria-label="MCP 连接地址"
+            :value="draft.remote_mcp_url"
+            :title="draft.remote_mcp_url"
+            :placeholder="form.remote_mcp_enabled ? '发布后显示地址' : '开启并发布后显示地址'"
+            readonly
+            :disabled="!draft.remote_mcp_url"
+          />
+          <button
+            class="icon-button mcp-address-copy"
+            type="button"
+            aria-label="复制 MCP 地址"
+            title="复制 MCP 地址"
+            :disabled="!draft.remote_mcp_url"
+            @click="copyMcpAddress"
+          ><Icon name="copy" class="small" /></button>
+        </section>
         <div class="head-actions">
           <template v-if="canManage">
             <button
@@ -85,13 +116,13 @@
               </details>
               <div class="custom-section">
                 <div class="section-title">
-                  <h3>自定义提示词</h3>
+                  <h3>角色设定</h3>
                   <span class="badge" :class="canManage ? 'blue' : 'neutral'">{{
                     canManage ? "可编辑" : "只读"
                   }}</span>
                 </div>
                 <div class="prompt-editor">
-                  <label for="custom-prompt" class="sr-only">自定义提示词</label
+                  <label for="custom-prompt" class="sr-only">角色设定</label
                   ><textarea
                     id="custom-prompt"
                     v-model="form.system_prompt"
@@ -136,7 +167,7 @@
                 <div class="section-title">
                   <h3>
                     <Icon :name="kind === 'skills' ? 'layers' : 'plug'" />{{
-                      kind === "skills" ? "Skills" : "MCP 服务"
+                      kind === "skills" ? "Skills" : "MCP"
                     }}<span class="count">{{
                       selectedResources(kind).length
                     }}</span>
@@ -146,7 +177,7 @@
                     type="button"
                     class="text-button"
                     :aria-label="
-                      kind === 'skills' ? '配置 Skills' : '配置 MCP 服务'
+                      kind === 'skills' ? '配置 Skills' : '配置 MCP'
                     "
                     :disabled="publishing"
                     :aria-expanded="activeResourcePicker === kind"
@@ -199,13 +230,13 @@
                     :model-value="null"
                     filterable
                     :aria-label="
-                      kind === 'skills' ? '添加 Skill' : '添加 MCP 服务'
+                      kind === 'skills' ? '添加 Skill' : '添加 MCP'
                     "
                     :placeholder="
                       availableResources(kind).length
                         ? kind === 'skills'
                           ? '选择 Skill'
-                          : '选择 MCP 服务'
+                          : '选择 MCP'
                         : '暂无可添加项'
                     "
                     :disabled="publishing || !availableResources(kind).length"
@@ -494,6 +525,10 @@
             {{ form.mcp_server_ids.length }} MCP
           </dd>
         </div>
+        <div v-if="form.remote_mcp_enabled || draft.remote_mcp_url">
+          <dt>MCP 访问</dt>
+          <dd>{{ form.remote_mcp_enabled ? '开启' : '关闭' }}</dd>
+        </div>
         <div>
           <dt>调试状态</dt>
           <dd :class="{ 'success-text': runLabel === '调试完成' }">{{ runLabel }}</dd>
@@ -581,6 +616,7 @@ const form = reactive({
   env_vars: {},
   visibility: { mode: "all", allowed_users: [], allowed_groups: [] },
   preset_questions: ["", "", ""],
+  remote_mcp_enabled: false,
   is_default: false,
 });
 const draft = reactive({
@@ -589,6 +625,8 @@ const draft = reactive({
   has_changes: false,
   can_publish: false,
   preview_status: null,
+  remote_mcp_available: false,
+  remote_mcp_url: "",
 });
 const builtinPrompt = ref(""),
   envVarsText = ref("{}"),
@@ -735,6 +773,7 @@ function applyAgent(agent) {
     },
     env_vars: agent.env_vars || {},
     plan_timeout_action: agent.plan_timeout_action || "park",
+    remote_mcp_enabled: agent.remote_mcp_enabled === true,
     preset_questions: [
       agent.preset_questions?.[0] || "",
       agent.preset_questions?.[1] || "",
@@ -750,6 +789,8 @@ function applyAgent(agent) {
     "preview_task_id",
     "preview_topic_id",
     "preview_status",
+    "remote_mcp_available",
+    "remote_mcp_url",
   ])
     delete form[key];
   envVarsText.value = JSON.stringify(form.env_vars, null, 2);
@@ -763,6 +804,8 @@ function syncDraft(agent) {
     "has_changes",
     "can_publish",
     "preview_status",
+    "remote_mcp_available",
+    "remote_mcp_url",
   ])
     if (key in agent) draft[key] = agent[key];
 }
@@ -784,6 +827,7 @@ function buildPayload() {
     skill_folders: [...form.skill_folders],
     max_turns: Number(form.max_turns || 0),
     plan_timeout_action: form.plan_timeout_action || "park",
+    remote_mcp_enabled: form.remote_mcp_enabled,
     env_vars: env,
     visibility: {
       ...form.visibility,
@@ -797,6 +841,16 @@ function buildPayload() {
     expected_revision: draft.revision,
   };
 }
+async function copyMcpAddress() {
+  if (!draft.remote_mcp_url) return;
+  try {
+    await navigator.clipboard.writeText(draft.remote_mcp_url);
+    ElMessage.success("已复制 MCP 地址");
+  } catch {
+    ElMessage.error("无法访问剪贴板，请选择地址后手动复制");
+  }
+}
+
 async function handleSave(silent = false) {
   if (!canManage.value || busy.value) return false;
   saving.value = true;
@@ -1135,6 +1189,70 @@ onBeforeUnmount(() => { loadGeneration++; window.removeEventListener("beforeunlo
 <style scoped>
 .agent-workbench {
   min-height: 100%;
+}
+.workspace-head:has(.mcp-access) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 16px;
+}
+.mcp-access {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  max-width: 610px;
+  border-left: 1px solid var(--border);
+  padding-left: 16px;
+}
+.mcp-access-label {
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+.mcp-access-switch {
+  width: 34px;
+  height: 19px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 10px;
+  background: #8292aa;
+  padding: 0;
+  position: relative;
+}
+.mcp-access-switch::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: white;
+}
+.mcp-access-switch[aria-checked="true"] { background: var(--primary-dark); }
+.mcp-access-switch[aria-checked="true"]::after { transform: translateX(15px); }
+.mcp-address {
+  min-width: 0;
+  height: 32px;
+  font: 11px var(--mono);
+  text-overflow: ellipsis;
+}
+.mcp-address::placeholder { font-family: var(--font); }
+.mcp-address-copy {
+  flex: 0 0 auto;
+  height: 32px;
+  width: 32px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+@media (max-width: 1160px) {
+  .workspace-head:has(.mcp-access) { grid-template-columns: minmax(0, 1fr) auto; }
+  .mcp-access { grid-row: 2; grid-column: 1 / -1; padding-left: 0; border-left: 0; }
+  .workspace-head:has(.mcp-access) .head-actions { grid-column: 2; grid-row: 1; }
+}
+@media (max-width: 600px) {
+  .workspace-head:has(.mcp-access) { grid-template-columns: minmax(0, 1fr); }
+  .workspace-head:has(.mcp-access) .head-actions { grid-column: 1; grid-row: 3; margin-left: 0; }
 }
 .config-scroll {
   border: 0;

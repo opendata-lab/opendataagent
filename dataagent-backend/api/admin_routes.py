@@ -417,14 +417,14 @@ def admin_update_experience(experience_id: str, payload: ExperienceUpdateRequest
 def _admin_topic_summary(topic: dict, identity: AuthIdentity | None) -> AdminWidgetTopicSummary:
     source = topic.get("source") or "web"
     can_continue = source == "web" if identity is None else (
-        source in {"web", "widget"} and topic.get("auth_user_id") == identity.user_id
+        source in {"web", "widget", "remote"} and topic.get("auth_user_id") == identity.user_id
     )
     return AdminWidgetTopicSummary.model_validate({**topic, "can_continue": can_continue})
 
 
 @settings_router.get("/topics", response_model=AdminWidgetTopicPage)
 def admin_list_all_topics(
-    source: str = Query(default="", pattern="^(|web|widget)$"),
+    source: str = Query(default="", pattern="^(|web|widget|remote)$"),
     website_id: str | None = Query(default=None),
     external_user_id: str | None = Query(default=None),
     visitor_id: str | None = Query(default=None),

@@ -476,6 +476,7 @@ class AgentCatalogProfile(AgentSummary):
 
 
 class AgentProfileBase(BaseModel):
+    remote_mcp_enabled: Optional[bool] = None
     name: Optional[str] = None
     description: Optional[str] = None
     system_prompt: Optional[str] = None
@@ -685,6 +686,7 @@ class AdminFeedbackItem(BaseModel):
     agent_id: str = ""
     feedback: str
     feedback_at: str = ""
+    feedback_comment: str = ""
     question: str = ""
     answer: str = ""
     topic_title: str = ""
