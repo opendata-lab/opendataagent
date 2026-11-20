@@ -187,6 +187,18 @@ export const dataagentApi = {
     return dataagentRequest.get('/v1/nl2sql-admin/feedback', { params })
   },
 
+  listExperiences(params = {}) {
+    return dataagentRequest.get('/v1/nl2sql-admin/experiences', { params })
+  },
+
+  updateExperience(experienceId, data) {
+    return dataagentRequest.patch(`/v1/nl2sql-admin/experiences/${encodeURIComponent(experienceId)}`, data)
+  },
+
+  createExperience(data) {
+    return dataagentRequest.post('/v1/nl2sql-admin/experiences', data)
+  },
+
   listAdminTopics(params = {}) {
     return dataagentRequest.get('/v1/nl2sql-admin/topics', { params })
   },

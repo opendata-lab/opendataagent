@@ -52,6 +52,8 @@ from core.mcp_admin_service import (
     update_mcp_server,
 )
 from core.skill_discovery import resolve_skills_root_dir
+from config import get_settings
+from core import experience
 from core.topic_task_store import get_topic_task_store
 from models.schemas import (
     WidgetAccessKeyResponse,
@@ -60,6 +62,10 @@ from models.schemas import (
     AdminSettingsResponse,
     AdminSettingsUpdateRequest,
     AdminFeedbackPage,
+    Experience,
+    ExperienceCreateRequest,
+    ExperiencePage,
+    ExperienceUpdateRequest,
     AdminWidgetTopicPage,
     AdminWidgetTopicSummary,
     AdminWidgetUser,
@@ -342,6 +348,54 @@ def admin_list_feedback(
         page_size=page_size,
     )
     return AdminFeedbackPage.model_validate(payload)
+
+
+def _actor(request: Request) -> str:
+    identity = resolve_identity(request) if is_auth_enabled() else None
+    return str(getattr(identity, "user_id", "") or "admin")
+
+
+@settings_router.get("/experiences", response_model=ExperiencePage)
+def admin_list_experiences(
+    status: str = Query(default="", pattern="^(|candidate|active|retired)$"),
+    scope: str = Query(default="", pattern="^(|assistant|platform)$"),
+    agent_id: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+):
+    """Experience library for review. The two switches are deployment config
+    (DATAAGENT_EXPERIENCE_DIGEST_ENABLED / _INJECTION_ENABLED), shown read-only."""
+    settings = get_settings()
+    payload = experience.list_experiences(status=status, scope=scope, agent_id=agent_id or "", page=page, page_size=page_size)
+    return ExperiencePage(
+        **payload,
+        digest_enabled=bool(settings.dataagent_experience_digest_enabled),
+        injection_enabled=bool(settings.dataagent_experience_injection_enabled),
+        digest_agent_id=experience.DIGEST_AGENT_ID,
+    )
+
+
+@settings_router.post("/experiences", response_model=Experience)
+def admin_create_experience(payload: ExperienceCreateRequest, request: Request):
+    try:
+        return experience.create_experience(scope=payload.scope, agent_id=payload.agent_id, content=payload.content,
+                                            updated_by=_actor(request), status="active")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@settings_router.patch("/experiences/{experience_id}", response_model=Experience)
+def admin_update_experience(experience_id: str, payload: ExperienceUpdateRequest, request: Request):
+    try:
+        updated = experience.update_experience(
+            experience_id, updated_by=_actor(request), status=payload.status, scope=payload.scope,
+            agent_id=payload.agent_id, content=payload.content,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="experience not found")
+    return updated
 
 
 @settings_router.get("/topics", response_model=AdminWidgetTopicPage)

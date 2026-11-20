@@ -153,6 +153,12 @@ export const routes = [
         meta: { tab: 'feedback', title: '用户反馈', adminOnly: true }
       },
       {
+        path: 'experiences',
+        name: 'ExperienceLibrary',
+        component: () => import('@/views/settings/ExperienceView.vue'),
+        meta: { tab: 'experiences', title: '经验库', adminOnly: true }
+      },
+      {
         path: 'evaluations',
         name: 'EvaluationSets',
         component: () => import('@/views/evaluation/EvaluationSetsView.vue'),

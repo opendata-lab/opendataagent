@@ -13,6 +13,8 @@ from config import get_settings, update_settings
 from core import agent_profile_service
 
 
+from core.experience import DIGEST_AGENT_ID  # noqa: E402
+
 class _RecordingProfileStore:
     """Counts the store traffic a profile read triggers."""
 
@@ -23,6 +25,7 @@ class _RecordingProfileStore:
                 "agent_id": agent_profile_service.DEFAULT_AGENT_ID,
                 "name": "default", "is_default": True,
             },
+            DIGEST_AGENT_ID: {"agent_id": DIGEST_AGENT_ID, "name": "经验总结", "is_builtin": True},
         }
 
     def init_schema(self):
@@ -131,6 +134,15 @@ def test_redeployment_seed_preserves_edited_builtin_profiles(monkeypatch):
     assert "save_profile" not in store.calls
     assert store.profiles[agent_profile_service.DEFAULT_AGENT_ID] == default
     assert default["name"] == "用户命名" and default["skill_folders"] == ["custom-skill"]
+
+
+def test_a_missing_experience_digest_agent_is_seeded_once(monkeypatch):
+    store = _RecordingProfileStore()
+    del store.profiles[DIGEST_AGENT_ID]
+    monkeypatch.setattr(agent_profile_service, "get_agent_profile_store", lambda: store)
+    agent_profile_service.reset_builtin_agent_seed()
+    agent_profile_service.ensure_builtin_agent_profiles()
+    assert store.calls.count("save_profile") == 1
 
 
 

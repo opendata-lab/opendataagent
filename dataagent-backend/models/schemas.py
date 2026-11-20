@@ -702,6 +702,54 @@ class AdminFeedbackPage(BaseModel):
     dislikes: int = 0
 
 
+class ExperienceSource(BaseModel):
+    task_id: str
+    topic_id: str
+    agent_id: str = ""
+    source: str = "web"          # 'web' can be opened in /chat; 'widget' cannot
+    question: str = ""           # shown for Widget sources, which cannot be opened
+    answer: str = ""
+
+
+class Experience(BaseModel):
+    """An experience-library entry: a digest candidate or an approved entry."""
+
+    experience_id: str
+    scope: Literal["assistant", "platform"]
+    agent_id: Optional[str] = None
+    content: str
+    source_task_ids: List[str] = Field(default_factory=list)
+    sources: List[ExperienceSource] = Field(default_factory=list)  # resolved in listings only
+    digest_topic_id: Optional[str] = None
+    status: Literal["candidate", "active", "retired"]
+    updated_by: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class ExperiencePage(BaseModel):
+    items: List[Experience] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+    digest_enabled: bool = False
+    injection_enabled: bool = False
+    digest_agent_id: str = ""
+
+
+class ExperienceCreateRequest(BaseModel):
+    scope: Literal["assistant", "platform"] = "platform"
+    agent_id: Optional[str] = None
+    content: str
+
+
+class ExperienceUpdateRequest(BaseModel):
+    status: Optional[Literal["candidate", "active", "retired"]] = None
+    scope: Optional[Literal["assistant", "platform"]] = None
+    agent_id: Optional[str] = None
+    content: Optional[str] = None
+
+
 class AdminWidgetUser(BaseModel):
     """A distinct widget user (logged-in external user or anonymous visitor)
     for the admin user filter, with how many conversations they own."""

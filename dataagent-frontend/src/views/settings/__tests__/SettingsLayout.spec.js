@@ -39,8 +39,9 @@ describe('SettingsLayout', () => {
 
     expect(text).toContain('Agent 能力')
     expect(text).toContain('接入')
+    expect(text).toContain('运营')
     expect(text).toContain('评测')
-    for (const label of ['Skills', 'MCP 服务', '模型管理', 'Widget 接入', '评测集', '评测结果']) {
+    for (const label of ['Skills', 'MCP 服务', '模型管理', 'Widget 接入', '用户反馈', '经验库', '评测集', '评测结果']) {
       expect(text).toContain(label)
     }
   })
@@ -56,7 +57,7 @@ describe('SettingsLayout', () => {
     expect(text).toContain('Skills')
     expect(text).toContain('MCP 服务')
     expect(text).toContain('Agent 能力')
-    for (const hidden of ['模型管理', 'Widget 接入', '评测集', '评测结果', '接入', '评测']) {
+    for (const hidden of ['模型管理', 'Widget 接入', '用户反馈', '经验库', '评测集', '评测结果', '接入', '运营', '评测']) {
       expect(text).not.toContain(hidden)
     }
   })
