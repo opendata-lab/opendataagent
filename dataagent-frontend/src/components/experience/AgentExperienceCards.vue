@@ -2,6 +2,13 @@
   <section class="agent-entries" aria-label="知识与记忆">
     <el-alert v-if="error" type="error" :closable="false"><template #title>{{ error }} <el-button link @click="load">重新加载</el-button></template></el-alert>
     <div v-loading="loading">
+      <!-- The always-on budget only matters when it is exceeded or injection is
+           off, so a notice replaces a permanent bar. -->
+      <div v-if="loaded" class="injection-notes">
+        <p v-if="preview.skipped_ids.length" class="warn">{{ preview.skipped_ids.length }} 条始终注入内容超出 {{ preview.budget }} 字额度，未注入。可改为按需读取或精简内容。</p>
+        <p v-if="!preview.injection_enabled" class="muted">部署配置未开启注入，以下为开启后的内容。</p>
+        <el-button link type="primary" @click="previewOpen = true">预览注入内容</el-button>
+      </div>
       <section v-for="kind in ['knowledge', 'memory']" :key="kind" class="entry-card">
         <header><h3>{{ kind === 'knowledge' ? '知识' : '记忆' }}</h3><el-button link type="primary" @click="manage(kind)">管理</el-button></header>
         <p v-if="kind === 'memory' && preview.pending_count" class="muted">{{ preview.pending_count }} 条待审核</p>
@@ -16,14 +23,6 @@
           </ul>
           <p v-if="!entries(kind, mode).length" class="muted empty">暂无{{ mode === 'always' ? '始终注入' : '按需读取' }}的条目</p>
         </template>
-      </section>
-      <section v-if="loaded" class="injection-budget">
-        <div class="budget-label"><strong>始终注入额度</strong><span>{{ preview.used }} / {{ preview.budget }} 字</span></div>
-        <el-progress :percentage="Math.min(100, preview.used / preview.budget * 100)" :show-text="false" :stroke-width="6" />
-        <p class="muted">知识和记忆共用；全局优先。按需读取不占此额度。</p>
-        <p v-if="preview.skipped_ids.length" class="muted">{{ preview.skipped_ids.length }} 条始终注入内容超出额度，已跳过。</p>
-        <p v-if="!preview.injection_enabled" class="muted">部署配置未开启注入，以下为开启后的内容预览。</p>
-        <el-button link type="primary" @click="previewOpen = true">预览注入内容</el-button>
       </section>
     </div>
     <ExperienceDrawer v-model="drawerOpen" readonly :item="selected" :agents="[{ agent_id: agentId, name: agentName }]" :digest-agent-id="preview.digest_agent_id || ''" />
@@ -57,14 +56,14 @@ onBeforeUnmount(() => { sequence++ })
 <style scoped>
 .agent-entries { padding: 0 16px 20px; }
 .entry-card { border-top: 1px solid #dbe3ef; padding: 18px 0; }
-header, .budget-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h3 { font-size: 14px; margin: 0; } h4 { color: #64748b; font-size: 12px; font-weight: 500; margin: 16px 0 6px; }
 ul { margin: 0; padding: 0; list-style: none; }
 li button { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border: 0; border-radius: 4px; width: 100%; background: transparent; padding: 8px 0; text-align: left; color: #1f2d3d; cursor: pointer; }
 li button:hover { background: #f4f7fb; } li span { min-width: 0; overflow-wrap: anywhere; } small { color: #64748b; white-space: nowrap; }
 li button:focus-visible { outline: 2px solid #2563eb; } .skipped span { color: #64748b; }
 .muted { color: #64748b; font-size: 12px; line-height: 1.6; margin: 8px 0; } .empty { margin: 0; }
-.injection-budget { border-top: 1px solid #dbe3ef; padding-top: 16px; font-size: 12px; }
-.budget-label { margin-bottom: 10px; } .budget-label span { font-variant-numeric: tabular-nums; }
+.injection-notes { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 12px; padding: 8px 0; }
+.injection-notes p { flex: 1 1 100%; margin: 0; font-size: 12px; line-height: 1.6; } .warn { color: #b45309; }
 .prompt-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: 13px; line-height: 1.7; }
 </style>
