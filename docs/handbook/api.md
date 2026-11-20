@@ -68,3 +68,17 @@ POST /tasks/deliver-message
 | `POST` | `/tasks/{task_id}/question-answer` | 回答运行时向用户提出的问题 |
 
 `suspended` 表示任务在等待审批或回答，处理后自动继续。
+
+## 单助手 MCP
+
+连接助手详情页提供的 `https://<host>/api/v1/remote-agents/<agent_id>/mcp`。该地址使用 Streamable HTTP 和 OAuth 资源令牌，绑定一个发布助手。调用者在 MCP 客户端完成首次授权。
+
+| 工具 | 用法 |
+| --- | --- |
+| `ask` | 传 `question`、`request_key`，续聊时带已有 `thread_id`。首问自动建会话。原请求重试用相同键和相同参数。会话已有在途任务时返回 `thread_busy` 和该任务的 `run_id`。等待约 8 秒仍未完成时返回 `in_progress`。 |
+| `list_threads` | 按 `query` 搜索标题，传可选的 `page`、`page_size`。只返回登录用户在这个助手下的会话（网页、Widget 和 MCP）。 |
+| `get_thread` | 传 `thread_id` 和可选分页参数，读取最新在前的消息。 |
+| `get_run` | 传 `run_id` 取结果。状态为 `in_progress` 时，按 `retry_after_ms` 轮询。完成后返回 `answered`（含 `answer`、`message_id` 和本轮生成文件的 `files`）、`failed` 或 `cancelled`。 |
+| `feedback` | 传 `thread_id`、`message_id` 和 `rating`（`like` 或 `dislike`），与网页点赞点踩相同。 |
+
+`files` 是网页会话文件面板里的同一批文件，下载地址使用同一 MCP 令牌，并按助手、会话和用户检查访问权限。参见 [部署文档](../../deploy/README.md#单助手-mcp-发布)。

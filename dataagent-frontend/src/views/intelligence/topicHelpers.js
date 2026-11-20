@@ -7,7 +7,7 @@ export function normalizeTopic(topic) {
   return {
     topic_id: String(topic?.topic_id || ''),
     title: String(topic?.title || '新话题'),
-    source: topic?.source === 'widget' ? 'widget' : 'web',
+    source: ['widget', 'remote'].includes(topic?.source) ? topic.source : 'web',
     agent_id: String(topic?.agent_id || rawAgent?.agent_id || ''),
     agent: rawAgent
       ? {
@@ -32,6 +32,8 @@ export function normalizeTopic(topic) {
       .filter((key) => topic?.[key]).map((key) => [key, String(topic[key])])),
   }
 }
+
+export const TOPIC_SOURCE_LABELS = Object.freeze({ web: '平台', widget: 'Widget', remote: 'MCP' })
 
 // Descending by recency: updated_at, falling back to created_at.
 export function compareTopicsByRecency(a, b) {

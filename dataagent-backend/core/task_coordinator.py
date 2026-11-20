@@ -232,6 +232,7 @@ class TaskCoordinator:
                         # snapshot: a single-user topic should honor the user's most
                         # recent choice. The mode is then stable for the whole run.
                         permission_mode=self.store.get_topic_permission_mode(topic_id),
+                        interactive=bool(task.get("interactive", True)),
                     ),
                     is_cancel_requested=lambda: self._task_stop_reason(task_id, lease_lost),
                 )

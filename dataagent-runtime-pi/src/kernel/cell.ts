@@ -142,8 +142,12 @@ export class Cell {
     let limitDenial: string | null = null;
     let mcpBridge: McpBridgeResult | null = null;
     let activeToolTimer: NodeJS.Timeout | null = null;
+    // A non-interactive run (the published MCP endpoint) has nobody to answer a
+    // question or approve an operation: it gets no interaction tools, and an
+    // operation that would wait for approval is denied instead.
+    const interactive = init.interactive !== false;
     // Plan mode holds the listed tools until the user approves a plan.
-    const planMode = init.permission_mode === "plan";
+    const planMode = interactive && init.permission_mode === "plan";
     let planApproved = Boolean(init.plan_approved);
     let parked: CellRunResult["interaction"];
     let sdk: { session: AgentSession; manager: SessionManager } | undefined;
@@ -196,7 +200,8 @@ export class Cell {
           parameters: Type.Object({ plan: Type.String() }),
           execute: async (id: string, args: unknown) => park("plan", id, args as Record<string, unknown>) }] : []),
       ];
-      if (init.allow_questions === false) interactionTools.splice(0, 1);
+      if (!interactive) interactionTools.length = 0;
+      else if (init.allow_questions === false) interactionTools.splice(0, 1);
       sdk = await createDataAgentSession(init, model, streamFn,
         [...baseTools, ...mcpBridge.tools, ...interactionTools] as ToolDefinition[]);
       const agent = sdk.session.agent;
@@ -346,10 +351,14 @@ export class Cell {
           const hints = mcpAnnotations.get(toolName);
           const isMcp = mcpAnnotations.has(toolName);
           const write = isMcp && (hints?.readOnlyHint !== true || hints?.destructiveHint === true);
+          const mode = planApproved ? "acceptEdits" : init.permission_mode ?? "default";
+          const needsApproval = write && mode !== "bypassPermissions" && (mode !== "acceptEdits" || hints?.destructiveHint === true);
           const reason =
             planMode && !planApproved && (write || ["write", "edit"].includes(toolName))
               ? `计划模式：批准计划前不能调用 ${toolName}。先调用 ExitPlanMode 提交计划，批准后再执行。`
-              : null;
+              : !interactive && needsApproval
+                ? `${toolName} 需要用户确认，当前入口无法确认，未执行。`
+                : null;
           if (reason) {
             emit(
               sm.createEvent("tool.denied", {
@@ -363,8 +372,7 @@ export class Cell {
             );
             return { block: true, reason };
           }
-          const mode = planApproved ? "acceptEdits" : init.permission_mode ?? "default";
-          if (write && mode !== "bypassPermissions" && (mode !== "acceptEdits" || hints?.destructiveHint === true)) {
+          if (needsApproval) {
             park("permission", String(context.toolCall?.id ?? ""), {
               tool_name: toolName, arguments: args, annotations: hints, plan_approved: planApproved,
               server_name: (mcpBridge!.tools.find((tool: any) => tool.name === toolName) as any)?.mcpServerName,

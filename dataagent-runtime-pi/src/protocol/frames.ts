@@ -117,6 +117,8 @@ export interface CellInitPayload {
   plan_approved?: boolean;
   turn_offset?: number;
   allow_questions?: boolean;
+  /** false: nobody can answer questions or approve operations during this run. */
+  interactive?: boolean;
   resume_operation?: { request_id: string; payload: { tool_name: string; server_name?: string; server_identity?: string; arguments: Record<string, unknown> };
     operation_status: string; operation_result?: unknown };
   skills: Array<{ name: string; root_path: string }>;

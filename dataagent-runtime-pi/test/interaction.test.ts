@@ -79,3 +79,16 @@ test("plan approval is restored explicitly and gates write/edit across segments"
   assert.equal(approved.terminal_status,"success",approved.error);
   assert.equal(fs.readFileSync(path.join(root,"approved.txt"),"utf8"),"yes");
 });
+
+test("a non-interactive run offers no interaction tools and never parks", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "oda-noninteractive-"));
+  t.after(() => { fs.rmSync(root,{recursive:true,force:true}); fs.rmSync(root+"-results",{recursive:true,force:true}); });
+  let seen: unknown[] = [];
+  const cell = new Cell(scripted([[question], []], messages => { seen = messages; }));
+  const result = await cell.run(init(root,{interactive:false,permission_mode:"plan"}),()=>{});
+  assert.equal(result.terminal_status,"success",result.error);
+  assert.equal(result.interaction,undefined);
+  // The model asked anyway; the tool is not registered, so the call failed and the run went on.
+  assert.match(JSON.stringify(seen),/AskUserQuestion/);
+  assert.doesNotMatch(JSON.stringify(seen),/Waiting for user/);
+});

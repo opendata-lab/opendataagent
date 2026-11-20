@@ -432,11 +432,14 @@ class TopicTaskStore(SessionCheckpointStore):
 
     def _normalize_context(self, context: dict[str, Any] | None = None) -> dict[str, str]:
         ctx = context or {}
-        widget = str(ctx.get("source") or "").strip().lower() == "widget"
+        requested_source = str(ctx.get("source") or "").strip().lower()
+        widget = requested_source == "widget"
         auth_user_id = str(ctx.get("auth_user_id") or "").strip()
         external_user_id = str(ctx.get("external_user_id") or "").strip() if widget and not auth_user_id else ""
         normalized = {
-            "source": "widget" if widget else "web",
+            # 'remote' marks a conversation started from the published MCP endpoint;
+            # it is otherwise an ordinary signed-in conversation.
+            "source": "widget" if widget else ("remote" if requested_source == "remote" else "web"),
             "website_id": str(ctx.get("website_id") or "").strip() if widget else "",
             "external_user_id": external_user_id,
             "visitor_id": str(ctx.get("visitor_id") or "").strip() if widget and not (auth_user_id or external_user_id) else "",
@@ -466,18 +469,21 @@ class TopicTaskStore(SessionCheckpointStore):
             if not is_auth_enabled():
                 return f"COALESCE({prefix}source, 'web') = %s", ["web"]
             if auth_user_id:
+                # A signed-in user's own conversations from every entry point.
+                sources = ["web", "widget", "remote"]
+                source_in = f"{prefix}source IN (%s, %s, %s)"
                 scope = regular_topic
                 if normalized.get("auth_role") == "admin":
                     # Workbench previews are writable by the administrator who created them.
                     scope = f"({regular_topic} OR {prefix}source = %s)"
-                    return f"{prefix}source IN (%s, %s) AND {owner} AND {scope}", ["web", "widget", *owner_params, "web"]
-                return f"{prefix}source IN (%s, %s) AND {owner} AND {scope}", ["web", "widget", *owner_params]
+                    return f"{source_in} AND {owner} AND {scope}", [*sources, *owner_params, "web"]
+                return f"{source_in} AND {owner} AND {scope}", [*sources, *owner_params]
             return f"{prefix}source = %s AND {prefix}auth_user_id = '' AND {prefix}is_agent_preview = 0", ["web"]
 
         if auth_user_id:
             return (
-                f"({prefix}source = %s OR ({prefix}source = %s AND {prefix}website_id = %s)) AND {owner} AND {regular_topic}",
-                ["web", "widget", normalized["website_id"], *owner_params],
+                f"({prefix}source IN (%s, %s) OR ({prefix}source = %s AND {prefix}website_id = %s)) AND {owner} AND {regular_topic}",
+                ["web", "remote", "widget", normalized["website_id"], *owner_params],
             )
 
         legacy = f"{prefix}source = %s AND {prefix}website_id = %s AND {prefix}auth_user_id = ''"
@@ -1501,6 +1507,18 @@ class TopicTaskStore(SessionCheckpointStore):
             conn.close()
         return self.get_message(message_id, context=context)
 
+    def find_task_by_request_key(self, request_key: str) -> dict[str, Any] | None:
+        """The task an idempotent client request created, if any."""
+        self._ensure_ready()
+        conn = self._connect(database=self._schema_name())
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT task_id FROM da_agent_task WHERE request_key = %s", (request_key,))
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        return self.get_task(row["task_id"]) if row else None
+
     def create_task(
         self,
         *,
@@ -1518,6 +1536,8 @@ class TopicTaskStore(SessionCheckpointStore):
         source_schedule_id: str | None = None,
         source_schedule_log_id: str | None = None,
         agent_snapshot: dict[str, Any] | None = None,
+        interactive: bool = True,
+        request_key: str | None = None,
     ) -> dict[str, Any]:
         self._ensure_ready()
         topic = self.get_topic(topic_id) or {}
@@ -1533,8 +1553,8 @@ class TopicTaskStore(SessionCheckpointStore):
                         task_id, topic_id, from_task_id, source_queue_id, source_schedule_id, source_schedule_log_id,
                         task_status, prompt, provider_id, model_name, agent_id, agent_snapshot_json,
                         database_hint, debug_enabled, timeout_seconds, sql_read_timeout_seconds,
-                        sql_write_timeout_seconds, last_event_seq
-                    ) VALUES (%s, %s, %s, %s, %s, %s, 'waiting', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0)
+                        sql_write_timeout_seconds, last_event_seq, interactive, request_key
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 'waiting', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s)
                     """,
                     (
                         task_id,
@@ -1553,6 +1573,8 @@ class TopicTaskStore(SessionCheckpointStore):
                         int(timeout_seconds or 0),
                         int(sql_read_timeout_seconds or 0),
                         int(sql_write_timeout_seconds or 0),
+                        1 if interactive else 0,
+                        request_key,
                     ),
                 )
                 cur.execute(
@@ -1598,7 +1620,7 @@ class TopicTaskStore(SessionCheckpointStore):
                            task.sql_read_timeout_seconds, task.sql_write_timeout_seconds,
                            task.last_event_seq, task.cancel_requested_at, task.started_at,
                            task.heartbeat_at, task.finished_at, task.error_json,
-                           task.created_at, task.updated_at
+                           task.created_at, task.updated_at, task.interactive, task.request_key
                     FROM da_agent_task task
                     JOIN da_agent_topic topic ON topic.topic_id = task.topic_id
                     WHERE task.task_id = %s
@@ -1624,7 +1646,8 @@ class TopicTaskStore(SessionCheckpointStore):
                            agent_id, agent_snapshot_json,
                            database_hint, debug_enabled, timeout_seconds, sql_read_timeout_seconds,
                            sql_write_timeout_seconds, last_event_seq, cancel_requested_at, started_at,
-                           heartbeat_at, finished_at, error_json, created_at, updated_at
+                           heartbeat_at, finished_at, error_json, created_at, updated_at,
+                           interactive, request_key
                     FROM da_agent_task
                     WHERE task_status = 'waiting'
                       AND finished_at IS NULL
@@ -1650,7 +1673,8 @@ class TopicTaskStore(SessionCheckpointStore):
                            agent_id, agent_snapshot_json,
                            database_hint, debug_enabled, timeout_seconds, sql_read_timeout_seconds,
                            sql_write_timeout_seconds, last_event_seq, cancel_requested_at, started_at,
-                           heartbeat_at, finished_at, error_json, created_at, updated_at
+                           heartbeat_at, finished_at, error_json, created_at, updated_at,
+                           interactive, request_key
                     FROM da_agent_task
                     WHERE task_status = 'running'
                       AND finished_at IS NULL
@@ -1676,7 +1700,8 @@ class TopicTaskStore(SessionCheckpointStore):
                            agent_id, agent_snapshot_json,
                            database_hint, debug_enabled, timeout_seconds, sql_read_timeout_seconds,
                            sql_write_timeout_seconds, last_event_seq, cancel_requested_at, started_at,
-                           heartbeat_at, finished_at, error_json, created_at, updated_at
+                           heartbeat_at, finished_at, error_json, created_at, updated_at,
+                           interactive, request_key
                     FROM da_agent_task
                     WHERE task_status IN ('waiting_permission', 'waiting_input')
                       AND finished_at IS NULL
@@ -3420,6 +3445,8 @@ class TopicTaskStore(SessionCheckpointStore):
             "source_schedule_id": str(row.get("source_schedule_id") or "") or None,
             "source_schedule_log_id": str(row.get("source_schedule_log_id") or "") or None,
             "task_status": str(row.get("task_status") or "waiting"),
+            "interactive": bool(row.get("interactive", 1)),
+            "request_key": str(row.get("request_key") or "") or None,
             "prompt": str(row.get("prompt") or ""),
             "provider_id": str(row.get("provider_id") or ""),
             "model": str(row.get("model_name") or ""),

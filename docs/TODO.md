@@ -15,6 +15,17 @@
 - **现状**（2026-11-19，用户提出统一会话和跨端续聊）：同源共享平台会话可使用已验证的账号。此前 Widget 记录只保留站点与宿主用户 ID 或访客 ID，不能据此自动匹配平台身份。
 - **要做**：如需支持独立宿主登录或接入既有记录，先核对生产站点登录和稳定账号标识，并确定可信验证方式及旧数据归属。见[设计](design/2026-11-19-unified-conversation-history-design.md)和[计划](plans/2026-11-19-unified-conversation-history-plan.md)。
 
+### 远端问数助手对外调用
+
+- **现状**（2026-11-19）：单助手 MCP 发布、查询已有会话、原会话续聊、长任务取结果、下载和反馈已在本地验证。OAuth 使用本地签名令牌，模型和下游查询使用测试服务。
+- **要做**：用目标 MCP 客户端和企业身份提供方验收首次登录、令牌续期及带认证下载；用真实模型和 OpenDataWorks 只读服务账号验证「最近 30 天工作流发布次数趋势」和业务数据范围。来源为 2026-11-19 单助手 MCP 实施验收。
+- [设计](design/2026-11-19-remote-assistant-design.md) · [实施计划](plans/2026-11-19-remote-assistant-plan.md)
+
+### Docker 沙箱结果挂载偶发空读
+
+- **现状**（2026-11-19）：本地 Docker 沙箱定向测试首次有一项读取刚生成的缓存结果时得到 0 字节，预期为 20001 字节。当前分支复跑 15 项通过，基线对应单项也通过。
+- **要做**：定位 macOS Docker 环境中刚生成的结果文件偶发空读的原因，并增加稳定复现。来源为 [单助手 MCP 本地验证](plans/2026-11-19-remote-assistant-plan.md#本地验证)。
+
 ### 会话历史分页加载（大会话打开慢）
 
 - **现状**（2026-11-13 实测）：点击会话时前端一次读取 `GET /api/v1/nl2sql/topics/{topic_id}/messages` 的全部历史（默认 `page_size=200`、`order=asc`）。本地某会话 `topic_47941a2a…` 响应 4.0 MB（接口 100–120 ms），其余 0.2–0.7 MB；慢主要在浏览器渲染整段历史。接口已支持 `page`、`page_size`（≤500）、`order=asc|desc`。
@@ -201,3 +212,8 @@
 - **评审后简化方案同步（2026-11-03）**：原“简化待同步”已完成文档修订，采用卡片结束当前段后续聊、大输出自动落盘返回 `/mnt/results` 路径、7 个基础工具固定启用并保留编辑能力；删除延迟批次补跑及专用导出路径，统一迁移、超时清理、协议和验收要求。结果见[设计](design/2026-11-03-agent-runtime-sandbox-architecture-design.md) 3.2–3.7、[计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)和[评审修订](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。后续代码实现及凭据无关验证也已完成，见本节运行时整合记录。
 
 - **运行时与沙箱方案评审补齐（文档修订，2026-11-03）**：对照[静态评审报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)的 R1–R8 共 8 项问题，已在[设计文档](design/2026-11-03-agent-runtime-sandbox-architecture-design.md)（3.2–3.6、4.1–4.2 节）与[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)（Step 0–Step 5）中逐项补齐机制、涉及文件与验收标准；代码实现与凭据无关冒烟已完成，真实 provider 验收单列上方。
+
+### Widget 历史时间显示为负数
+
+- **现状**（2026-11-20，单助手 MCP 端到端测试截图）：平台登录模式的 Widget 历史列表把刚刚的会话显示为「-1天前」，网页 Chat 同一会话显示正常。疑似把无时区的数据库时间按浏览器本地时区解析。
+- **要做**：核对 Widget 相对时间的解析与后端时间格式，与网页 Chat 保持一致。

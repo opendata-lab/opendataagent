@@ -81,6 +81,7 @@ class PiRunContext:
     plan_approved: bool = False
     turn_offset: int = 0
     allow_questions: bool = True
+    interactive: bool = True
     resume_operation: dict[str, Any] | None = None
 
     def to_init_payload(self) -> dict[str, Any]:
@@ -119,6 +120,7 @@ class PiRunContext:
             "plan_approved": self.plan_approved,
             "turn_offset": self.turn_offset,
             "allow_questions": self.allow_questions,
+            "interactive": self.interactive,
             "resume_operation": self.resume_operation,
             "skills": self.skills,
             "mcp_servers": self.mcp_servers,

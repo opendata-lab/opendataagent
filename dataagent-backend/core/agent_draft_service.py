@@ -22,7 +22,11 @@ def configuration(profile: dict[str, Any]) -> dict[str, Any]:
     keys = ("agent_id", "name", "description", "system_prompt",
             "mcp_server_ids", "skill_folders", "max_turns", "plan_timeout_action", "env_vars",
             "visibility", "preset_questions", "is_default", "is_builtin")
-    return {key: profile.get(key, [] if key == "preset_questions" else None) for key in keys}
+    result = {key: profile.get(key, [] if key == "preset_questions" else None) for key in keys}
+    # Kept out of the key list so drafts that predate the switch still compare equal.
+    if profile.get("remote_mcp_enabled") is True:
+        result["remote_mcp_enabled"] = True
+    return result
 
 
 def encode(value: Any) -> str:
@@ -62,7 +66,15 @@ class AgentDraftStore:
         return row
 
     def _result(self, row: dict) -> dict:
-        return {**configuration(json.loads(row["draft_json"])), "revision": int(row["revision"]),
+        from core.remote_mcp_policy import enabled, endpoint
+        draft = json.loads(row["draft_json"])
+        published = json.loads(row.get("published_json") or "{}")
+        available = enabled()
+        return {**configuration(draft), "remote_mcp_enabled": bool(draft.get("remote_mcp_enabled")),
+                "remote_mcp_available": available,
+                # The address works once the switch is published.
+                "remote_mcp_url": endpoint(draft["agent_id"]) if available and published.get("remote_mcp_enabled") else "",
+                "revision": int(row["revision"]),
                 "published_version": int(row["published_version"]),
                 "has_changes": row.get("published_json") != row["draft_json"],
                 "preview_task_id": row.get("preview_task_id"),

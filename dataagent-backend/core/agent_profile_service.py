@@ -211,6 +211,7 @@ def normalize_agent_profile_payload(
         "plan_timeout_action": plan_timeout_action,
         "env_vars": env_vars,
         "visibility": visibility,
+        "remote_mcp_enabled": data.get("remote_mcp_enabled", base.get("remote_mcp_enabled")) is True,
         "preset_questions": preset_questions,
     }
 
@@ -331,6 +332,7 @@ class AgentProfileStore:
             "env_vars": _validate_env_vars(_safe_json_load(row.get("env_vars_json"), {})),
             "visibility": normalize_agent_visibility(_safe_json_load(row.get("visibility_json"), {})),
             "preset_questions": _validate_preset_questions(_safe_json_load(row.get("preset_questions_json"), [])),
+            "remote_mcp_enabled": bool(row.get("remote_mcp_enabled")),
             "is_default": bool(row.get("is_default")),
             "is_builtin": bool(row.get("is_builtin")),
             "created_at": _to_iso(row.get("created_at")),
@@ -348,7 +350,7 @@ class AgentProfileStore:
                     SELECT agent_id, name, description, system_prompt,
                            allowed_tools_json, mcp_server_ids_json, skill_folders_json,
                            max_turns, plan_timeout_action, env_vars_json, visibility_json,
-                           preset_questions_json,
+                           preset_questions_json, remote_mcp_enabled,
                            is_default, is_builtin, created_at, updated_at
                     FROM da_agent_profile
                     ORDER BY is_builtin DESC, is_default DESC, updated_at DESC, created_at DESC
@@ -369,7 +371,7 @@ class AgentProfileStore:
                     SELECT agent_id, name, description, system_prompt,
                            allowed_tools_json, mcp_server_ids_json, skill_folders_json,
                            max_turns, plan_timeout_action, env_vars_json, visibility_json,
-                           preset_questions_json,
+                           preset_questions_json, remote_mcp_enabled,
                            is_default, is_builtin, created_at, updated_at
                     FROM da_agent_profile
                     WHERE agent_id = %s
@@ -395,9 +397,9 @@ class AgentProfileStore:
                 agent_id, name, description, system_prompt,
                 allowed_tools_json, mcp_server_ids_json, skill_folders_json,
                 max_turns, plan_timeout_action, env_vars_json, visibility_json,
-                preset_questions_json,
+                preset_questions_json, remote_mcp_enabled,
                 is_default, is_builtin
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 name = VALUES(name),
                 description = VALUES(description),
@@ -409,6 +411,7 @@ class AgentProfileStore:
                 env_vars_json = VALUES(env_vars_json),
                 visibility_json = VALUES(visibility_json),
                 preset_questions_json = VALUES(preset_questions_json),
+                remote_mcp_enabled = VALUES(remote_mcp_enabled),
                 is_default = VALUES(is_default),
                 is_builtin = VALUES(is_builtin),
                 updated_at = CURRENT_TIMESTAMP
@@ -426,6 +429,7 @@ class AgentProfileStore:
                 _json_dump(_validate_env_vars(profile.get("env_vars") or {})),
                 _json_dump(normalize_agent_visibility(profile.get("visibility") or {})),
                 _json_dump(_validate_preset_questions(profile.get("preset_questions") or [])),
+                1 if profile.get("remote_mcp_enabled") is True else 0,
                 1 if is_default else 0,
                 1 if is_builtin else 0,
             ),
