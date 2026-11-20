@@ -30,13 +30,13 @@ class RemoteMcpError(ValueError):
         self.code = code
 
 
-def _https_url(url: object) -> bool:
+def _http_url(url: object) -> bool:
     try:
         parsed = urlsplit(url) if isinstance(url, str) else None
         valid_port = parsed is not None and (parsed.port is None or parsed.port > 0)
     except ValueError:
         return False
-    return bool(valid_port and parsed.scheme == "https" and parsed.hostname and not parsed.username
+    return bool(valid_port and parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username
                 and not parsed.query and not parsed.fragment)
 
 
@@ -53,8 +53,8 @@ def _provider_metadata(url: str) -> tuple[str, str]:
     except (httpx.HTTPError, ValueError) as exc:
         raise RemoteMcpError("unavailable", "无法读取身份提供方的发现文档") from exc
     issuer, jwks_uri = document.get("issuer"), document.get("jwks_uri")
-    if not (_https_url(issuer) and _https_url(jwks_uri)):
-        raise RemoteMcpError("unavailable", "身份提供方的发现文档缺少 HTTPS 的 issuer 或 jwks_uri")
+    if not (_http_url(issuer) and _http_url(jwks_uri)):
+        raise RemoteMcpError("unavailable", "身份提供方的发现文档缺少有效的 issuer 或 jwks_uri")
     return issuer, jwks_uri
 
 
