@@ -61,4 +61,20 @@ describe('FeedbackView', () => {
     })
     wrapper.unmount()
   })
+
+  it('keeps the newest filter\'s results when an older request answers last', async () => {
+    let releaseOld
+    const wrapper = await mountView()
+    apiMocks.listFeedback.mockImplementationOnce(() => new Promise((resolve) => { releaseOld = () => resolve(page([webRow])) }))
+    apiMocks.listFeedback.mockImplementationOnce(async () => page([widgetRow], { likes: 7 }))
+    wrapper.vm.$.setupState.filters.feedback = 'dislike'
+    await flushPromises()
+    wrapper.vm.$.setupState.filters.feedback = 'like'
+    await flushPromises()
+    releaseOld()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="feedback-counts"]').text()).toContain('点赞 7')
+    expect(wrapper.find('[data-testid="feedback-open-msg-1"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
 })

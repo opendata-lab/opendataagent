@@ -99,7 +99,12 @@ async function loadAgents() {
   }
 }
 
+// Filters can change while a request is in flight; only the newest response
+// may fill the table, counts and loading state.
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const params = { page: page.value, page_size: pageSize }
@@ -110,16 +115,18 @@ async function load() {
       params.end = `${filters.range[1]} 23:59:59`
     }
     const data = await dataagentApi.listFeedback(params)
+    if (seq !== loadSeq) return
     items.value = Array.isArray(data?.items) ? data.items : []
     total.value = Number(data?.total || 0)
     counts.likes = Number(data?.likes || 0)
     counts.dislikes = Number(data?.dislikes || 0)
   } catch (error) {
+    if (seq !== loadSeq) return
     items.value = []
     // The request layer already toasts most failures.
     if (!error?.__odwNotified) ElMessage.error(error?.message || '加载用户反馈失败')
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
