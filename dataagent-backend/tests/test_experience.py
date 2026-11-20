@@ -71,28 +71,30 @@ def _task(store, *, question, answer, status="finished", feedback="", agent=AGEN
 
 
 def test_review_flow_and_prompt_section(store):
-    candidate = experience.create_experience(scope="assistant", agent_id=AGENT, content="TEST-先确认关联键唯一",
-                                             updated_by="digest", status="candidate", source_task_ids=["t1"])
-    assert experience.experience_prompt_section(AGENT) == ""  # candidates never reach prompts
-
-    experience.update_experience(candidate["experience_id"], updated_by="admin", status="active")
-    platform = experience.create_experience(scope="platform", agent_id=None, content="TEST-平台规范", updated_by="admin")
-    experience.create_experience(scope="assistant", agent_id="agent_other", content="TEST-别的助手", updated_by="admin")
-
-    assert experience.active_experiences_for(AGENT)[:2] == ["TEST-平台规范", "TEST-先确认关联键唯一"]
-    section = experience.experience_prompt_section(AGENT)
-    assert "# 历史经验参考" in section and "TEST-别的助手" not in section
-
-    experience.update_experience(platform["experience_id"], updated_by="admin", status="retired")
-    assert "TEST-平台规范" not in experience.experience_prompt_section(AGENT)
-    listed = experience.list_experiences(status="active", agent_id=AGENT)
-    assert [item["content"] for item in listed["items"]] == ["TEST-先确认关联键唯一"]
-    assert listed["items"][0]["updated_by"] == "admin"
-
+    candidate = experience.create_experience(kind="memory", title="TEST-title", when_text="关联时",
+        scope="agent", agent_id=AGENT, body="TEST-先确认关联键唯一", updated_by="digest", status="pending", source_task_ids=["t1"])
+    assert experience.build_injection(experience.active_experiences_for(AGENT))["prompt"] == ""
+    experience.update_experience(candidate["experience_id"], updated_by="admin", status="active", inject_mode="always")
+    platform = experience.create_experience(kind="knowledge", title="TEST-global", when_text="任何任务",
+        scope="global", agent_id=AGENT, body="TEST-平台规范", updated_by="admin", inject_mode="always")
+    assert platform["agent_id"] is None
+    experience.create_experience(kind="knowledge", title="TEST-other", when_text="任意时",
+        scope="agent", agent_id="agent_other", body="TEST-别的助手", updated_by="admin")
+    section = experience.build_injection(experience.active_experiences_for(AGENT))["prompt"]
+    assert section.index("TEST-平台规范") < section.index("TEST-先确认关联键唯一")
+    assert "TEST-别的助手" not in section
+    experience.update_experience(platform["experience_id"], updated_by="admin", status="disabled")
+    assert "TEST-平台规范" not in experience.build_injection(experience.active_experiences_for(AGENT))["prompt"]
+    listed = experience.list_experiences(kind="memory", status="active", agent_id=AGENT, keyword="TEST-title")
+    assert [item["body"] for item in listed["items"]] == ["TEST-先确认关联键唯一"]
+    assert experience.list_experiences(kind="knowledge", scope="global", keyword="no-match")["total"] == 0
+    experience.update_experience(candidate["experience_id"], updated_by="admin", status="disabled")
+    experience.update_experience(candidate["experience_id"], updated_by="admin", status="active", title="TEST-edited")
     with pytest.raises(ValueError):
-        experience.create_experience(scope="assistant", agent_id=None, content="TEST-x", updated_by="admin")
-    with pytest.raises(ValueError):
-        experience.create_experience(scope="platform", agent_id=None, content="x" * 501, updated_by="admin")
+        experience.update_experience(candidate["experience_id"], updated_by="admin", status="pending")
+    assert experience.delete_experience(candidate["experience_id"])
+    assert experience.get_experience(candidate["experience_id"]) is None
+    assert not experience.delete_experience(candidate["experience_id"])
 
 
 def test_session_records_include_steps_put_dislikes_first_and_drop_tables(store):
@@ -146,18 +148,18 @@ def test_daily_digest_starts_once_per_agent_and_collects_candidates(store, monke
 
     output = tmp_path / "experience_candidates.json"
     output.write_text(json.dumps([
-        {"content": "TEST-候选一", "source_task_ids": ["a"]},
-        {"content": "", "source_task_ids": []},
-        {"content": "TEST-" + "长" * 600},
-        *[{"content": f"TEST-候选{i}"} for i in range(2, 8)],
+        {"title": "TEST-title", "when": "测试条件", "body": "TEST-候选一", "source_task_ids": ["a"]},
+        {"title": "TEST-title", "when": "测试条件", "body": "", "source_task_ids": []},
+        {"title": "TEST-title", "when": "测试条件", "body": "TEST-" + "长" * 600},
+        *[{"title": "TEST-title", "when": "测试条件", "body": f"TEST-候选{i}"} for i in range(2, 8)],
     ], ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(topic_files, "safe_workspace_file", lambda topic_id, rel: output)
 
     stored = experience.collect_candidates(topics[0], "task_digest_fake")
-    candidates = experience.list_experiences(status="candidate", agent_id=AGENT)["items"]
+    candidates = experience.list_experiences(status="pending", agent_id=AGENT)["items"]
     assert stored == len(candidates) == 3  # five read, two invalid skipped
     assert {item["digest_topic_id"] for item in candidates} == {topics[0]}
-    assert all(item["scope"] == "assistant" for item in candidates)
+    assert all(item["scope"] == "agent" for item in candidates)
 
 
 def test_follow_up_without_new_output_collects_nothing_and_sources_resolve(store, monkeypatch, tmp_path):
@@ -165,7 +167,7 @@ def test_follow_up_without_new_output_collects_nothing_and_sources_resolve(store
 
     topic_id, task_id = _task(store, question="来源问题", answer="x")
     output = tmp_path / "experience_candidates.json"
-    output.write_text(json.dumps([{"content": "TEST-来源候选", "source_task_ids": [task_id, "task_gone"]}]), encoding="utf-8")
+    output.write_text(json.dumps([{"title": "TEST-title", "when": "测试条件", "body": "TEST-来源候选", "source_task_ids": [task_id, "task_gone"]}]), encoding="utf-8")
     monkeypatch.setattr(topic_files, "safe_workspace_file", lambda topic_id, rel: output)
     monkeypatch.setattr(experience, "_digest_target_agent", lambda topic: AGENT)
     monkeypatch.setattr(store, "get_topic", lambda tid, context=None: {"topic_id": tid, "agent_id": experience.DIGEST_AGENT_ID})
@@ -174,12 +176,12 @@ def test_follow_up_without_new_output_collects_nothing_and_sources_resolve(store
     assert experience.collect_candidates("topic_digest", "task_digest") == 1
     # A follow-up rewrites the file, keeping the reviewed entry and adding one:
     # only the new one is imported.
-    output.write_text(json.dumps([{"content": "TEST-来源候选"}, {"content": "TEST-追问新增"}]), encoding="utf-8")
+    output.write_text(json.dumps([{"title": "TEST-title", "when": "测试条件", "body": "TEST-来源候选"}, {"title": "TEST-title", "when": "测试条件", "body": "TEST-追问新增"}]), encoding="utf-8")
     assert experience.collect_candidates("topic_digest", "task_followup") == 1
-    contents = sorted(item["content"] for item in experience.list_experiences(agent_id=AGENT)["items"])
+    contents = sorted(item["body"] for item in experience.list_experiences(agent_id=AGENT)["items"])
     assert contents == ["TEST-来源候选", "TEST-追问新增"]
 
-    item = next(i for i in experience.list_experiences(agent_id=AGENT)["items"] if i["content"] == "TEST-来源候选")
+    item = next(i for i in experience.list_experiences(agent_id=AGENT)["items"] if i["body"] == "TEST-来源候选")
     [source] = item["sources"]
     assert (source["task_id"], source["topic_id"], source["agent_id"], source["source"]) == (task_id, topic_id, AGENT, "web")
     assert source["question"] == "来源问题" and source["answer"] == "x"

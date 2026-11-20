@@ -712,16 +712,18 @@ class ExperienceSource(BaseModel):
 
 
 class Experience(BaseModel):
-    """An experience-library entry: a digest candidate or an approved entry."""
-
     experience_id: str
-    scope: Literal["assistant", "platform"]
+    kind: Literal["knowledge", "memory"]
+    title: str
+    when_text: str
+    body: str
+    scope: Literal["agent", "global"]
     agent_id: Optional[str] = None
-    content: str
+    inject_mode: Literal["always", "on_demand"]
     source_task_ids: List[str] = Field(default_factory=list)
-    sources: List[ExperienceSource] = Field(default_factory=list)  # resolved in listings only
+    sources: List[ExperienceSource] = Field(default_factory=list)
     digest_topic_id: Optional[str] = None
-    status: Literal["candidate", "active", "retired"]
+    status: Literal["pending", "active", "disabled"]
     updated_by: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -738,16 +740,23 @@ class ExperiencePage(BaseModel):
 
 
 class ExperienceCreateRequest(BaseModel):
-    scope: Literal["assistant", "platform"] = "platform"
+    kind: Literal["knowledge"] = "knowledge"
+    scope: Literal["agent", "global"] = "global"
     agent_id: Optional[str] = None
-    content: str
+    title: str = Field(min_length=1, max_length=40)
+    when_text: str = Field(min_length=1, max_length=120)
+    body: str = Field(min_length=1, max_length=500)
+    inject_mode: Literal["always", "on_demand"] = "always"
 
 
 class ExperienceUpdateRequest(BaseModel):
-    status: Optional[Literal["candidate", "active", "retired"]] = None
-    scope: Optional[Literal["assistant", "platform"]] = None
+    status: Optional[Literal["pending", "active", "disabled"]] = None
+    scope: Optional[Literal["agent", "global"]] = None
     agent_id: Optional[str] = None
-    content: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    when_text: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    body: Optional[str] = Field(default=None, min_length=1, max_length=500)
+    inject_mode: Optional[Literal["always", "on_demand"]] = None
 
 
 class AdminWidgetUser(BaseModel):
