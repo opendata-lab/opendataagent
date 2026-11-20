@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     # console only, as in source runs; Compose sets it to the mounted logs/.
     dataagent_log_dir: str = ""
     dataagent_log_level: str = "INFO"
+    # Experience library (docs/design/2026-11-19-experience-library-design.md).
+    # Both off by default: the daily digest spends model tokens, and approved
+    # entries only reach prompts once an operator turns injection on.
+    dataagent_experience_digest_enabled: bool = False
+    dataagent_experience_digest_hour: int = Field(default=2, ge=0, le=23)  # on the database clock
+    dataagent_experience_injection_enabled: bool = False
     dataagent_context_max_inline_result_bytes: int = 16 * 1024
     dataagent_context_protect_tail_turns: int = 6
     dataagent_context_max_context_tokens: int = 64_000

@@ -6,11 +6,13 @@ import os
 import socket
 import uuid
 from contextlib import suppress
+from datetime import timedelta
 from typing import Any
 
 import redis.asyncio as redis
 
 from config import get_settings
+from core.experience import DIGEST_AGENT_ID, collect_candidates, db_now, run_daily_digest
 from core.logging_config import task_id_var, topic_id_var
 from core.task_control import PARKED_TASK_STATUSES, CancelReason
 from core.task_submission_service import compute_next_run_at, current_utc_naive, submit_message_task
@@ -37,6 +39,7 @@ class TaskCoordinator:
         self._queue_task: asyncio.Task | None = None
         self._recovery_task: asyncio.Task | None = None
         self._schedule_task: asyncio.Task | None = None
+        self._experience_task: asyncio.Task | None = None
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._queued_task_ids: set[str] = set()
         self._closing = False
@@ -56,13 +59,16 @@ class TaskCoordinator:
         self._queue_task = asyncio.create_task(self._queue_loop(), name="dataagent-task-queue")
         self._recovery_task = asyncio.create_task(self._recovery_loop(), name="dataagent-task-recovery")
         self._schedule_task = asyncio.create_task(self._schedule_loop(), name="dataagent-task-schedule")
+        if self.settings.dataagent_experience_digest_enabled:
+            self._experience_task = asyncio.create_task(self._experience_loop(), name="dataagent-experience-digest")
 
     async def stop(self) -> None:
         self._closing = True
-        for task in (self._queue_task, self._recovery_task, self._schedule_task, *self._active_tasks.values()):
+        loops = (self._queue_task, self._recovery_task, self._schedule_task, self._experience_task)
+        for task in (*loops, *self._active_tasks.values()):
             if task is not None:
                 task.cancel()
-        for task in (self._queue_task, self._recovery_task, self._schedule_task, *self._active_tasks.values()):
+        for task in (*loops, *self._active_tasks.values()):
             if task is not None:
                 with suppress(asyncio.CancelledError):
                     await task
@@ -273,6 +279,11 @@ class TaskCoordinator:
                         True,
                     )
                 self.store.finish_task(task_id=task_id, task_status=result.task_status, error=result.error)
+                if str(task.get("agent_id") or "") == DIGEST_AGENT_ID and result.task_status == "finished":
+                    try:
+                        collect_candidates(topic_id, task_id)
+                    except Exception:
+                        logger.exception("experience.digest.collect_failed topic_id=%s task_id=%s", topic_id, task_id)
                 logger.info(
                     "task.run.finished task_id=%s topic_id=%s provider=%s model=%s task_status=%s error_code=%s",
                     task_id,
@@ -498,6 +509,26 @@ class TaskCoordinator:
                     error=error,
                 )
             self.store.finish_task(task_id=task_id, task_status="suspended", error=error)
+
+    async def _experience_loop(self) -> None:
+        """Once a day after the configured hour, start digests for the previous day.
+
+        Starting is idempotent (one digest conversation per assistant and day,
+        found by title), and a Redis key keeps several instances from racing.
+        """
+        while not self._closing:
+            try:
+                now = await asyncio.to_thread(db_now)
+                if now.hour >= int(self.settings.dataagent_experience_digest_hour):
+                    day = (now - timedelta(days=1)).date()
+                    claimed = await self._redis.set(f"da:experience:digest:{day.isoformat()}", self.instance_id, ex=86400, nx=True)
+                    if claimed:
+                        await run_daily_digest(day)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Experience digest loop failed")
+            await asyncio.sleep(600)
 
     async def _schedule_loop(self) -> None:
         interval = max(5, int(self.settings.schedule_scan_interval_seconds or 10))

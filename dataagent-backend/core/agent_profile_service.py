@@ -533,6 +533,11 @@ def _seed_builtin_agent_profiles() -> None:
     if not default_profile:
         default_profile = store.save_profile(default_agent_payload())
     store.backfill_default_bindings(default_profile)
+    # The built-in 经验总结 agent behind the daily experience digest.
+    from core.experience import DIGEST_AGENT_ID, digest_agent_payload
+
+    if not store.get_profile(DIGEST_AGENT_ID):
+        store.save_profile(digest_agent_payload())
 
 
 def ensure_builtin_agent_profiles() -> None:

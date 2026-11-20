@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import math
 import time
 import uuid
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from config import get_settings, resolve_run_limits
+from core.experience import DIGEST_AGENT_ID, experience_prompt_section
 from core.agent_profile_service import normalize_agent_snapshot, normalize_permission_mode
 from core.agent_runtime import (_build_system_prompt, _build_mcp_servers, _build_provider_env,
     resolve_agent_skill_runtime, resolve_enabled_skill_runtime, resolve_runtime_provider_selection)
@@ -23,6 +25,9 @@ from core.sandbox_config import build_sandbox_config
 from core.topic_task_store import get_topic_task_store
 from core.topic_workspace import prepare_topic_workspace
 from core.task_status import from_engine_outcome
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class TaskExecutionInput:
@@ -137,6 +142,13 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
     system_prompt += "\nWorking directory: /mnt/workspace. Saved results: /mnt/results (read-only). Skills: /opt/skills (read-only)."
     if not saved and params.history:
         system_prompt += "\nHistorical result caches at workspace/.dataagent/results were migrated to /mnt/results with the same filenames."
+    agent_id = str((snapshot or {}).get("agent_id") or "")
+    if cfg.dataagent_experience_injection_enabled and agent_id and agent_id != DIGEST_AGENT_ID:
+        try:
+            system_prompt += await asyncio.to_thread(experience_prompt_section, agent_id)
+        except Exception:
+            # Experience is advisory; a lookup failure must not fail the task.
+            logger.warning("experience.inject_failed task_id=%s agent_id=%s", params.task_id, agent_id, exc_info=True)
     if mode == "plan" and not plan_approved:
         system_prompt += "\n" + (Path(__file__).parents[1]/"prompts/plan_mode.md").read_text()
     await asyncio.to_thread(store.record_task_system_prompt,params.task_id,system_prompt)
