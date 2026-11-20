@@ -1,79 +1,29 @@
-# 经验库与用户反馈设计
+# 知识、记忆与用户反馈设计
 
-日期：2026-11-19
-状态：待评审
-关联计划：[2026-11-19-experience-library-plan.md](../plans/2026-11-19-experience-library-plan.md)
-调研：Codex 只读调研，记录在维护者的交接目录 `2026-11-19-codex-experience-library/result.md`；本设计按用户决定做了调整（每日批处理、MySQL、自建）。
+日期：2026-11-19（按已批准的 knowledge-memory prototype 更新）
+计划：[implementation plan](../plans/2026-11-19-experience-library-plan.md)
 
-## 1. 现状
+## 当前状态与问题
 
-- **点赞点踩已保存但没人用。** 主站和 Widget 的按钮调用 `PUT /topics/{topic}/messages/{message}/feedback`，写入 `da_agent_message.feedback`（`like`、`dislike` 或空）。读取它的只有消息列表本身；没有管理接口、统计、评测或提示词使用它。管理员看不到。Agent 详情页（调试预览）故意去掉了评价按钮；OntoFoundry 的对话组件没有评价能力。
-- **助手不会从历史中学习。** 每个任务只用助手的系统提示词和技能；同类错误会在不同会话里重复。
-- **相关基础设施已有**：内置助手（`is_builtin`）、后端发起任务（`submit_message_task`）、会话工作区文件上传与任务结束时的生成文件比对（`topic_files`）、系统提示词构建（`task_executor._build_system_prompt`）。
+现有经验库把人工知识和每日总结混在一起，仅有正文、助手/平台范围和候选状态；全文注入上限为 2000 字。新界面将人工维护的「知识」与自动提炼的「记忆」分开，审核时可以完整编辑。
 
-## 2. 目标
+## 产品与接口
 
-1. 管理员能看到每个助手的点赞点踩，并能打开对应会话。
-2. 每天读一遍前一天的会话记录和评价，提炼出候选经验；管理员审核后，下一次任务带上，让助手少犯重复的错误。
-3. 经验可追溯、可停用，不含业务数据。
+- 主导航新增管理员专属 `/feedback`、`/knowledge`、`/memories`，记忆显示待审核总数。不设组标题。设置移除运营、评测菜单，保留评测路由，移除旧经验库页面与路由。
+- 复用 `da_agent_experience` 与管理员 `/api/v1/nl2sql-admin/experiences` API：新增 `kind`（knowledge/memory）、`title`（40 字）、`when_text`（120 字）、`inject_mode`（always/on_demand）；正文仍存 `content`，API 为 `body`（500 字）。范围为 global/agent，无用户级。
+- 新迁移将旧行全部转 memory，candidate → pending、retired → disabled，platform → global、assistant → agent；旧正文保留，以前 40 字补标题，适用条件留空供审核补充，默认按需读取。
+- POST 仅能新增 active 知识；记忆仅每日总结收取器创建，初始 pending、原助手范围、on_demand。PATCH 可编辑或通过/忽略/停用/恢复；知识不能 pending，已审核记忆不能退回 pending。DELETE 为永久删除。
+- 列表支持 kind、status、scope、agent_id、关键词及分页。预览 API `/experiences/injection-preview?agent_id=...` 返回同一算法计算的生效条目、待审核数、预算及实际提示词。
+- 管理 API 继续复用 router 的 require_admin。页面和智能体编辑页卡片只对管理员开放；卡片只读，点击打开详情抽屉，通过管理链接跳至独立页面。不扩展编辑角色权限。
+- 列表用 Element Plus，标题与灰色适用条件组成一行记录，安静的范围、注入方式、时间列，编辑 + 更多操作；详情与编辑用抽屉。记忆待审核采用左队列、右编辑表单，来源总结与主站会话可跳转，Widget 来源只展示问题和回答。
 
-不做：自动修改助手提示词或技能源码；把业务事实或口径存成经验。
+## 注入与运行时
 
-## 3. 选型
+- 保留现有部署开关（默认关闭）与每日总结调度。内置总结助手不消费这些条目；技能输出 title、when、body、source_task_ids。
+- active 知识和记忆共用 1000 字 always 额度；全局优先，各范围内按更新时间与 ID 降序。预算计入实际条目全文格式（标题、适用条件、正文及分隔符），超额条目跳过并记录日志，后续短条目仍可入选。
+- on_demand 按更新时间与 ID 降序最多 30 条，提示词仅列 `- 标题（适用条件）→ 路径`。全文写到本次执行段独享的工作区同级目录，复用 sandbox skills 只读 bind 挂载到 `/opt/skills/_knowledge_memory/`，不作为技能注册、不增加挂载类型。执行段结束后清理，避免跨任务覆盖与过期内容残留。
+- 提示词明确条目不得覆盖当前请求、技能约定或权限规则。卡片预算和预览均使用运行时相同函数；开关关闭时明确标示不注入。
 
-| 方案 | 结论 |
-| --- | --- |
-| 自建（参考 ReasoningBank、ACE：读完整轨迹，成功与失败都提炼成条目） | **采用**。不加依赖和服务；总结用一个内置助手完成，过程可查看。 |
-| mem0 库 | 不采用。需要向量库和内网嵌入模型；抽取偏用户事实而非任务方法；站点、用户隔离要另外映射。 |
-| Letta 服务 | 不采用。多一个服务，且自带的 Agent 模型与 DataAgent 重叠。 |
-| Pi 社区扩展（pi-hindsight、pi-self-learning 等） | 不直接用。它们面向单机单用户，存本地文件；DataAgent 的 Pi 会话也不加载扩展。借鉴其做法：独立复盘、条目有上限、失败当约束。 |
+## 范围与取舍
 
-存储用 DataAgent 现有的 MySQL：会话、任务和评价都在这里，DataAgent 主站、Widget 和 OntoFoundry（其建模运行就是 DataAgent 任务）都能用上，不新增数据库。
-
-## 4. 方案
-
-原则：先做最小可用。每日总结只产生候选，由管理员审核后生效；人工把关替代了自动生效所需的身份可信判定、多用户计数和防投毒机制。
-
-### 4.1 用户反馈菜单
-
-- `da_agent_message` 增加 `feedback_at`，评价变更时更新。
-- 管理接口 `GET /admin/feedback`：列出带评价的回答（时间、助手、评价、问题与回答摘要），按助手、评价、时间筛选，附计数。
-- 管理端独立菜单「用户反馈」。主站会话直接链接到现有会话页 `/chat?agent_id=<助手>&topic_id=<会话>&message_id=<消息>`：管理员角色本来就能看到所有主站会话（`topic_task_store._topic_context_predicate`）；链接必须带 `agent_id`，否则会话页在当前助手不同时会取消定位。Widget 会话不能按地址打开（会话页的全量视图只读且不读地址参数），列表中直接展示问题和回答摘要。
-
-### 4.2 内置「经验总结」助手
-
-总结本身是一个内置助手的一次普通会话，管理员可以打开看它读了什么、怎么想的，也可以在会话里追问。
-
-- **内置助手**：与默认助手一样由系统预置（`is_builtin`，`agent_experience_digest`），带一个技能 `experience-digest`（总结方法与输出格式），不挂 MCP；可见范围为「指定用户且名单为空」，即只有管理员可见。
-- **会话记录文件**：后台每天（`DATAAGENT_EXPERIENCE_DIGEST_HOUR`，默认 2 点；日期和小时按数据库时钟计算，因为任务时间由数据库以自身时区写入）对前一天有终态任务的每个助手，生成一份 `sessions-<日期>.md`：每个任务包含用户问题、中间过程（每次工具调用的工具名、输入如 SQL 或命令、成败、输出开头若干行、错误信息）、最终回答和评价。点踩和失败的任务排前；单个任务、单份文件都有长度上限，超出截断并注明。排除管理端调试预览会话。参考：ReasoningBank、ACE、pi-hindsight 都基于完整轨迹（动作与观察、执行痕迹、会话过程）提炼，经验主要来自中间过程。
-- **发起总结**：为每个助手新建一个主站会话「经验总结 · <助手名> · <日期>」，归属系统用户 `system:experience-digest`：普通用户看不到，管理员在自己的会话列表里就能看到并打开、追问。上传该文件，发一条消息让内置助手按技能总结；助手把候选写到 `output/experience_candidates.json`。
-- **收取候选**：任务结束时后端读取该文件（任务结束时已有生成文件比对），校验后写入经验表，状态为「候选」，记录来源会话。同一助手同一天已发起过就跳过；没跑成的日子不补。
-- 中间过程可能含业务数据；技能要求候选只写方法、不写数据值，且所有候选都要经管理员审核才生效。
-
-### 4.3 经验表与审核
-
-一张表 `da_agent_experience`：`experience_id`、`scope`（`assistant` 或 `platform`）、`agent_id`（助手级）、`content`、`source_task_ids`、`digest_topic_id`（来源总结会话）、`status`（`candidate`、`active`、`retired`）、`updated_by`、时间戳。
-
-管理端「经验库」菜单：查看候选、它的总结会话和来源会话，选择「设为助手级」「设为平台级」或「忽略」；可编辑、停用；可直接新增平台级经验。
-
-### 4.4 注入
-
-- 构建任务系统提示词时（与 Pi 的 `before_agent_start` 钩子同一时机），附加「历史经验参考」一节：该助手的生效助手级经验加全部平台级经验，平台级在前，合计最多 2000 字；说明它不能覆盖当前请求、技能约定和权限规则。
-- 开关用部署配置：`DATAAGENT_EXPERIENCE_DIGEST_ENABLED`（每日总结，会消耗模型额度）与 `DATAAGENT_EXPERIENCE_INJECTION_ENABLED`（注入），都默认关闭；经验库页面只读展示两者状态。管理设置存储只接受固定白名单键，放在部署配置更简单。
-
-### 4.5 不做（以后按需）
-
-个人级经验、自动生效、语义检索与按问题挑选、运行中查询工具、效果评估、口径回流 OntoFoundry。
-
-## 5. 对 OntoFoundry 的影响
-
-无。建模运行是 DataAgent 任务，生效的经验由 DataAgent 注入。业务口径不进经验库，审核时忽略。
-
-## 6. 分步交付
-
-1. 用户反馈菜单。
-2. 内置经验总结助手与每日作业、经验表与经验库菜单、注入与开关。
-
-## 7. 已确认
-
-存 DataAgent 的 MySQL；自建；每日总结；用户反馈为独立菜单；一张表；经验由管理员审核后生效，分助手级和平台级；4.5 所列暂不做。
+涉及 Vue 管理界面、FastAPI、MySQL Alembic、DataAgent task executor、总结技能；不修改 Pi 协议或 Docker 挂载实现。不做个人记忆、语义检索、自动审批、编辑角色写权限。删除后条目不再存在；总结后续重写同样候选可能重新收取。

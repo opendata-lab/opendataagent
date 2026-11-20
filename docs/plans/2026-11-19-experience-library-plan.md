@@ -1,26 +1,21 @@
-# 经验库与用户反馈计划
+# 知识、记忆与用户反馈实施计划
 
 日期：2026-11-19
-设计：[2026-11-19-experience-library-design.md](../design/2026-11-19-experience-library-design.md)
-涉及：后端、管理端前端、内置技能。OntoFoundry 与 Pi 运行时无改动。
+设计：[design](../design/2026-11-19-experience-library-design.md)
 
-## 第一步：用户反馈菜单
+1. 新迁移 000037 重塑经验字段、范围与状态；保留旧正文与来源，提供降级映射。
+2. 更新 core/experience.py、schemas.py 与 admin_routes.py：CRUD、筛选、校验、硬删除、共享注入预览，更新总结技能与收取器。
+3. task_executor 构建本段只读按需文件，复用 skills bind 挂载，写入同源提示词并在段结束后清理。
+4. 主布局加入管理导航与待审核计数，设置移除运营和评测菜单；新知识/记忆页、共享表单/来源/详情、智能体只读卡片和预览。
+5. 更新针对性后端和前端回归：字段、审核流、权限、范围隔离、预算跳过、30 条上限、只读挂载集成、菜单和表单。
 
-1. 迁移：`da_agent_message.feedback_at`；评价变更时写入。
-2. `GET /admin/feedback`：筛选与计数，需管理员。
-3. 管理端菜单「用户反馈」：主站会话链接到会话页（管理员已可查看），Widget 会话展示摘要。
-4. 测试：权限、筛选、计数。
+## 验证
 
-## 第二步：经验库
-
-1. 迁移：`da_agent_experience`。
-2. 内置助手「经验总结」与技能 `experience-digest`。
-3. 会话记录文件生成：任务问题、中间过程、回答、评价，长度上限，排除预览。
-4. 每日作业：按助手建会话、上传文件、发起任务；任务结束读取 `output/experience_candidates.json` 写入候选；同日不重复。
-5. 管理接口与菜单「经验库」：审核（助手级、平台级、忽略）、编辑、停用、新增，链接总结会话。
-6. 注入：`_build_system_prompt` 附加生效经验（2000 字上限）；全局开关。
-7. 测试：记录文件内容与截断、预览排除、同日不重复、候选校验与入库、审核流转、注入与开关。
+依任务约束仅运行：
+- `cd dataagent-backend && .venv-py313/bin/python -m pytest tests/test_admin_routes.py tests/test_experience*.py -q`，使用已有 MySQL opt-in 配置。
+- `nvm use` 后在 dataagent-frontend 执行 `npx vitest run --cache=false <touched specs>` 与 `npm run build`。
+- 结果：Python 3.13 在本机 Docker MySQL（`127.0.0.1:3326`）的独立临时库通过 39 项目标测试，另通过存量记录迁移和回退检查。Node 22.22.0 下前端 82 项目标测试和生产构建通过。尚未运行使用 Redis、真实模型、Docker 沙箱和 SSE 的完整智能问数烟测，见[待办](../TODO.md#知识与记忆验证补全)。
 
 ## 上线与回退
 
-开关默认关闭；关闭即停止注入，表保留不影响业务。
+先部署并执行 Alembic，再启动新后端/前端；无需额外服务或 Pi 重编译。部署开关仍控制总结/注入。回退先关闭注入，回退代码并降级迁移；知识与记忆降级后统一按旧经验解释，新增元数据会丢失，先备份表。仅本分支小步提交，不推送、不建 PR。
