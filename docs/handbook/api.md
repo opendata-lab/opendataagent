@@ -71,7 +71,7 @@ POST /tasks/deliver-message
 
 ## 单助手 MCP
 
-连接助手详情页提供的 `https://<host>/api/v1/remote-agents/<agent_id>/mcp`。该地址使用 Streamable HTTP 和 OAuth 资源令牌，绑定一个发布助手。调用者在 MCP 客户端完成首次授权。
+连接助手详情页提供的 `https://<host>/api/v1/remote-agents/<agent_id>/mcp`，`<host>` 为打开详情页时的域名。该地址使用 Streamable HTTP 和 OAuth 资源令牌，绑定一个发布助手。调用者在 MCP 客户端完成首次授权。
 
 | 工具 | 用法 |
 | --- | --- |

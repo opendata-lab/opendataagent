@@ -18,7 +18,7 @@ MCP 只是又一个入口。用户通过 MCP 发起的会话，和网页、Widge
 
 | 方面 | 做法 | 复用的现有能力 |
 | --- | --- | --- |
-| 身份 | 校验令牌的签发方、有效期、`aud`（该助手地址，或共用的 `https://<host>/api/v1/remote-agents`）和 `dataagent:ask` scope，主体映射为 `<provider>:<sub>`，角色按现有管理员名单判定 | 网页 OAuth 登录的用户 ID 与 `resolve_oauth_role` |
+| 身份 | 校验令牌的签发方、有效期、`aud`（该助手地址，或共用的 `https://<host>/api/v1/remote-agents`）和 `dataagent:ask` scope，主体映射为 `<provider>:<sub>`，角色按现有管理员名单判定。签发方和签名公钥取自网页登录 OAuth 配置里的 `server_metadata_url`（OIDC 发现文档），`<host>` 取调用方访问的地址，不另设配置 | 网页 OAuth 登录的配置、用户 ID 与 `resolve_oauth_role` |
 | 能否使用 | 助手已发布且开启「MCP 访问」，并对该用户可见 | 助手可见范围 `agent_visible_to` |
 | 会话 | 首问按网页同样的方式建会话，来源 `remote`；续聊传 `thread_id`，只能是自己在该助手下的会话。网页、MCP 和平台登录模式的 Widget 都列出本人的这些会话 | `create_topic`、本人会话判断 |
 | 问数 | 提交为普通任务，标记 `interactive=false` | `submit_message_task`、协调器、执行器 |
@@ -62,6 +62,7 @@ MCP 只是又一个入口。用户通过 MCP 发起的会话，和网页、Widge
 - 迁移 `20261119_000038`：`da_agent_profile` 增加 `remote_mcp_enabled`；`da_agent_task` 增加 `interactive`（默认 1）和 `request_key`（可空，唯一）。
 - `api/remote_mcp.py`：5 个工具、资源元数据和下载路由，均调用现有存储与提交服务。
 - `core/remote_mcp_policy.py`：令牌校验与身份映射。
+- 配置：只在 `OAUTH_PROVIDERS[0]["remote_app"]` 增加可选的 `server_metadata_url`；没有 MCP 专用环境变量。对外地址由请求的 `Host` 和 `X-Forwarded-Proto` 得出，后端容器的 uvicorn 信任代理传来的协议头。助手详情接口返回路径 `remote_mcp_path`，页面用当前域名拼出完整地址。
 - 运行时 `interactive` 开关：`cell.ts`、`frames.ts`、`pi_runtime.py`、`task_executor.py`，以及 `prompts/non_interactive_mode.md`。
 - 助手编辑页标题右侧：「MCP 访问」开关、地址和复制按钮，发布后地址生效。
 

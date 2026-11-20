@@ -24,4 +24,4 @@ socket_group=$(getent group "$socket_gid" | cut -d: -f1 || true)
 if [ -z "$socket_group" ]; then groupadd -g "$socket_gid" dataagent-docker; socket_group=dataagent-docker; fi
 usermod -g "$runtime_group" -a -G "$socket_group" "$runtime_user"
 gosu "$runtime_user" docker info >/dev/null
-exec gosu "$runtime_user" sh -c 'alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8900'
+exec gosu "$runtime_user" sh -c 'alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8900 --forwarded-allow-ips "*"'

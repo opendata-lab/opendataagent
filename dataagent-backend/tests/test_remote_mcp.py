@@ -20,38 +20,41 @@ def test_remote_tools_have_direct_structured_output():
 def test_mcp_token_maps_to_the_platform_identity_of_a_web_login(monkeypatch):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     origin, issuer = "https://agent.example", "https://sso.example"
-    cfg = SimpleNamespace(remote_mcp_public_origin=origin, remote_mcp_oauth_issuer=issuer,
-                          remote_mcp_oauth_jwks_url=f"{issuer}/keys", remote_mcp_oauth_subject_claim="employee")
-    monkeypatch.setattr(remote_mcp_policy, "get_settings", lambda: cfg)
-    monkeypatch.setattr(remote_mcp_policy, "get_auth_settings",
-                        lambda: SimpleNamespace(oauth=SimpleNamespace(provider_name="example")))
+    discovery = f"{issuer}/.well-known/openid-configuration"
+    monkeypatch.setattr(remote_mcp_policy, "get_auth_settings", lambda: SimpleNamespace(
+        oauth=SimpleNamespace(provider_name="example", server_metadata_url=discovery)))
+    monkeypatch.setattr(remote_mcp_policy, "_provider_metadata",
+                        lambda url: (issuer, f"{issuer}/keys") if url == discovery else None)
     monkeypatch.setattr(remote_mcp_policy, "resolve_oauth_role",
                         lambda provider, subject: "admin" if subject == "Root" else "user")
     monkeypatch.setattr(remote_mcp_policy, "_jwks", lambda _: SimpleNamespace(
         get_signing_key_from_jwt=lambda _: SimpleNamespace(key=key.public_key())))
-    claims = {"iss": issuer, "sub": "oauth-pairwise-subject", "name": "Alice",
-              "aud": remote_mcp_policy.endpoint("agent_one"), "scope": "dataagent:ask openid",
-              "employee": "Alice", "exp": int(time.time()) + 60}
+    claims = {"iss": issuer, "sub": "Alice", "name": "Alice",
+              "aud": remote_mcp_policy.endpoint(origin, "agent_one"), "scope": "dataagent:ask openid",
+              "exp": int(time.time()) + 60}
 
     def token(**overrides):
         return "Bearer " + jwt.encode(claims | overrides, key, algorithm="RS256")
 
-    identity = remote_mcp_policy.verify_identity(token(), "agent_one")
+    identity = remote_mcp_policy.verify_identity(token(), "agent_one", origin)
     assert (identity.user_id, identity.display_name, identity.role) == ("example:Alice", "Alice", "user")
-    assert remote_mcp_policy.verify_identity(token(employee="Root"), "agent_one").role == "admin"
+    assert remote_mcp_policy.verify_identity(token(sub="Root"), "agent_one", origin).role == "admin"
     # An IdP without RFC 8707 issues the shared audience, valid for any assistant URL.
     shared = token(aud="https://agent.example/api/v1/remote-agents")
-    assert remote_mcp_policy.verify_identity(shared, "agent_two").user_id == "example:Alice"
+    assert remote_mcp_policy.verify_identity(shared, "agent_two", origin).user_id == "example:Alice"
     for agent, auth, expected in [
         ("agent_two", token(), "unauthorized"),        # audience is the other assistant's URL
         ("agent_one", token(aud="https://agent.example/elsewhere"), "unauthorized"),
         ("agent_one", token(exp=1), "unauthorized"),
         ("agent_one", token(scope="openid"), "forbidden"),
-        ("agent_one", token(employee=None), "unauthorized"),
+        ("agent_one", token(iss="https://other.example"), "unauthorized"),
+        ("agent_one", token(sub=None), "unauthorized"),
     ]:
         with pytest.raises(remote_mcp_policy.RemoteMcpError) as exc:
-            remote_mcp_policy.verify_identity(auth, agent)
+            remote_mcp_policy.verify_identity(auth, agent, origin)
         assert exc.value.code == expected
+    with pytest.raises(remote_mcp_policy.RemoteMcpError):
+        remote_mcp_policy.verify_identity(token(), "agent_one", "https://other-host.example")
 
 
 def run(coro):
@@ -110,8 +113,7 @@ def store(monkeypatch):
     monkeypatch.setattr(remote_mcp, "submit_message_task", submit)
     monkeypatch.setattr(remote_mcp, "_require_agent_profile", lambda agent_id, context: {"agent_id": agent_id})
     monkeypatch.setattr(remote_mcp, "build_agent_snapshot", lambda profile: profile)
-    monkeypatch.setattr(remote_mcp, "get_settings", lambda: SimpleNamespace(remote_mcp_public_origin="https://agent.example"))
-    token = remote_mcp._caller.set(("a1", ALICE))
+    token = remote_mcp._caller.set(("a1", ALICE, "https://agent.example"))
     yield SimpleNamespace(fake=fake, submitted=submitted)
     remote_mcp._caller.reset(token)
 
@@ -139,3 +141,16 @@ def test_a_busy_thread_is_reported_with_its_running_task(store):
     busy = run(remote_mcp.ask("继续", "key-00000004", thread_id="t-alice"))
     assert busy["error"]["code"] == "thread_busy" and busy["run_id"] == "task-9"
     assert store.submitted == []
+
+
+def test_issuer_and_keys_come_from_the_login_providers_discovery_document(monkeypatch):
+    documents = {"https://sso.example/ok": {"issuer": "https://sso.example", "jwks_uri": "https://sso.example/keys"},
+                 "https://sso.example/plain": {"issuer": "http://sso.example", "jwks_uri": "https://sso.example/keys"}}
+    monkeypatch.setattr(remote_mcp_policy.httpx, "get", lambda url, timeout: SimpleNamespace(
+        raise_for_status=lambda: SimpleNamespace(json=lambda: documents[url])))
+    remote_mcp_policy._provider_metadata.cache_clear()
+    assert remote_mcp_policy._provider_metadata("https://sso.example/ok") == ("https://sso.example", "https://sso.example/keys")
+    with pytest.raises(remote_mcp_policy.RemoteMcpError) as exc:
+        remote_mcp_policy._provider_metadata("https://sso.example/plain")
+    assert exc.value.code == "unavailable"
+    remote_mcp_policy._provider_metadata.cache_clear()

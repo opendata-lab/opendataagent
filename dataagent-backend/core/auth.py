@@ -70,6 +70,9 @@ class OAuthSettings:
     redirect_uri: str = ""
     response_type: str = "code"
     grant_type: str = "authorization_code"
+    # OIDC discovery document. Optional; publishing assistants over MCP reads the
+    # issuer and signing keys from it to verify the tokens MCP clients present.
+    server_metadata_url: str = ""
 
     @property
     def configured(self) -> bool:
@@ -203,6 +206,7 @@ def _parse_oauth_providers(raw: Any) -> OAuthSettings:
         redirect_uri=str(remote_app.get("redirect_uri") or ""),
         response_type=str(remote_app.get("response_type") or "code"),
         grant_type=str(remote_app.get("grant_type") or "authorization_code"),
+        server_metadata_url=str(remote_app.get("server_metadata_url") or ""),
     )
     if not oauth.provider_name:
         raise AuthConfigError("OAUTH_PROVIDERS 条目缺少 name")
@@ -264,6 +268,9 @@ def _parse_oauth_providers(raw: Any) -> OAuthSettings:
             "OAUTH_PROVIDERS.remote_app.redirect_uri 必须是绝对 URL，且路径严格为 "
             f"{expected_callback_path!r}"
         )
+    metadata = urlparse(oauth.server_metadata_url)
+    if oauth.server_metadata_url and (metadata.scheme != "https" or not metadata.netloc or metadata.fragment):
+        raise AuthConfigError("OAUTH_PROVIDERS.remote_app.server_metadata_url 必须是绝对 HTTPS URL")
     return oauth
 
 
