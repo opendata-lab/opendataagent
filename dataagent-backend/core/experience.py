@@ -124,7 +124,11 @@ def _attach_sources(items: list[dict[str, Any]]) -> None:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT k.task_id, t.topic_id, t.source, COALESCE(NULLIF(k.agent_id, ''), t.agent_id) AS agent_id
+                    SELECT k.task_id, t.topic_id, t.source, COALESCE(NULLIF(k.agent_id, ''), t.agent_id) AS agent_id,
+                           (SELECT LEFT(u.content, 300) FROM da_agent_message u WHERE u.task_id = k.task_id
+                             AND u.sender_type = 'user' ORDER BY u.seq_id ASC LIMIT 1) AS question,
+                           (SELECT LEFT(a.content, 600) FROM da_agent_message a WHERE a.task_id = k.task_id
+                             AND a.sender_type = 'assistant' ORDER BY a.seq_id DESC LIMIT 1) AS answer
                     FROM da_agent_task k JOIN da_agent_topic t ON t.topic_id = k.topic_id
                     WHERE k.task_id IN ({", ".join(["%s"] * len(task_ids))})
                     """,
@@ -136,7 +140,9 @@ def _attach_sources(items: list[dict[str, Any]]) -> None:
     for item in items:
         item["sources"] = [
             {"task_id": task_id, "topic_id": str(row["topic_id"]), "agent_id": str(row.get("agent_id") or ""),
-             "source": str(row.get("source") or "web")}
+             "source": str(row.get("source") or "web"),
+             # Widget conversations cannot be opened by URL; the page shows these instead.
+             "question": str(row.get("question") or ""), "answer": str(row.get("answer") or "")}
             for task_id in item["source_task_ids"] if (row := found.get(task_id))
         ]
 
@@ -443,15 +449,23 @@ async def _start_digest(store, digest_agent: dict[str, Any], agent_id: str, day:
     return topic["topic_id"]
 
 
-def collect_candidates(topic_id: str, task_id: str, changed_files: list[str] | None = None) -> int:
-    """Store the candidates a finished digest task wrote; returns how many.
+def candidates_changed(topic_id: str, before: dict[str, Any]) -> bool:
+    """Whether a task wrote or changed the candidates file, against the
+    workspace snapshot taken before it ran (the attachment list is capped,
+    so it cannot be used for this)."""
+    from core.topic_files import snapshot_workspace_state
 
-    Only when this task wrote or changed the candidates file: a follow-up
-    question in the digest conversation must not re-import entries an admin
-    already reviewed.
+    current = snapshot_workspace_state(topic_id).get(CANDIDATES_FILE)
+    return current is not None and current != (before or {}).get(CANDIDATES_FILE)
+
+
+def collect_candidates(topic_id: str, task_id: str) -> int:
+    """Store the candidates a finished digest task wrote; returns how many new.
+
+    The caller checks candidates_changed first. A follow-up that rewrites the
+    file keeps earlier entries in it; those are skipped by content, so entries
+    an admin already reviewed are not re-imported.
     """
-    if changed_files is not None and CANDIDATES_FILE not in changed_files:
-        return 0
     from core.topic_files import safe_workspace_file
 
     store = get_topic_task_store()
@@ -466,22 +480,37 @@ def collect_candidates(topic_id: str, task_id: str, changed_files: list[str] | N
         return 0
     items = payload.get("candidates") if isinstance(payload, dict) else payload
     target = _digest_target_agent(topic)
+    seen = _contents_from_digest(topic_id)
     stored = 0
     for item in (items if isinstance(items, list) else [])[:MAX_CANDIDATES]:
         if not isinstance(item, dict):
             continue
+        content = " ".join(str(item.get("content") or "").split())
+        if content in seen:
+            continue
         sources = item.get("source_task_ids")
         try:
             create_experience(
-                scope="assistant", agent_id=target, content=item.get("content"), updated_by=DIGEST_USER_ID,
+                scope="assistant", agent_id=target, content=content, updated_by=DIGEST_USER_ID,
                 status="candidate", digest_topic_id=topic_id,
                 source_task_ids=[str(s) for s in sources][:20] if isinstance(sources, list) else [],
             )
             stored += 1
+            seen.add(content)
         except ValueError:
             continue
     logger.info("experience.digest.collected topic_id=%s task_id=%s candidates=%s", topic_id, task_id, stored)
     return stored
+
+
+def _contents_from_digest(topic_id: str) -> set[str]:
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT content FROM da_agent_experience WHERE digest_topic_id = %s", (topic_id,))
+            return {str(row["content"]) for row in cur.fetchall() or []}
+    finally:
+        conn.close()
 
 
 def _digest_target_agent(topic: dict[str, Any]) -> str | None:

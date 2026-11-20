@@ -171,12 +171,30 @@ def test_follow_up_without_new_output_collects_nothing_and_sources_resolve(store
     monkeypatch.setattr(store, "get_topic", lambda tid, context=None: {"topic_id": tid, "agent_id": experience.DIGEST_AGENT_ID})
     monkeypatch.setattr(experience, "get_topic_task_store", lambda: store)
 
-    # A follow-up in the digest conversation that did not rewrite the file.
-    assert experience.collect_candidates("topic_digest", "task_followup", ["output/answer.md"]) == 0
-    assert experience.collect_candidates("topic_digest", "task_digest", [experience.CANDIDATES_FILE]) == 1
+    assert experience.collect_candidates("topic_digest", "task_digest") == 1
+    # A follow-up rewrites the file, keeping the reviewed entry and adding one:
+    # only the new one is imported.
+    output.write_text(json.dumps([{"content": "TEST-来源候选"}, {"content": "TEST-追问新增"}]), encoding="utf-8")
+    assert experience.collect_candidates("topic_digest", "task_followup") == 1
+    contents = sorted(item["content"] for item in experience.list_experiences(agent_id=AGENT)["items"])
+    assert contents == ["TEST-来源候选", "TEST-追问新增"]
 
-    item = experience.list_experiences(status="candidate", agent_id=AGENT)["items"][0]
-    assert item["sources"] == [{"task_id": task_id, "topic_id": topic_id, "agent_id": AGENT, "source": "web"}]
+    item = next(i for i in experience.list_experiences(agent_id=AGENT)["items"] if i["content"] == "TEST-来源候选")
+    [source] = item["sources"]
+    assert (source["task_id"], source["topic_id"], source["agent_id"], source["source"]) == (task_id, topic_id, AGENT, "web")
+    assert source["question"] == "来源问题" and source["answer"] == "x"
+
+
+def test_candidates_changed_compares_against_the_pre_task_snapshot(monkeypatch):
+    from core import topic_files
+
+    path = experience.CANDIDATES_FILE
+    monkeypatch.setattr(topic_files, "snapshot_workspace_state", lambda topic_id: {path: (10, "t2"), "output/a.md": (1, "t1")})
+    assert experience.candidates_changed("topic", {}) is True                    # written by this task
+    assert experience.candidates_changed("topic", {path: (10, "t1")}) is True    # rewritten
+    assert experience.candidates_changed("topic", {path: (10, "t2")}) is False   # untouched by this task
+    monkeypatch.setattr(topic_files, "snapshot_workspace_state", lambda topic_id: {})
+    assert experience.candidates_changed("topic", {}) is False                   # never written
 
 
 def test_one_assistant_failing_does_not_stop_the_others(monkeypatch):

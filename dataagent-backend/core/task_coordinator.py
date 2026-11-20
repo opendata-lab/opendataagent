@@ -12,7 +12,7 @@ from typing import Any
 import redis.asyncio as redis
 
 from config import get_settings
-from core.experience import DIGEST_AGENT_ID, collect_candidates, db_now, run_daily_digest
+from core.experience import DIGEST_AGENT_ID, candidates_changed, collect_candidates, db_now, run_daily_digest
 from core.logging_config import task_id_var, topic_id_var
 from core.task_control import PARKED_TASK_STATUSES, CancelReason
 from core.task_submission_service import compute_next_run_at, current_utc_naive, submit_message_task
@@ -281,7 +281,8 @@ class TaskCoordinator:
                 self.store.finish_task(task_id=task_id, task_status=result.task_status, error=result.error)
                 if str(task.get("agent_id") or "") == DIGEST_AGENT_ID and result.task_status == "finished":
                     try:
-                        collect_candidates(topic_id, task_id, [str(item.get("rel_path") or "") for item in attachments])
+                        if candidates_changed(topic_id, workspace_before):
+                            collect_candidates(topic_id, task_id)
                     except Exception:
                         logger.exception("experience.digest.collect_failed topic_id=%s task_id=%s", topic_id, task_id)
                 logger.info(

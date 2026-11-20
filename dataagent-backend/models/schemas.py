@@ -707,6 +707,8 @@ class ExperienceSource(BaseModel):
     topic_id: str
     agent_id: str = ""
     source: str = "web"          # 'web' can be opened in /chat; 'widget' cannot
+    question: str = ""           # shown for Widget sources, which cannot be opened
+    answer: str = ""
 
 
 class Experience(BaseModel):

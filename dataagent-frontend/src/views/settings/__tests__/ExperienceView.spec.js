@@ -34,7 +34,7 @@ const candidateRow = {
   source_task_ids: ['task-1', 'task-2'],
   sources: [
     { task_id: 'task-1', topic_id: 'topic-src-1', agent_id: 'agent_a', source: 'web' },
-    { task_id: 'task-2', topic_id: 'topic-src-2', agent_id: 'agent_a', source: 'widget' }
+    { task_id: 'task-2', topic_id: 'topic-src-2', agent_id: 'agent_a', source: 'widget', question: '各渠道退款率', answer: '退款率偏高' }
   ],
   digest_topic_id: 'topic-digest-1',
   status: 'candidate',
@@ -182,6 +182,8 @@ describe('ExperienceView', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="experience-source-task-2"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('Widget 来源 2')
+    await wrapper.get('[data-testid="experience-widget-source-task-2"]').trigger('mouseenter')
+    await vi.waitFor(() => expect(document.body.textContent).toContain('各渠道退款率'))
     await wrapper.get('[data-testid="experience-source-task-1"]').trigger('click')
     expect(push).toHaveBeenCalledWith({ path: '/chat', query: { agent_id: 'agent_a', topic_id: 'topic-src-1' } })
     wrapper.unmount()

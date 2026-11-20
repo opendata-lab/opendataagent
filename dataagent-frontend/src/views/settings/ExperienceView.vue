@@ -71,7 +71,7 @@
               查看总结会话
             </el-link>
             <!-- The tasks the entry was drawn from: main-site ones open in /chat;
-                 Widget conversations cannot be opened by URL, so they are only named. -->
+                 Widget conversations cannot be opened by URL; hovering shows their question and answer. -->
             <template v-for="(src, index) in row.sources || []" :key="src.task_id">
               <el-link
                 v-if="src.source === 'web'"
@@ -79,7 +79,13 @@
                 :data-testid="`experience-source-${src.task_id}`"
                 @click="openSource(src)"
               >来源 {{ index + 1 }}</el-link>
-              <el-tag v-else size="small" type="info" title="Widget 会话无法从这里打开">Widget 来源 {{ index + 1 }}</el-tag>
+              <el-tooltip v-else placement="top" :show-after="200" popper-class="experience-view__source-tip">
+                <template #content>
+                  <div><strong>问题：</strong>{{ src.question || '—' }}</div>
+                  <div><strong>回答：</strong>{{ src.answer || '—' }}</div>
+                </template>
+                <el-tag size="small" type="info" :data-testid="`experience-widget-source-${src.task_id}`">Widget 来源 {{ index + 1 }}</el-tag>
+              </el-tooltip>
             </template>
             <span v-if="!row.digest_topic_id && !sourceTaskCount(row)" class="experience-view__source-muted">人工新增</span>
           </div>
@@ -480,4 +486,9 @@ onMounted(() => {
 .experience-view__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
 .experience-view__actions :deep(.el-button + .el-button) { margin-left: 0; }
 .experience-view__pager { justify-content: flex-end; }
+</style>
+
+<style>
+/* Tooltip content is teleported out of the scoped tree. */
+.experience-view__source-tip { max-width: 420px; white-space: pre-wrap; line-height: 1.5; }
 </style>
