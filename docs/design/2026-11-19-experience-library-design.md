@@ -38,7 +38,7 @@
 
 - `da_agent_message` 增加 `feedback_at`，评价变更时更新。
 - 管理接口 `GET /admin/feedback`：列出带评价的回答（时间、助手、评价、问题与回答摘要），按助手、评价、时间筛选，附计数。
-- 管理端独立菜单「用户反馈」。主站会话直接链接到现有会话页：管理员角色本来就能看到所有主站会话（`topic_task_store._topic_context_predicate`）；Widget 会话管理员看不到，列表中直接展示问题和回答摘要。
+- 管理端独立菜单「用户反馈」。主站会话直接链接到现有会话页 `/chat?agent_id=<助手>&topic_id=<会话>&message_id=<消息>`：管理员角色本来就能看到所有主站会话（`topic_task_store._topic_context_predicate`）；链接必须带 `agent_id`，否则会话页在当前助手不同时会取消定位。Widget 会话不能按地址打开（会话页的全量视图只读且不读地址参数），列表中直接展示问题和回答摘要。
 
 ### 4.2 内置「经验总结」助手
 

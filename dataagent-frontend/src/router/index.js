@@ -147,6 +147,12 @@ export const routes = [
         meta: { tab: 'widget', title: 'Widget 接入', adminOnly: true }
       },
       {
+        path: 'feedback',
+        name: 'UserFeedback',
+        component: () => import('@/views/settings/FeedbackView.vue'),
+        meta: { tab: 'feedback', title: '用户反馈', adminOnly: true }
+      },
+      {
         path: 'evaluations',
         name: 'EvaluationSets',
         component: () => import('@/views/evaluation/EvaluationSetsView.vue'),

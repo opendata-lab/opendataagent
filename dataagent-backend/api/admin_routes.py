@@ -59,6 +59,7 @@ from models.schemas import (
     AdminAuthUserList,
     AdminSettingsResponse,
     AdminSettingsUpdateRequest,
+    AdminFeedbackPage,
     AdminWidgetTopicPage,
     AdminWidgetTopicSummary,
     AdminWidgetUser,
@@ -319,6 +320,28 @@ def import_mcp_servers_endpoint(payload: dict[str, Any] = Body(...)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"imported": imported}
+
+
+@settings_router.get("/feedback", response_model=AdminFeedbackPage)
+def admin_list_feedback(
+    agent_id: str | None = Query(default=None),
+    feedback: str = Query(default="", pattern="^(|like|dislike)$"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+):
+    """Rated answers across all users and sources, newest rating first, with
+    like/dislike counts for the agent and time range. Backs the 用户反馈 menu."""
+    payload = get_topic_task_store().list_message_feedback(
+        agent_id=agent_id or None,
+        feedback=feedback or None,
+        start=start,
+        end=end,
+        page=page,
+        page_size=page_size,
+    )
+    return AdminFeedbackPage.model_validate(payload)
 
 
 @settings_router.get("/topics", response_model=AdminWidgetTopicPage)

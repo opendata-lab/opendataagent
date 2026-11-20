@@ -182,6 +182,11 @@ export const dataagentApi = {
     return dataagentRequest.get('/v1/dataagent/agents/capabilities')
   },
 
+  /** Rated answers across all users, newest first, with like/dislike counts. Admin only. */
+  listFeedback(params = {}) {
+    return dataagentRequest.get('/v1/nl2sql-admin/feedback', { params })
+  },
+
   listAdminTopics(params = {}) {
     return dataagentRequest.get('/v1/nl2sql-admin/topics', { params })
   },

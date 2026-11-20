@@ -397,6 +397,27 @@ describe('NL2SqlChatV2 URL location', () => {
     await vi.waitFor(() => expect(focusMessage).toHaveBeenCalledWith('a2'))
   })
 
+  // The admin 用户反馈 menu links to conversations of any assistant. The link
+  // names the assistant too: without it the page cancels the jump whenever a
+  // different assistant is selected.
+  it('opens another assistant\'s topic that is not in the list when the URL names its assistant', async () => {
+    apiMocks.agentApi.listAgents.mockResolvedValue([
+      { agent_id: 'agent_default', name: 'Default agent', description: 'General help', is_default: true },
+      { agent_id: 'agent_sales', name: 'Sales agent', description: 'Sales analysis', is_default: false }
+    ])
+    apiMocks.topicApi.listTopics.mockResolvedValue({ list: [] })
+    apiMocks.topicApi.getTopic.mockResolvedValue({ ...makeTopic('topic-other', 'Rated topic'), agent_id: 'agent_sales' })
+    routeState.query = { agent_id: 'agent_sales', topic_id: 'topic-other', message_id: 'a9' }
+
+    const wrapper = mountChat()
+    await flushPromises()
+    await nextTick()
+
+    expect(apiMocks.topicApi.getTopic).toHaveBeenCalledWith('topic-other')
+    await vi.waitFor(() => expect(apiMocks.topicApi.getTopicMessages).toHaveBeenCalledWith('topic-other', { page: 1, page_size: 500 }))
+    expect(wrapper.find('.v2-session-item.active .v2-session-title').text()).toBe('Rated topic')
+  })
+
   // Message-action hover/focus visibility lives in SDK `messageActions.spec.js`.
 
   it('shows status dots in the session list driven by current_task_status', async () => {
