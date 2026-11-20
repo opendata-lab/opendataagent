@@ -676,6 +676,32 @@ class AdminWidgetTopicPage(BaseModel):
     page_size: int = 20
 
 
+class AdminFeedbackItem(BaseModel):
+    """One rated answer in the admin 用户反馈 menu."""
+
+    message_id: str
+    topic_id: str
+    task_id: Optional[str] = None
+    agent_id: str = ""
+    feedback: str
+    feedback_at: str = ""
+    question: str = ""
+    answer: str = ""
+    topic_title: str = ""
+    source: str = "web"          # 'web' links to /chat; 'widget' is shown inline only
+    website_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class AdminFeedbackPage(BaseModel):
+    items: List[AdminFeedbackItem] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+    likes: int = 0               # in the agent/time range, regardless of the rating filter
+    dislikes: int = 0
+
+
 class AdminWidgetUser(BaseModel):
     """A distinct widget user (logged-in external user or anonymous visitor)
     for the admin user filter, with how many conversations they own."""

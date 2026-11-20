@@ -1322,6 +1322,97 @@ class TopicTaskStore(SessionCheckpointStore):
             conn.close()
         return self._normalize_message_row(row, history=history_by_task_id.get(task_id)) if row else None
 
+    def list_message_feedback(
+        self,
+        *,
+        agent_id: str | None = None,
+        feedback: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict[str, Any]:
+        """Rated answers for the admin 用户反馈 menu, newest rating first.
+
+        Admin-only and unscoped by design: it reads ratings across all users and
+        both sources. The question is the first user message of the same task.
+        """
+        self._ensure_ready()
+        where = ["m.sender_type = 'assistant'", "m.show_in_ui = 1", "m.feedback IN ('like', 'dislike')"]
+        params: list[Any] = []
+        if agent_id:
+            where.append("COALESCE(NULLIF(k.agent_id, ''), t.agent_id) = %s")
+            params.append(agent_id)
+        # Same string bounds as admin_list_topics: inclusive on both ends.
+        if str(start or "").strip():
+            where.append("COALESCE(m.feedback_at, m.updated_at) >= %s")
+            params.append(str(start).strip())
+        if str(end or "").strip():
+            where.append("COALESCE(m.feedback_at, m.updated_at) <= %s")
+            params.append(str(end).strip())
+        base_where = " AND ".join(where)
+        list_where = base_where + (" AND m.feedback = %s" if feedback else "")
+        list_params = [*params, *([feedback] if feedback else [])]
+        page = max(1, int(page or 1))
+        page_size = min(100, max(1, int(page_size or 20)))
+        joins = """
+            FROM da_agent_message m
+            JOIN da_agent_topic t ON t.topic_id = m.topic_id
+            LEFT JOIN da_agent_task k ON k.task_id = m.task_id
+        """
+        conn = self._connect(database=self._schema_name())
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT m.feedback, COUNT(*) AS n {joins} WHERE {base_where} GROUP BY m.feedback", params)
+                counts = {str(row["feedback"]): int(row["n"]) for row in cur.fetchall() or []}
+                cur.execute(f"SELECT COUNT(*) AS n {joins} WHERE {list_where}", list_params)
+                total = int((cur.fetchone() or {}).get("n") or 0)
+                cur.execute(
+                    f"""
+                    SELECT m.message_id, m.topic_id, m.task_id, m.feedback,
+                           COALESCE(m.feedback_at, m.updated_at) AS feedback_at,
+                           LEFT(m.content, 300) AS answer,
+                           t.title, t.source, t.website_id, t.auth_user_id, t.external_user_id,
+                           COALESCE(NULLIF(k.agent_id, ''), t.agent_id) AS agent_id,
+                           (SELECT LEFT(u.content, 300) FROM da_agent_message u
+                             WHERE u.task_id = m.task_id AND u.sender_type = 'user'
+                             ORDER BY u.seq_id ASC, u.created_at ASC LIMIT 1) AS question
+                    {joins}
+                    WHERE {list_where}
+                    ORDER BY feedback_at DESC, m.message_id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*list_params, page_size, (page - 1) * page_size],
+                )
+                rows = cur.fetchall() or []
+        finally:
+            conn.close()
+        items = [
+            {
+                "message_id": str(row.get("message_id") or ""),
+                "topic_id": str(row.get("topic_id") or ""),
+                "task_id": str(row.get("task_id") or "") or None,
+                "agent_id": str(row.get("agent_id") or ""),
+                "feedback": str(row.get("feedback") or ""),
+                "feedback_at": _to_iso(row.get("feedback_at")),
+                "question": str(row.get("question") or ""),
+                "answer": str(row.get("answer") or ""),
+                "topic_title": str(row.get("title") or ""),
+                "source": str(row.get("source") or "web"),
+                "website_id": str(row.get("website_id") or "") or None,
+                "user_id": str(row.get("auth_user_id") or row.get("external_user_id") or "") or None,
+            }
+            for row in rows
+        ]
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "likes": counts.get("like", 0),
+            "dislikes": counts.get("dislike", 0),
+        }
+
     def get_message(self, message_id: str, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
         self._ensure_ready()
         context_sql, context_params = self._topic_context_predicate(context, alias="t")
@@ -1396,6 +1487,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     """
                     UPDATE da_agent_message
                     SET feedback = %s,
+                        feedback_at = CURRENT_TIMESTAMP,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE topic_id = %s
                       AND message_id = %s

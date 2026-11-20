@@ -63,7 +63,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Collection, Connection, Cpu, DataBoard, Monitor, TrendCharts, User } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatLineSquare, Collection, Connection, Cpu, DataBoard, Monitor, TrendCharts, User } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -87,6 +87,11 @@ const GROUPS = [
     title: '接入',
     adminOnly: true,
     items: [{ index: 'widget', label: 'Widget 接入', icon: Monitor, path: '/settings/widget-access' }]
+  },
+  {
+    title: '运营',
+    adminOnly: true,
+    items: [{ index: 'feedback', label: '用户反馈', icon: ChatLineSquare, path: '/settings/feedback' }]
   },
   {
     title: '评测',
