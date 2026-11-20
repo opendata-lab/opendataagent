@@ -4,12 +4,12 @@
 设计：[2026-11-19-experience-library-design.md](../design/2026-11-19-experience-library-design.md)
 涉及：后端、管理端前端、内置技能。OntoFoundry 与 Pi 运行时无改动。
 
-## 第一步：用户反馈菜单与管理员查看会话
+## 第一步：用户反馈菜单
 
 1. 迁移：`da_agent_message.feedback_at`；评价变更时写入。
-2. `GET /admin/feedback`：筛选与计数；`GET /admin/topics/{topic_id}/messages`：只读。均需管理员。
-3. 管理端菜单「用户反馈」，点击打开只读会话。
-4. 测试：权限、筛选、计数、只读查看他人会话。
+2. `GET /admin/feedback`：筛选与计数，需管理员。
+3. 管理端菜单「用户反馈」：主站会话链接到会话页（管理员已可查看），Widget 会话展示摘要。
+4. 测试：权限、筛选、计数。
 
 ## 第二步：经验库
 
