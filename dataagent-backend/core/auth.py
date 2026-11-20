@@ -269,8 +269,8 @@ def _parse_oauth_providers(raw: Any) -> OAuthSettings:
             f"{expected_callback_path!r}"
         )
     metadata = urlparse(oauth.server_metadata_url)
-    if oauth.server_metadata_url and (metadata.scheme != "https" or not metadata.netloc or metadata.fragment):
-        raise AuthConfigError("OAUTH_PROVIDERS.remote_app.server_metadata_url 必须是绝对 HTTPS URL")
+    if oauth.server_metadata_url and (metadata.scheme not in {"http", "https"} or not metadata.netloc or metadata.fragment):
+        raise AuthConfigError("OAUTH_PROVIDERS.remote_app.server_metadata_url 必须是绝对 HTTP(S) URL")
     return oauth
 
 

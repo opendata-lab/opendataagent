@@ -145,12 +145,15 @@ def test_a_busy_thread_is_reported_with_its_running_task(store):
 
 def test_issuer_and_keys_come_from_the_login_providers_discovery_document(monkeypatch):
     documents = {"https://sso.example/ok": {"issuer": "https://sso.example", "jwks_uri": "https://sso.example/keys"},
-                 "https://sso.example/plain": {"issuer": "http://sso.example", "jwks_uri": "https://sso.example/keys"}}
+                 "http://sso.internal/ok": {"issuer": "http://sso.internal", "jwks_uri": "http://sso.internal/keys"},
+                 "https://sso.example/no-keys": {"issuer": "https://sso.example"}}
     monkeypatch.setattr(remote_mcp_policy.httpx, "get", lambda url, timeout: SimpleNamespace(
         raise_for_status=lambda: SimpleNamespace(json=lambda: documents[url])))
     remote_mcp_policy._provider_metadata.cache_clear()
     assert remote_mcp_policy._provider_metadata("https://sso.example/ok") == ("https://sso.example", "https://sso.example/keys")
+    # An intranet IdP served over plain HTTP is accepted.
+    assert remote_mcp_policy._provider_metadata("http://sso.internal/ok") == ("http://sso.internal", "http://sso.internal/keys")
     with pytest.raises(remote_mcp_policy.RemoteMcpError) as exc:
-        remote_mcp_policy._provider_metadata("https://sso.example/plain")
+        remote_mcp_policy._provider_metadata("https://sso.example/no-keys")
     assert exc.value.code == "unavailable"
     remote_mcp_policy._provider_metadata.cache_clear()
