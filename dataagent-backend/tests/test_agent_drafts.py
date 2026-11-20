@@ -74,7 +74,7 @@ def test_static_workbench_route_does_not_match_public_agent_route(monkeypatch):
 def test_preview_submission_cannot_target_a_formal_chat(monkeypatch):
     monkeypatch.setattr(admin_routes.agent_drafts, 'get', lambda _: {'revision': 1})
     class Store:
-        def get_topic(self, _):
+        def get_topic(self, _, context=None):
             return {'agent_id': 'a', 'is_agent_preview': False}
     monkeypatch.setattr(admin_routes, 'get_topic_task_store', lambda: Store())
     response = TestClient(app).post('/api/v1/dataagent/agents/a/preview-tasks', json={
