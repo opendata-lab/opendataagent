@@ -4,11 +4,6 @@
 
 ## DataAgent 运行时与插件
 
-### OntoFoundry 嵌入的 SDK 显示重试提示
-
-- **现状**（2026-11-19）：OntoFoundry 依赖打包的 `agent-conversation` SDK（`vendor-agent-conversation-0.3.1-ontofoundry.1.tgz`），不认识 `run.retrying`，会忽略它，重试期间仍显示"正在处理…"。失败提示文字由后端生成，部署本仓库后即生效。
-- **要做**：合并 [ontofoundry#103](https://github.com/opendata-lab/ontofoundry/pull/103)（用本次 SDK 构建的 `0.3.2-ontofoundry.1`）。来源：[模型重试设计](design/2026-11-19-model-retry-and-friendly-errors-design.md)，2026-11-19。
-
 ### 会话历史分页加载（大会话打开慢）
 
 - **现状**（2026-11-13 实测）：点击会话时前端一次读取 `GET /api/v1/nl2sql/topics/{topic_id}/messages` 的全部历史（默认 `page_size=200`、`order=asc`）。本地某会话 `topic_47941a2a…` 响应 4.0 MB（接口 100–120 ms），其余 0.2–0.7 MB；慢主要在浏览器渲染整段历史。接口已支持 `page`、`page_size`（≤500）、`order=asc|desc`。
@@ -170,6 +165,8 @@
 - **前端依赖审计**：2026-11-03 全新 npm ci 报告 29 项漏洞（10 moderate、17 high、2 critical）；需单独核对并升级传递依赖，本次未执行强制修复。来源：本次本地工具链安装；关联[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)，前端生产构建通过。
 
 ## 已完成
+
+- **OntoFoundry 嵌入的 SDK 显示重试提示（2026-11-19）**：OntoFoundry 改用本仓库构建的 `agent-conversation` `0.3.2-ontofoundry.1`（含模型重试提示 `run.retrying` 与运行中消息队列），见 [ontofoundry#103](https://github.com/opendata-lab/ontofoundry/pull/103)。来源：[模型重试设计](design/2026-11-19-model-retry-and-friendly-errors-design.md)。
 
 - **沙箱网络模式支持 (bridge 与 host) 与 Compose 环境变量对齐（2026-11-11）**：新增 `DATAAGENT_SANDBOX_NETWORK_MODE` 配置项（支持 `bridge` 默认与 `host` 宿主机模式），当沙箱开启网络（`DATAAGENT_SANDBOX_NETWORK_ENABLED=true`）且处于特定内网/VPN 环境时可使用 `host` 模式直通宿主机网络，解决 bridge 下 NAT/路由不通导致无法连接数据库与 pip install 失败的问题；当未开启网络时强制保持 `--network=none` 断网隔离；在 `deploy/docker-compose.yml` 中补齐 `DATAAGENT_SANDBOX_NETWORK_ENABLED` 与 `DATAAGENT_SANDBOX_NETWORK_MODE` 变量声明；启动与运行时诊断日志完整打印沙箱 network、networkEnabled 与 networkMode。关联设计 [design](design/2026-11-11-sandbox-network-mode-design.md) 与计划 [plan](plans/2026-11-11-sandbox-network-mode-plan.md)，跟踪 [Issue #26](https://github.com/opendata-lab/opendataagent/issues/26)。
 
