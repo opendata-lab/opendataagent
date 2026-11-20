@@ -491,6 +491,15 @@ def test_predicate_widget_branch_unchanged_regardless_of_auth(monkeypatch):
         assert params == ["widget", "demo", "u1"]
 
 
+def test_predicate_widget_with_platform_login_sees_the_accounts_own_conversations():
+    # Platform, MCP and this site's Widget conversations of the signed-in account.
+    context = {"source": "widget", "website_id": "demo", "auth_user_id": "SSO:42", "auth_role": "user"}
+    sql, params = TopicTaskStore()._topic_context_predicate(context, alias="t")  # noqa: SLF001
+    owner = "t.auth_user_id = %s AND CAST(t.auth_user_id AS BINARY) = CAST(%s AS BINARY)"
+    assert sql == f"(t.source IN (%s, %s) OR (t.source = %s AND t.website_id = %s)) AND {owner} AND t.is_agent_preview = 0"
+    assert params == ["web", "remote", "widget", "demo", "SSO:42", "SSO:42"]
+
+
 def test_create_topic_writes_auth_owner(monkeypatch):
     class FakeCursor:
         def __init__(self, conn):

@@ -39,8 +39,12 @@ def test_mcp_token_maps_to_the_platform_identity_of_a_web_login(monkeypatch):
     identity = remote_mcp_policy.verify_identity(token(), "agent_one")
     assert (identity.user_id, identity.display_name, identity.role) == ("example:Alice", "Alice", "user")
     assert remote_mcp_policy.verify_identity(token(employee="Root"), "agent_one").role == "admin"
+    # An IdP without RFC 8707 issues the shared audience, valid for any assistant URL.
+    shared = token(aud="https://agent.example/api/v1/remote-agents")
+    assert remote_mcp_policy.verify_identity(shared, "agent_two").user_id == "example:Alice"
     for agent, auth, expected in [
         ("agent_two", token(), "unauthorized"),        # audience is the other assistant's URL
+        ("agent_one", token(aud="https://agent.example/elsewhere"), "unauthorized"),
         ("agent_one", token(exp=1), "unauthorized"),
         ("agent_one", token(scope="openid"), "forbidden"),
         ("agent_one", token(employee=None), "unauthorized"),

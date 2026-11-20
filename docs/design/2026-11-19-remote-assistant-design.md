@@ -18,9 +18,9 @@ MCP 只是又一个入口。用户通过 MCP 发起的会话，和网页、Widge
 
 | 方面 | 做法 | 复用的现有能力 |
 | --- | --- | --- |
-| 身份 | 校验令牌的签发方、有效期、`aud`（等于该助手地址）和 `dataagent:ask` scope，主体映射为 `<provider>:<sub>`，角色按现有管理员名单判定 | 网页 OAuth 登录的用户 ID 与 `resolve_oauth_role` |
+| 身份 | 校验令牌的签发方、有效期、`aud`（该助手地址，或共用的 `https://<host>/api/v1/remote-agents`）和 `dataagent:ask` scope，主体映射为 `<provider>:<sub>`，角色按现有管理员名单判定 | 网页 OAuth 登录的用户 ID 与 `resolve_oauth_role` |
 | 能否使用 | 助手已发布且开启「MCP 访问」，并对该用户可见 | 助手可见范围 `agent_visible_to` |
-| 会话 | 首问按网页同样的方式建会话，来源 `remote`；续聊传 `thread_id`，只能是自己在该助手下的会话 | `create_topic`、本人会话判断 |
+| 会话 | 首问按网页同样的方式建会话，来源 `remote`；续聊传 `thread_id`，只能是自己在该助手下的会话。网页、MCP 和平台登录模式的 Widget 都列出本人的这些会话 | `create_topic`、本人会话判断 |
 | 问数 | 提交为普通任务，标记 `interactive=false` | `submit_message_task`、协调器、执行器 |
 | 结果 | 回答文本和本轮生成的文件，即网页消息里的同一批附件 | 助手消息与附件 |
 | 下载 | MCP 令牌鉴权后读同一个工作区文件 | `topic_file_response` |
@@ -55,11 +55,11 @@ MCP 只是又一个入口。用户通过 MCP 发起的会话，和网页、Widge
 
 1. 支持 OAuth 的 MCP 客户端首次请求收到 401 和 `WWW-Authenticate`，按受保护资源元数据找到授权服务器，打开浏览器让用户登录企业身份提供方（授权码 + PKCE）。
 2. 客户端拿到面向该助手地址的访问令牌，之后自动携带；过期时按客户端和身份提供方的能力续期或重新登录。
-3. 身份提供方须能按资源签发 `aud`（RFC 8707 `resource` 参数或等效配置），并签发 RS256 JWT。不支持时需改为所有助手共用一个 audience，这是上线前要在目标 IdP 上确认的事项。
+3. 令牌为 RS256 JWT，`aud` 二选一：支持 RFC 8707 的 IdP 按客户端传的 `resource` 签发该助手地址；不支持的 IdP（如 Keycloak 26.7 及以前）在 `dataagent:ask` scope 上配一个 audience mapper，固定写入 `https://<host>/api/v1/remote-agents`，发布新助手无需改 IdP。标准 MCP 客户端会用服务端 `WWW-Authenticate` 给出的 scope，所以只能靠这一个 scope 携带 audience。共用 audience 的令牌可用于该用户可见的任一已开启 MCP 的助手，与网页登录一致。
 
 ## 5. 数据与代码
 
-- 迁移 `20261119_000038`：`da_agent_task` 增加 `interactive`（默认 1）和 `request_key`（可空，唯一）。
+- 迁移 `20261119_000038`：`da_agent_profile` 增加 `remote_mcp_enabled`；`da_agent_task` 增加 `interactive`（默认 1）和 `request_key`（可空，唯一）。
 - `api/remote_mcp.py`：5 个工具、资源元数据和下载路由，均调用现有存储与提交服务。
 - `core/remote_mcp_policy.py`：令牌校验与身份映射。
 - 运行时 `interactive` 开关：`cell.ts`、`frames.ts`、`pi_runtime.py`、`task_executor.py`，以及 `prompts/non_interactive_mode.md`。

@@ -51,6 +51,16 @@ def endpoint(agent_id: str) -> str:
     return f"{get_settings().remote_mcp_public_origin}{PREFIX}/{agent_id}/mcp"
 
 
+def shared_audience() -> str:
+    """One audience for every published assistant, for IdPs without RFC 8707.
+
+    Keycloak, for one, ignores the MCP client's 'resource' parameter; an audience
+    mapper on the dataagent:ask scope can still put this value into 'aud'. Which
+    assistant a token may use is decided by assistant visibility, as for a web login.
+    """
+    return f"{get_settings().remote_mcp_public_origin}{PREFIX}"
+
+
 @lru_cache(maxsize=4)
 def _jwks(url: str) -> jwt.PyJWKClient:
     return jwt.PyJWKClient(url, timeout=5)
@@ -64,7 +74,7 @@ def verify_identity(authorization: str, agent_id: str) -> AuthIdentity:
     try:
         key = _jwks(cfg.remote_mcp_oauth_jwks_url).get_signing_key_from_jwt(token)
         claims = jwt.decode(token, key.key, algorithms=["RS256"],
-                            issuer=cfg.remote_mcp_oauth_issuer, audience=endpoint(agent_id),
+                            issuer=cfg.remote_mcp_oauth_issuer, audience=[endpoint(agent_id), shared_audience()],
                             options={"require": ["iss", "aud", "sub", "exp"]})
     except (jwt.PyJWTError, ValueError) as exc:
         raise RemoteMcpError("unauthorized", "MCP 访问令牌无效或已过期") from exc

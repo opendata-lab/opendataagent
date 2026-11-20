@@ -482,8 +482,8 @@ class TopicTaskStore(SessionCheckpointStore):
 
         if auth_user_id:
             return (
-                f"({prefix}source = %s OR ({prefix}source = %s AND {prefix}website_id = %s)) AND {owner} AND {regular_topic}",
-                ["web", "widget", normalized["website_id"], *owner_params],
+                f"({prefix}source IN (%s, %s) OR ({prefix}source = %s AND {prefix}website_id = %s)) AND {owner} AND {regular_topic}",
+                ["web", "remote", "widget", normalized["website_id"], *owner_params],
             )
 
         legacy = f"{prefix}source = %s AND {prefix}website_id = %s AND {prefix}auth_user_id = ''"
