@@ -32,7 +32,7 @@ from api.topic_file_response import topic_file_response
 from core import remote_mcp_policy as policy
 from core import remote_mcp_tokens as tokens
 from core.agent_profile_service import build_agent_snapshot
-from core.auth import AuthIdentity, require_identity
+from core.auth import AuthIdentity, require_identity, resolve_identity
 from core.task_status import ACTIVE_TASK_STATUSES
 from core.task_submission_service import submit_message_task
 from core.topic_task_store import get_topic_task_store
@@ -342,14 +342,22 @@ def _published(agent_id: str, identity: AuthIdentity) -> dict[str, str]:
     return context
 
 
-async def _authenticate(request: StarletteRequest, agent_id: str) -> dict[str, str]:
+async def _authenticate(
+    request: StarletteRequest, agent_id: str, *, allow_web_session: bool = False,
+) -> dict[str, str]:
     if not policy.enabled():
         raise HTTPException(404)
     origin = _origin(request)
     if request.headers.get("origin", origin) != origin:
         raise HTTPException(403)
     try:
-        identity = await asyncio.to_thread(policy.verify_identity, request.headers.get("authorization", ""))
+        authorization = request.headers.get("authorization")
+        if allow_web_session and authorization is None:
+            identity = resolve_identity(request)
+            if identity is None:
+                raise policy.RemoteMcpError("unauthorized", "请登录 DataAgent 后下载文件")
+        else:
+            identity = await asyncio.to_thread(policy.verify_identity, authorization or "")
         policy.endpoint(origin, agent_id)
         return await asyncio.to_thread(_published, agent_id, identity)
     except policy.RemoteMcpError as exc:
@@ -442,8 +450,8 @@ def revoke_mcp_token(token_id: int, identity: TokenUser):
 
 @router.get(policy.PREFIX + "/{agent_id}/threads/{thread_id}/files/{rel_path:path}")
 async def download(agent_id: str, thread_id: str, rel_path: str, request: Request):
-    """The same workspace file the web panel serves, behind the MCP token."""
-    context = await _authenticate(request, agent_id)
+    """Download an owned workspace file with a browser session or an MCP token."""
+    context = await _authenticate(request, agent_id, allow_web_session=True)
     topic = await asyncio.to_thread(get_topic_task_store().get_topic, thread_id, context=context)
     if not topic or topic.get("agent_id") != agent_id:
         raise HTTPException(404)

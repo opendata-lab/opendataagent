@@ -257,6 +257,36 @@ def test_mcp_and_download_accept_valid_bearer_and_reject_revocation(tokens_app, 
         assert unauthorized.headers["WWW-Authenticate"] == 'Bearer realm="DataAgent MCP"'
 
 
+def test_browser_download_requires_the_owner_session_and_preserves_bearer_checks(tokens_app, monkeypatch):
+    client = tokens_app.client
+    issued = create(client)
+    token = issued["token"]
+    topic = {"agent_id": "a1"}
+    monkeypatch.setattr(remote_mcp, "get_topic_task_store", lambda: SimpleNamespace(
+        get_topic=lambda _id, context: topic if context["auth_user_id"] == IDENTITY.user_id else None,
+    ))
+    monkeypatch.setattr(remote_mcp, "topic_file_response", lambda *_args, **_kwargs: JSONResponse({"file": "report"}))
+
+    assert client.get(DOWNLOAD).json() == {"file": "report"}
+    assert client.get(DOWNLOAD, headers={"Origin": OTHER_ORIGIN}).status_code == 403
+    assert client.get(DOWNLOAD.replace("/a1/", "/a2/")).status_code == 404
+    assert mcp_call(client, "").status_code == 401
+    assert client.post(MCP, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).status_code == 401
+
+    for identity in (OTHER_USER, ADMIN):
+        tokens_app.login(identity)
+        assert client.get(DOWNLOAD).status_code == 404
+
+    tokens_app.login(None)
+    assert client.get(DOWNLOAD).status_code == 401
+    assert client.get(DOWNLOAD, headers=bearer(token)).json() == {"file": "report"}
+
+    tokens_app.login(IDENTITY)
+    assert client.delete(f"{MANAGEMENT}/{issued['item']['id']}", headers=BROWSER_HEADERS).status_code == 200
+    assert client.get(DOWNLOAD, headers=bearer(token)).status_code == 401
+    assert client.get(DOWNLOAD).json() == {"file": "report"}
+
+
 def test_mcp_rejects_expired_unknown_and_session_tokens(tokens_app):
     client = tokens_app.client
     expiring = create(client, expires_in_days=30)["token"]

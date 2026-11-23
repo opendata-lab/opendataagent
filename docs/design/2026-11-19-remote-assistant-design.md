@@ -23,7 +23,7 @@ MCP 只是又一个入口。用户通过 MCP 发起的会话，和网页、Widge
 | 会话 | 首问按网页同样的方式建会话，来源 `remote`；续聊传 `thread_id`，只能是自己在该助手下的会话。网页、MCP 和平台登录模式的 Widget 都列出本人的这些会话 | `create_topic`、本人会话判断 |
 | 问数 | 提交为普通任务，标记 `interactive=false` | `submit_message_task`、协调器、执行器 |
 | 结果 | 回答文本和本轮生成的文件，即网页消息里的同一批附件 | 助手消息与附件 |
-| 下载 | MCP 令牌鉴权后读同一个工作区文件 | `topic_file_response` |
+| 下载 | MCP 令牌或 DataAgent 网页会话鉴权后读取同一个工作区文件 | `topic_file_response` |
 | 评价 | 点赞点踩，与网页相同 | `update_message_feedback` |
 
 ## 2. 无人值守的运行
@@ -49,7 +49,7 @@ MCP 只是又一个入口。用户通过 MCP 发起的会话，和网页、Widge
 | `get_run` | `run_id` | `in_progress`，或 `answered`（`answer`、`message_id`、`files`），或 `failed`/`cancelled`（`error`）。 |
 | `feedback` | `thread_id`、`message_id`、`rating: like\|dislike` | 当前评价。 |
 
-`request_key` 用于重试：任务表的 `request_key` 列存「助手 + 用户 + 键」的摘要并唯一。同键同问题返回原任务；同键换了问题或会话返回 `request_conflict`。`files` 中每个文件带下载地址 `.../remote-agents/<agent_id>/threads/<thread_id>/files/<path>`，须携带同一令牌。
+`request_key` 用于重试：任务表的 `request_key` 列存「助手 + 用户 + 键」的摘要并唯一。同键同问题返回原任务；同键换了问题或会话返回 `request_conflict`。`files` 中每个文件带下载地址 `.../remote-agents/<agent_id>/threads/<thread_id>/files/<path>`。MCP 客户端可携带同一令牌，浏览器可使用同一 DataAgent 地址下的登录会话。
 
 ### 3.1 MCP 流式等待与显式后台
 
@@ -141,12 +141,12 @@ MCP 客户端 ── Authorization: Bearer dak_… ──> DataAgent MCP 地址
 | --- | --- |
 | 格式 | `dak_` + `secrets.token_urlsafe(32)` |
 | 存储 | 表 `da_mcp_access_token` 只存 SHA-256 哈希，明文不落库、不进日志 |
-| 校验 | MCP 地址和下载路由取 `Authorization: Bearer`，按哈希查表，要求未撤销、未过期；`last_used_at` 最多每分钟写一次 |
+| 校验 | MCP 请求以 `Authorization: Bearer` 按哈希查未撤销、未过期的令牌，`last_used_at` 最多每分钟写一次。下载请求在没有 Authorization 时可使用登录会话 |
 | 身份 | 记录中的 `user_id`（`provider:account`）和显示名组成 `AuthIdentity`；本地账号每次查 `local_admins`；SSO 令牌沿用签发时会话的显式角色，普通用户签发的令牌不会提权。由 `ADMIN_USERS` 授权的管理员令牌每次重新核对配置 |
 | 可见范围 | 不进令牌：令牌可用于该用户可见的任一已开启 MCP 的助手，仍由 `_published` 判断 |
 | 401 | `WWW-Authenticate: Bearer realm="DataAgent MCP"`，**不带** `resource_metadata`，客户端不会发起 OAuth 发现 |
 
-保留 `Origin` 头与请求来源一致的检查。
+保留 `Origin` 头与请求来源一致的检查。下载继续验证助手开放状态、可见范围、会话归属和文件路径。请求携带 Authorization 时，只用该凭据校验。
 
 ### 4.4 代价与不做
 
