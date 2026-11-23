@@ -118,7 +118,7 @@ MCP 客户端 ── Authorization: Bearer dak_… ──> DataAgent MCP 地址
 - 令牌管理接口放在 `api/remote_mcp.py`（与 MCP 同一模块，`/api/v1/dataagent/mcp-tokens`）。
 - 配置：无 MCP 专用配置，启用条件为平台登录已开启（SSO 或本地账号任一）。对外地址由请求的 `Host` 和 `X-Forwarded-Proto` 得出。nginx 删除 `/.well-known/oauth-authorization-server` 和 `/.well-known/openid-configuration` 两条转发（`deploy/docker/nginx/default.conf`、`dataagent-frontend/nginx.conf`）。
 - 运行时 `interactive` 开关：`cell.ts`、`frames.ts`、`pi_runtime.py`、`task_executor.py`，以及 `prompts/non_interactive_mode.md`。
-- 助手详情页标题右侧放置链接图标。点击后在相邻浮层显示 MCP 地址、「复制 MCP 配置」和「申请令牌」，管理员也可在浮层切换 MCP 访问。开关不属于草稿，作用于已发布的助手、切换即生效（`PUT /api/v1/dataagent/agents/<agent_id>/remote-mcp`，仅管理员；助手从未发布时不可开启）；所有有权查看已开启 MCP 助手的登录用户均可复制配置。助手只读详情返回已启用的 `remote_mcp_path`，「申请令牌」链接到 `/settings/mcp-tokens`。复制的内容用当前页面的协议和域名拼出地址：
+- 助手详情页标题右侧提供省略号菜单。管理员可在第一行切换「MCP 访问」。开关作用于已发布的助手，切换即生效（`PUT /api/v1/dataagent/agents/<agent_id>/remote-mcp`，仅管理员；首次发布前不可开启）。菜单在切换后保持展开。开启后出现「MCP 配置」，点击复用对话页的配置窗口。普通用户只有配置入口，显示条件为只读资料返回有效的 `remote_mcp_path`。导出的配置用当前页面的协议和域名拼出地址：
 
 ```json
 { "mcpServers": { "dataagent-<助手名>": {

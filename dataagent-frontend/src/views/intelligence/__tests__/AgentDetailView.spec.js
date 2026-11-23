@@ -39,6 +39,7 @@ vi.mock('element-plus', async (original) => ({
   ElMessageBox: { confirm: vi.fn().mockRejectedValue('cancel') },
 }))
 import AgentDetailView from '../AgentDetailView.vue'
+import ChatMcpConfigDialog from '../ChatMcpConfigDialog.vue'
 
 const profile = {
   agent_id: 'agent_1',
@@ -72,7 +73,11 @@ const mount = () =>
         ElSelect: { template: '<div><slot /></div>' },
         ElOption: true,
         ElButton: { props: ['disabled'], template: '<button :disabled="disabled"><slot /></button>' },
-        ElPopover: { template: '<div><slot name="reference" /><slot /></div>' },
+        ElPopover: {
+          name: 'ElPopover',
+          props: ['visible'],
+          template: '<div><slot name="reference" /><slot /></div>',
+        },
       },
       config: {
         compilerOptions: {
@@ -133,72 +138,58 @@ describe('agent draft workbench', () => {
     expect(wrapper.findAll('.workbench > .panel')).toHaveLength(3)
     wrapper.unmount()
   })
-  it('turns MCP access on at once, without a publish, and then copies the configuration', async () => {
+  it('enables MCP without publishing and opens the shared configuration dialog from the same menu', async () => {
     const path = '/api/v1/remote-agents/agent_1/mcp'
     const live = { ...profile, published_version: 1, remote_mcp_available: true }
     dataagentApi.getAgentDraft.mockResolvedValueOnce({ ...live, remote_mcp_enabled: false, remote_mcp_path: '' })
-    dataagentApi.setAgentRemoteMcp.mockResolvedValueOnce({ ...live, remote_mcp_enabled: true, remote_mcp_path: path })
+    let finishToggle
+    dataagentApi.setAgentRemoteMcp.mockImplementationOnce(() => new Promise(resolve => { finishToggle = resolve }))
     const wrapper = mount()
     await flushPromises()
-    expect(wrapper.get('.mcp-popover-trigger').attributes('aria-label')).toBe('MCP 配置')
-    expect(wrapper.get('.mcp-config-copy').element.disabled).toBe(true)
-    expect(wrapper.find('.mcp-endpoint').exists()).toBe(false)
-    await wrapper.get('[role="switch"][aria-label="MCP 访问"]').trigger('click')
+
+    expect(wrapper.get('.mcp-popover-trigger').attributes('aria-label')).toBe('MCP 操作')
+    const menu = wrapper.getComponent({ name: 'ElPopover' })
+    menu.vm.$emit('update:visible', true)
+    await wrapper.vm.$nextTick()
+    expect(menu.props('visible')).toBe(true)
+    expect(wrapper.find('.mcp-config-action').exists()).toBe(false)
+    expect(wrapper.findComponent(ChatMcpConfigDialog).exists()).toBe(false)
+
+    const toggle = wrapper.get('#remote-mcp-switch')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-disabled')).toBe('true')
+    expect(wrapper.find('.mcp-config-action').exists()).toBe(false)
+    finishToggle({ ...live, remote_mcp_enabled: true, remote_mcp_path: path })
     await flushPromises()
+
     expect(dataagentApi.setAgentRemoteMcp).toHaveBeenCalledWith('agent_1', true)
     expect(dataagentApi.publishAgent).not.toHaveBeenCalled()
-    expect(wrapper.get('#remote-mcp-switch').attributes('aria-checked')).toBe('true')
-    const writeText = vi.fn().mockResolvedValue()
-    vi.stubGlobal('navigator', { clipboard: { writeText } })
-    try {
-      const copy = wrapper.get('.mcp-config-copy')
-      expect(copy.element.disabled).toBe(false)
-      expect(copy.text()).toContain('复制 MCP 配置')
-      expect(wrapper.get('.mcp-endpoint code').text()).toBe(window.location.origin + path)
-      await copy.trigger('click')
-      expect(JSON.parse(writeText.mock.calls[0][0])).toEqual({ mcpServers: {
-        [`dataagent-${profile.name}`]: {
-          type: 'http',
-          url: `${window.location.protocol}//${window.location.host}${path}`,
-          headers: { Authorization: 'Bearer <你的访问令牌>' },
-        },
-      } })
-      const tokenLink = wrapper.get('.mcp-token-link')
-      expect(tokenLink.text()).toBe('申请令牌')
-      expect(tokenLink.attributes('href')).toBe('/settings/mcp-tokens')
-      await tokenLink.trigger('click')
-      expect(routerPush).toHaveBeenCalledWith('/settings/mcp-tokens')
-      // Plain-HTTP deployments have no navigator.clipboard; the copy still works.
-      vi.stubGlobal('navigator', {})
-      const execCommand = vi.fn(() => true)
-      document.execCommand = execCommand
-      await copy.trigger('click')
-      expect(execCommand).toHaveBeenCalledWith('copy')
-    } finally {
-      vi.unstubAllGlobals()
-      delete document.execCommand
-    }
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    expect(menu.props('visible')).toBe(true)
+    await wrapper.get('.mcp-config-action').trigger('click')
+    expect(menu.props('visible')).toBe(false)
+    expect(wrapper.getComponent(ChatMcpConfigDialog).props()).toMatchObject({
+      modelValue: true,
+      agentId: 'agent_1',
+    })
     wrapper.unmount()
   })
-  it('lets a reader copy the published MCP configuration without changing access', async () => {
+
+  it('lets a reader open the shared configuration dialog for a published MCP assistant', async () => {
     authState.isAdmin = false
     const path = '/api/v1/remote-agents/agent_1/mcp'
     dataagentApi.getAgentProfile.mockResolvedValueOnce({ ...profile, remote_mcp_path: path })
     const wrapper = mount()
-    const writeText = vi.fn().mockResolvedValue()
-    vi.stubGlobal('navigator', { clipboard: { writeText } })
-    try {
-      await flushPromises()
-      expect(wrapper.find('#remote-mcp-switch').exists()).toBe(false)
-      expect(dataagentApi.getAgentDraft).not.toHaveBeenCalled()
-      await wrapper.get('.mcp-config-copy').trigger('click')
-      expect(JSON.parse(writeText.mock.calls[0][0]).mcpServers[`dataagent-${profile.name}`].url)
-        .toBe(window.location.origin + path)
-    } finally {
-      vi.unstubAllGlobals()
-      wrapper.unmount()
-    }
+    await flushPromises()
+
+    expect(wrapper.find('#remote-mcp-switch').exists()).toBe(false)
+    expect(dataagentApi.getAgentDraft).not.toHaveBeenCalled()
+    await wrapper.get('.mcp-config-action').trigger('click')
+    expect(wrapper.getComponent(ChatMcpConfigDialog).props('agentId')).toBe('agent_1')
+    expect(dataagentApi.setAgentRemoteMcp).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
+
   it('ignores an older detail response after a newer load has completed', async () => {
     const wrapper = mount()
     await flushPromises()
