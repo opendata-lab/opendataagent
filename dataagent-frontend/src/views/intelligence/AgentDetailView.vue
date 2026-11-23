@@ -36,26 +36,16 @@
             aria-label="MCP 访问"
             :aria-checked="form.remote_mcp_enabled"
             :disabled="busy || (!draft.remote_mcp_available && !form.remote_mcp_enabled)"
-            :title="draft.remote_mcp_available ? '发布后生效' : '需要管理员配置外部 MCP OAuth'"
+            :title="draft.remote_mcp_available ? '发布后生效' : '需要管理员开启平台登录'"
             @click="form.remote_mcp_enabled = !form.remote_mcp_enabled"
           />
-          <input
-            class="mcp-address"
-            aria-label="MCP 连接地址"
-            :value="mcpAddress"
-            :title="mcpAddress"
-            :placeholder="form.remote_mcp_enabled ? '发布后显示地址' : '开启并发布后显示地址'"
-            readonly
-            :disabled="!mcpAddress"
-          />
           <button
-            class="icon-button mcp-address-copy"
+            class="button secondary mcp-config-copy"
             type="button"
-            aria-label="复制 MCP 地址"
-            title="复制 MCP 地址"
-            :disabled="!mcpAddress"
-            @click="copyMcpAddress"
-          ><Icon name="copy" class="small" /></button>
+            :disabled="!draft.remote_mcp_path"
+            @click="copyMcpConfig"
+          ><Icon name="copy" class="small" />复制配置</button>
+          <span class="mcp-config-hint">{{ draft.remote_mcp_path ? '粘贴到客户端的 MCP 设置后点打开授权' : '开启并发布后可复制配置' }}</span>
         </section>
         <div class="head-actions">
           <template v-if="canManage">
@@ -525,7 +515,7 @@
             {{ form.mcp_server_ids.length }} MCP
           </dd>
         </div>
-        <div v-if="form.remote_mcp_enabled || mcpAddress">
+        <div v-if="form.remote_mcp_enabled || draft.remote_mcp_path">
           <dt>MCP 访问</dt>
           <dd>{{ form.remote_mcp_enabled ? '开启' : '关闭' }}</dd>
         </div>
@@ -628,10 +618,6 @@ const draft = reactive({
   remote_mcp_available: false,
   remote_mcp_path: "",
 });
-// The backend returns a path; MCP clients use the address this page was opened from.
-const mcpAddress = computed(() =>
-  draft.remote_mcp_path ? `${window.location.origin}${draft.remote_mcp_path}` : "",
-);
 const builtinPrompt = ref(""),
   envVarsText = ref("{}"),
   baseline = ref("");
@@ -845,13 +831,18 @@ function buildPayload() {
     expected_revision: draft.revision,
   };
 }
-async function copyMcpAddress() {
-  if (!mcpAddress.value) return;
+async function copyMcpConfig() {
+  if (!draft.remote_mcp_path) return;
+  const config = { mcpServers: { [`dataagent-${form.name}`]: {
+    type: "http",
+    url: `${window.location.origin}${draft.remote_mcp_path}`,
+    oauth: { type: "authorization_code", clientId: "dataagent" },
+  } } };
   try {
-    await navigator.clipboard.writeText(mcpAddress.value);
-    ElMessage.success("已复制 MCP 地址");
+    await navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+    ElMessage.success("已复制 MCP 配置");
   } catch {
-    ElMessage.error("无法访问剪贴板，请选择地址后手动复制");
+    ElMessage.error("无法访问剪贴板，请检查浏览器权限后重试");
   }
 }
 
@@ -1235,20 +1226,8 @@ onBeforeUnmount(() => { loadGeneration++; window.removeEventListener("beforeunlo
 }
 .mcp-access-switch[aria-checked="true"] { background: var(--primary-dark); }
 .mcp-access-switch[aria-checked="true"]::after { transform: translateX(15px); }
-.mcp-address {
-  min-width: 0;
-  height: 32px;
-  font: 11px var(--mono);
-  text-overflow: ellipsis;
-}
-.mcp-address::placeholder { font-family: var(--font); }
-.mcp-address-copy {
-  flex: 0 0 auto;
-  height: 32px;
-  width: 32px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-}
+.mcp-config-copy { flex: 0 0 auto; white-space: nowrap; }
+.mcp-config-hint { font-size: 12px; }
 @media (max-width: 1160px) {
   .workspace-head:has(.mcp-access) { grid-template-columns: minmax(0, 1fr) auto; }
   .mcp-access { grid-row: 2; grid-column: 1 / -1; padding-left: 0; border-left: 0; }

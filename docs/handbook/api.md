@@ -71,7 +71,9 @@ POST /tasks/deliver-message
 
 ## 单助手 MCP
 
-连接助手详情页提供的 `https://<host>/api/v1/remote-agents/<agent_id>/mcp`，`<host>` 为打开详情页时的域名。该地址使用 Streamable HTTP 和 OAuth 资源令牌，绑定一个发布助手。调用者在 MCP 客户端完成首次授权。
+从助手详情页「复制配置」，在 MCP 客户端打开授权并在浏览器登录 DataAgent 后确认。客户端通过 Streamable HTTP 连接 `https://<host>/api/v1/remote-agents/<agent_id>/mcp`，`<host>` 为打开详情页时的域名。
+
+资源元数据指向同域的 DataAgent OAuth 授权服务器；客户端可从 `/.well-known/oauth-authorization-server` 发现注册、授权和令牌接口。支持动态注册或使用公开客户端 `dataagent`，授权码交换必须使用 S256 PKCE。访问令牌通过 `Authorization: Bearer` 发送，有效期 1 小时；刷新令牌有效期 30 天，每次使用都会轮换。助手可见性仍在每次请求时检查。
 
 | 工具 | 用法 |
 | --- | --- |

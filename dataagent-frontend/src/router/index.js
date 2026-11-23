@@ -79,6 +79,12 @@ export const routes = [
     meta: { public: true, title: '登录' }
   },
   {
+    path: '/mcp-authorize',
+    name: 'McpAuthorize',
+    component: () => import('@/views/McpAuthorizeView.vue'),
+    meta: { title: 'MCP 授权' }
+  },
+  {
     path: '/',
     component: () => import('@/views/intelligence/IntelligentQueryView.vue'),
     children: [
