@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import CallToolResult
 from starlette.responses import JSONResponse
 import pytest
 
@@ -248,7 +248,9 @@ def test_mcp_and_download_accept_valid_bearer_and_reject_revocation(tokens_app, 
     assert response.status_code == 200
     assert "ask" in {tool["name"] for tool in rpc_messages(response)[-1]["result"]["tools"]}
     assert client.get(DOWNLOAD, headers=bearer(token)).json() == {"file": "report"}
-    assert mcp_call(client, token, Origin=OTHER_ORIGIN).status_code == 403
+    wrong_origin = mcp_call(client, token, Origin=OTHER_ORIGIN)
+    assert wrong_origin.status_code == 403
+    assert "重新复制" in wrong_origin.json()["detail"]
     client.delete(f"{MANAGEMENT}/{created['item']['id']}", headers=BROWSER_HEADERS)
     for unauthorized in (mcp_call(client, token), client.get(DOWNLOAD, headers=bearer(token))):
         assert unauthorized.status_code == 401
@@ -264,6 +266,7 @@ def test_mcp_rejects_expired_unknown_and_session_tokens(tokens_app):
         response = mcp_call(client, token)
         assert response.status_code == 401
         assert response.headers["WWW-Authenticate"] == 'Bearer realm="DataAgent MCP"'
+        assert "更新客户端配置" in response.json()["detail"]
 
 
 def test_mcp_rejects_a_local_admin_removed_from_settings(tokens_app):
@@ -338,6 +341,54 @@ def test_foreground_ask_returns_the_final_result_on_its_http_stream(tokens_app, 
     assert messages[0]["result"]["structuredContent"]["answer"] == "42"
 
 
+@pytest.mark.parametrize(
+    ("method", "arguments", "code", "next_step"),
+    [
+        ("ask", {"question": "   ", "request_key": "valid-key"}, "invalid_question", "输入要查询的问题"),
+        ("get_thread", {"thread_id": "missing"}, "not_found", "会话列表"),
+        ("get_run", {"run_id": "missing"}, "not_found", "任务编号"),
+        ("feedback", {"thread_id": "t-alice", "message_id": "missing", "rating": "like"},
+         "not_found", "助手回答重新选择"),
+    ],
+)
+def test_tool_errors_are_structured_and_actionable(tokens_app, monkeypatch, method, arguments, code, next_step):
+    store = SimpleNamespace(
+        get_topic=lambda topic_id, **_kwargs: {"agent_id": "a1"} if topic_id == "t-alice" else None,
+        get_task=lambda *_args, **_kwargs: None,
+        update_message_feedback=lambda **_kwargs: False,
+    )
+    monkeypatch.setattr(remote_mcp, "get_topic_task_store", lambda: store)
+    token = create(tokens_app.client)["token"]
+    response = tokens_app.client.post(
+        MCP, headers={**bearer(token), "Accept": "application/json, text/event-stream"},
+        json={"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+              "params": {"name": method, "arguments": arguments}},
+    )
+    result = rpc_messages(response)[-1]["result"]
+    assert result["isError"] is True
+    assert result["structuredContent"]["error"]["code"] == code
+    assert next_step in result["structuredContent"]["error"]["next_step"]
+    assert json.loads(result["content"][0]["text"]) == result["structuredContent"]
+
+
+def test_tool_does_not_expose_unexpected_backend_exception(tokens_app, monkeypatch):
+    def unavailable(**_kwargs):
+        raise RuntimeError("internal connection diagnostic")
+
+    monkeypatch.setattr(remote_mcp, "get_topic_task_store", lambda: SimpleNamespace(list_topics=unavailable))
+    token = create(tokens_app.client)["token"]
+    response = tokens_app.client.post(
+        MCP, headers={**bearer(token), "Accept": "application/json, text/event-stream"},
+        json={"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+              "params": {"name": "list_threads", "arguments": {}}},
+    )
+    result = rpc_messages(response)[-1]["result"]
+    assert result["isError"] is True
+    assert result["structuredContent"]["error"]["code"] == "service_error"
+    assert "管理员" in result["content"][0]["text"]
+    assert "internal connection diagnostic" not in response.text
+
+
 def test_remote_tools_have_direct_structured_output():
     tools = {item.name: item for item in remote_mcp.create_server()._tool_manager.list_tools()}
     assert set(tools) == {"ask", "list_threads", "get_thread", "get_run", "feedback"}
@@ -349,7 +400,9 @@ def test_remote_tools_have_direct_structured_output():
 
 
 def run(coro):
-    return asyncio.run(coro)
+    result = asyncio.run(coro)
+    assert isinstance(result, CallToolResult)
+    return result.structuredContent
 
 
 ALICE = remote_mcp._context(SimpleNamespace(user_id="sso:alice", display_name="Alice", role="user"))
@@ -434,7 +487,8 @@ def test_ask_starts_an_ordinary_non_interactive_task_and_retries_are_idempotent(
     conflict = run(remote_mcp.ask("上月销售额", "key-00000001", ctx=store.ctx))
     assert conflict["error"] == {
         "code": "request_conflict",
-        "message": "请求异常，请重新发起请求。如仍失败，请联系管理员。",
+        "message": "请求异常。",
+        "next_step": "请重新发起请求。如仍失败，请联系管理员。",
     }
 
 
@@ -448,6 +502,7 @@ def test_a_busy_thread_is_reported_with_its_running_task(store):
     store.fake.topics["t-alice"].update(current_task_status="running", current_task_id="task-9")
     busy = run(remote_mcp.ask("继续", "key-00000004", ctx=store.ctx, thread_id="t-alice"))
     assert busy["error"]["code"] == "thread_busy" and busy["run_id"] == "task-9"
+    assert "查看当前查询" in busy["error"]["next_step"]
     assert store.submitted == []
 
 
@@ -488,8 +543,10 @@ def test_foreground_rechecks_authorization_before_releasing_result(store, monkey
         raise HTTPException(401)
 
     monkeypatch.setattr(remote_mcp, "_authenticate", revoke)
-    with pytest.raises(ToolError, match="无法访问该助手，请重新连接"):
-        run(remote_mcp.ask("本月销售额", "key-revoked", ctx=store.ctx))
+    result = asyncio.run(remote_mcp.ask("本月销售额", "key-revoked", ctx=store.ctx))
+    assert result.isError is True
+    assert result.structuredContent["error"]["code"] == "unauthorized"
+    assert "重新连接" in result.content[0].text
     assert store.fake.tasks["task-1"]["task_status"] == "finished"
 
 
@@ -503,3 +560,32 @@ def test_busy_thread_reuses_same_key_inserted_after_first_lookup(store, monkeypa
     monkeypatch.setattr(store.fake, "find_task_by_request_key", Mock(side_effect=[None, previous]))
     result = run(remote_mcp.ask("继续", "key-concurrent", thread_id="t-alice", background=True, ctx=store.ctx))
     assert result["run_id"] == "task-1" and store.submitted == []
+
+
+@pytest.mark.parametrize(("code", "next_step"), [
+    ("PI_RUN_TIMEOUT", "缩小时间范围"),
+    ("PI_RUN_IDLE_TIMEOUT", "请重试一次"),
+    ("run_interrupted", "请先核对操作结果"),
+    ("task_execution_failed", "请稍后重试"),
+])
+def test_failed_ask_is_an_error_but_reading_its_terminal_state_succeeds(store, monkeypatch, code, next_step):
+    store.status = "error"
+    original_submit = remote_mcp.submit_message_task
+
+    async def submit(**kwargs):
+        result = await original_submit(**kwargs)
+        store.fake.tasks[result["task_id"]]["error"] = {
+            "code": code, "message": "internal diagnostic", "detail": "private service URL",
+        }
+        return result
+
+    monkeypatch.setattr(remote_mcp, "submit_message_task", submit)
+    failed = asyncio.run(remote_mcp.ask("本月销售额", "key-failed", ctx=store.ctx))
+    observed = asyncio.run(remote_mcp.get_run("task-1"))
+    assert failed.isError is True and observed.isError is False
+    assert failed.structuredContent == observed.structuredContent
+    assert observed.structuredContent["status"] == "failed"
+    assert observed.structuredContent["answer"] == ""
+    assert observed.structuredContent["error"]["code"] == code
+    assert next_step in failed.content[0].text
+    assert "private service URL" not in failed.model_dump_json()

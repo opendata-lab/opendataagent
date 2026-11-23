@@ -35,13 +35,16 @@
 1. **统一提交和续接。** 在 `dataagent-backend/api/remote_mcp.py` 给 `ask` 加 `background: bool = False`。已有任务、任务唯一键冲突的重试和新提交都交给同一个返回路径。后台方式立即读当前状态；默认方式在 900 秒内等待终态。等待阶段通过线程池按当前用户和助手读取任务，只有终态才组装原结果。重用 `get_run` 的序列化逻辑，保留已完成结果、附件和原有错误字段。
 2. **切换标准响应类型。** FastMCP 仍用 stateless Streamable HTTP，关闭 `json_response` 以采用 SDK SSE。通过 FastMCP `Context` 发进度。SDK 的请求上下文带原 HTTP 请求，可在发最终结果前复用现有授权检查。验证请求断开仅释放等待，任务可由协调器继续执行。版本验证以声明支持的 SDK 下限和当前 1.30.0 为准，若实际不兼容再调整依赖下限。
 3. **超时链与部署说明。** 更新 `deploy/docker/nginx/default.conf` 和 `dataagent-frontend/nginx.conf` 的 MCP location，使用默认 1860 秒的读写超时和关闭缓冲。同步 `docs/handbook/api.md`、`deploy/README.md`，记录连接方式、`background`、断线恢复和等待上限，并提供经目标 ZCode 版本验证的客户端超时配置。核对现有 SQL 超时与网页 SDK 事件入口。
-4. **定向测试。** 扩展 `dataagent-backend/tests/test_remote_mcp.py`，短工具和协议握手使用 SDK 或解析 JSON-RPC SSE。覆盖后台立即返回、默认完成仍在原请求、等待到期返回句柄、进度令牌有无、授权失效、同键并发与断线重连均只产生一个任务及原错误映射。等待上限通过测试时钟或缩短测试常量验证，部署值保持 900 秒。
-5. **真实 HTTP 冒烟。** 用 Python 3.13、Docker MySQL `127.0.0.1:3326` 的隔离 schema 和本地 Docker Redis，走 Nginx 和主应用。用可控延迟的模型执行实际 MCP `ask`（至少一例超过 30 秒）。观察 `waiting → running → finished`、SSE 保活与进度、消息和附件的持久化。另测 `background: true`、断线后以原键恢复、`get_run` 取同一结果及通过原网页 API 取消后返回 `cancelled`。用官方 MCP Python SDK 和实际 ZCode 桌面版验证，记录协议版本、ZCode 长工具超时、线上代理差异及是否使用真实模型和凭据。覆盖结果不依赖 ZCode 的进度 UI。
-6. **上线与回退。** 后端镜像及两份 Nginx 配置随该 PR 发布。若遇客户端兼容问题，撤回此变更，恢复 JSON 和原 8 秒等待契约。任务与会话均使用原表，已有 run 仍可通过 `get_run` 读取。
+4. **工具错误。** 在 MCP 边界保留结构化结果，用 SDK 的 `CallToolResult` 标记工具失败，提供供客户端识别的错误码、面向用户的原因和下一步。测试会话忙、资源不可访问、运行失败的对外信息、状态读取和授权失效。
+5. **定向测试。** 扩展 `dataagent-backend/tests/test_remote_mcp.py`，短工具和协议握手使用 SDK 或解析 JSON-RPC SSE。覆盖后台立即返回、默认完成仍在原请求、等待到期返回句柄、进度令牌有无、授权失效、同键并发与断线重连均只产生一个任务及原错误映射。等待上限通过测试时钟或缩短测试常量验证，部署值保持 900 秒。
+6. **真实 HTTP 冒烟。** 用 Python 3.13、Docker MySQL `127.0.0.1:3326` 的隔离 schema 和本地 Docker Redis，走 Nginx 和主应用。用可控延迟的模型执行实际 MCP `ask`（至少一例超过 30 秒）。观察 `waiting → running → finished`、SSE 保活与进度、消息和附件的持久化。另测 `background: true`、断线后以原键恢复、`get_run` 取同一结果及通过原网页 API 取消后返回 `cancelled`。用官方 MCP Python SDK 和实际 ZCode 桌面版验证，记录协议版本、ZCode 长工具超时、线上代理差异及是否使用真实模型和凭据。覆盖结果不依赖 ZCode 的进度 UI。
+7. **上线与回退。** 后端镜像及两份 Nginx 配置随该 PR 发布。若遇客户端兼容问题，撤回此变更，恢复 JSON 和原 8 秒等待契约。任务与会话均使用原表，已有 run 仍可通过 `get_run` 读取。
 
 本地验证（2026-11-22）：Python 3.13 下分别使用 MCP SDK 1.23.0 和 1.30.0，30 项定向测试均通过。Nginx 配置检查通过。构建本分支 Pi 和沙箱镜像，在 Docker 网络内使用 `dataagent-mysql:3306`（宿主机 `127.0.0.1:3326`，隔离 schema `oda_mcp_sse_b9cec8a`）和现有 `dataagent-redis:6379`（DB 12）。透过实际 Nginx 入口调用，前台同连接等待 35.9 秒，收到 7 次进度、2 次保活和持久化的答案与附件；`get_run` 取回同一结果。显式后台提交后通过网页 API 取消并得到 `cancelled`。途中断开后同键重试仅保留一条任务。临时容器和 schema 已清理。
 
 冒烟前两次因容器未挂载 `/dataagent_runtime`、以 root 启动导致沙箱拒绝 UID/GID 而中止，补齐标准挂载并以非 root 用户启动后通过。使用本地 OpenAI 兼容的确定性模型服务，无真实模型凭据和业务查询。当前机器未安装 ZCode 桌面端，长调用的目标版本兼容性留在待办。
+
+工具错误补充验证（2026-11-22）：MCP SDK 1.23.0 和 1.30.0 各通过 39 项定向测试。使用同一套本地 Nginx、Python 3.13、Docker MySQL（隔离 schema `oda_mcp_sse_138f9a5`）、Redis 和 Pi，复测 SSE 前台、后台、取消及同键重连。官方 SDK 经 Nginx 实测会话忙、请求冲突、任务不存在均返回 `isError: true` 和下一步，撤销令牌后返回带更新配置提示的 HTTP 401。临时容器和 schema 已清理。
 
 ## 个人访问令牌替换 OAuth（2026-11-22）
 

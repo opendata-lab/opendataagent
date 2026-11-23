@@ -66,7 +66,7 @@ Snowflake 默认保持 `tools/call` 的 SSE 响应，期间发保活和可选的
 | `ask(question, request_key, thread_id?, background=false)` | 提交或找回原任务。在这次 POST 的 SSE 响应中等待，终态时返回一个 JSON-RPC 工具结果，随后结束响应。成功仍是 `answered`，包含 `answer`、`files`、`message_id`、`run_id`、`thread_id`。失败和取消沿用原字段。 |
 | `ask(..., background=true)` | 提交或找回原任务后立即返回当前状态。未完成时返回 `in_progress`、`run_id`、`thread_id` 和 `retry_after_ms: 2000`。已完成的幂等重试直接返回持久化结果。 |
 | `get_run(run_id)` | 读取当前状态或持久化的终态结果，供后台调用、等待上限和断线后恢复。已知 `run_id` 时可直接调用。 |
-| 调用断开后重试 | 若还没有 `run_id`，以原 `request_key`、问题及续聊参数重试 `ask`。继续等待可以沿用默认模式，也可传 `background: true` 先拿句柄。相同请求复用原任务，冲突继续返回 `request_conflict` 供客户端识别。用户提示为「请求异常，请重新发起请求。如仍失败，请联系管理员。」 |
+| 调用断开后重试 | 若还没有 `run_id`，以原 `request_key`、问题及续聊参数重试 `ask`。继续等待可以沿用默认模式，也可传 `background: true` 先拿句柄。相同请求复用原任务，冲突继续返回 `request_conflict` 供客户端识别。用户提示为「请求异常。请重新发起请求。如仍失败，请联系管理员。」 |
 | 同一会话已有运行 | 以不同幂等键提交下一问仍返回 `thread_busy` 和已有任务 ID。同键并发重试归到原任务。 |
 
 Streamable HTTP 地址沿用现有 `/mcp`。客户端 `Accept` 同时接受 `application/json` 和 `text/event-stream`，客户端协议类型保持 `http`。使用 FastMCP 的 `stateless_http=True, json_response=False`。SDK 按该配置处理所有 JSON-RPC 请求，短工具和握手也可能收到短 SSE 响应。SSE 先发可选通知，最终只发一个与原请求 ID 对应的工具结果。[MCP Streamable HTTP 规范](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#sending-messages-to-the-server)
@@ -77,6 +77,16 @@ Streamable HTTP 地址沿用现有 `/mcp`。客户端 `Accept` 同时接受 `app
 - 等待时立即读取一次当前调用人可见的任务状态，然后每 5 秒查一次 MySQL 中同一任务。每次查询同时核对助手和会话范围。发现终态才读取并组装持久化的助手消息和附件。复用已有存储和结果函数，避免重读历史消息或转发网页 SDK 事件。
 - 客户端提供 `_meta.progressToken` 时，用 FastMCP `Context.report_progress` 发送一次排队或执行状态，等待期间每 5 秒更新。数值为单调递增的已等待秒数，省略未知的 `total`。通知只携带运行状态和等待时长，最终正文和下载链接放在工具结果里。传输层持续用 SDK 自带的 SSE 注释保活，未请求进度时也能保活。[MCP 进度协议](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress)
 - 入站沿用访问令牌与助手授权。长等待向客户端发最终结果前，再用原请求复核令牌和助手访问权。SSE 响应已经开始时，授权失败通过 MCP 工具错误返回，响应中无原任务内容。新请求继续按现有 HTTP 401/403 处理。
+
+#### 工具错误与下一步
+
+MCP 协议错误和工具参数的类型、长度及取值校验继续由 SDK 处理。DataAgent 工具拒绝请求时用 `isError: true`，并在 `structuredContent.error` 提供三个字段。`code` 供客户端判断，`message` 说明发生了什么，`next_step` 告诉用户和客户端如何继续。`content[0].text` 保留同一份 JSON，以便兼容使用文本结果的客户端。[MCP 工具错误规范](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling)
+
+- 会话忙返回已有的 `run_id`，下一步读取该任务，完成后再发下一问。
+- 找不到会话、任务或回答时，指向会话列表、原任务或原会话中的回答。未知资源和不可访问资源使用同一对外文案。
+- 请求冲突保留 `request_conflict`，用户可以重新发起请求。缺少问题内容则提示输入问题。
+- 长连接中的令牌失效提示检查或更换令牌。助手不可访问时提示核对助手或联系管理员。
+- 查询最终失败时，`ask` 标为工具错误，包含运行句柄。用 `get_run` 成功查到一个失败或已取消的任务时，结果仍是一次成功的状态读取。超时、长时间无进展、取消和其他执行失败各有对应提示。执行中断且外部操作结果未知时，先核对结果再重新提交。MCP 结果只暴露错误码和面向用户的内容，原始异常、堆栈和诊断详情留在服务端。
 
 #### 超时与部署
 

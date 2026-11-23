@@ -91,6 +91,8 @@ POST /tasks/deliver-message
 
 Streamable HTTP 请求的 `Accept` 同时包含 `application/json` 和 `text/event-stream`。默认 `ask` 在同一次 SSE 响应中返回终态结果。客户端提供 `_meta.progressToken` 时可接收进度通知。服务器等待 15 分钟后若任务仍未完成，返回 `in_progress` 和 `run_id`，任务可继续执行。断线后用 `get_run` 取结果；若还未收到句柄，用原问题、原会话参数和同一个 `request_key` 重试。
 
+工具调用失败时返回 `isError: true`。`structuredContent.error` 包含 `code`（供客户端判断）、`message`（发生了什么）和 `next_step`（如何继续），同一结果也以 JSON 放在 `content[0].text` 中。收到 `thread_busy` 时，用返回的 `run_id` 查询当前任务。收到 `request_conflict` 时，提交新问题要使用新的请求键。查询已终止时，如用户决定重试，也用新的请求键提交；连接丢失或暂时未收到结果时，仍用原请求键恢复。`get_run` 查到已失败或已取消的任务时，正常返回任务状态以及相应的 `error` 和后续建议。外层 HTTP `401` 表示客户端需要检查访问令牌。参见 [MCP 工具错误规范](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling)。
+
 | 工具 | 用法 |
 | --- | --- |
 | `ask` | 传 `question`、`request_key`，续聊时带已有 `thread_id`。首问自动建会话。原请求重试用相同键和相同参数。会话已有在途任务时返回 `thread_busy` 和该任务的 `run_id`。默认通过同一次 SSE 调用等待结果；显式传 `background: true` 时立即返回当前状态和 `run_id`。 |
