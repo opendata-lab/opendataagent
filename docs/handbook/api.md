@@ -71,9 +71,23 @@ POST /tasks/deliver-message
 
 ## 单助手 MCP
 
-从助手详情页「复制配置」，在 MCP 客户端打开授权并在浏览器登录 DataAgent 后确认。客户端通过 Streamable HTTP 连接 `https://<host>/api/v1/remote-agents/<agent_id>/mcp`，`<host>` 为打开详情页时的域名。
+登录 DataAgent 后，从用户菜单「MCP 访问令牌」新建令牌并复制。进入已开启「MCP 访问」的助手详情页「复制配置」，将令牌填入客户端配置的 `headers.Authorization`，值为 `Bearer dak_…`。客户端通过 Streamable HTTP 连接 `<scheme>://<host>/api/v1/remote-agents/<agent_id>/mcp`，协议和域名与打开详情页时一致。
 
-资源元数据指向同域的 DataAgent OAuth 授权服务器；客户端可从 `/.well-known/oauth-authorization-server` 发现注册、授权和令牌接口。支持动态注册或使用公开客户端 `dataagent`，授权码交换必须使用 S256 PKCE。访问令牌通过 `Authorization: Bearer` 发送，有效期 1 小时；刷新令牌有效期 30 天，每次使用都会轮换。助手可见性仍在每次请求时检查。
+每次请求都会检查令牌状态和助手可见性。令牌缺失、无效、过期或已撤销时，返回 `401` 和 `WWW-Authenticate: Bearer realm="DataAgent MCP"`。令牌过期后重新申请，并更新客户端配置。
+
+### 管理 MCP 访问令牌
+
+以下接口需要网页登录会话和 `X-DataAgent-Client: dataagent` 请求头。平台登录关闭时返回 `404`。
+
+| 接口 | 请求与响应 |
+| --- | --- |
+| `GET /api/v1/dataagent/mcp-tokens?scope=mine\|all` | 返回 `{items: [...]}`，按创建时间倒序列出有效和最近 30 天内失效的令牌。默认 `mine`，`all` 仅管理员可用。 |
+| `POST /api/v1/dataagent/mcp-tokens` | 提交 `{name, expires_in_days}`。名称必填，最长 64 字，有效期为 30、90、180 天或 `null`（永不过期），默认 90 天。成功返回 `201` 和 `{item, token}`，完整令牌仅在此时显示。名称或有效期无效返回 `422`，每人已有 10 个有效令牌时返回 `409`。 |
+| `DELETE /api/v1/dataagent/mcp-tokens/{token_id}` | 本人或管理员可撤销，返回 `200` 和 `{item}`。再次撤销返回同一记录。 |
+
+令牌记录字段为 `id`、`name`、`token_prefix`、`user_id`、`display_name`、`created_at`、`last_used_at`、`expires_at`、`revoked_at`、`status`。时间为 ISO 8601 UTC，状态为 `active`、`expired` 或 `revoked`。
+
+### 助手工具
 
 | 工具 | 用法 |
 | --- | --- |

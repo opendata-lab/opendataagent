@@ -153,10 +153,16 @@ describe('agent draft workbench', () => {
       await copy.trigger('click')
       expect(JSON.parse(writeText.mock.calls[0][0])).toEqual({ mcpServers: {
         [`dataagent-${profile.name}`]: {
-          type: 'http', url: `${window.location.origin}${path}`,
-          oauth: { type: 'authorization_code', clientId: 'dataagent' },
+          type: 'http',
+          url: `${window.location.protocol}//${window.location.host}${path}`,
+          headers: { Authorization: 'Bearer <你的 MCP 访问令牌>' },
         },
       } })
+      const tokenLink = wrapper.get('.mcp-token-link')
+      expect(tokenLink.text()).toBe('申请令牌')
+      expect(tokenLink.attributes('href')).toBe('/settings/mcp-tokens')
+      await tokenLink.trigger('click')
+      expect(routerPush).toHaveBeenCalledWith('/settings/mcp-tokens')
       // Plain-HTTP deployments have no navigator.clipboard; the copy still works.
       vi.stubGlobal('navigator', {})
       const execCommand = vi.fn(() => true)

@@ -45,7 +45,12 @@
             :disabled="!draft.remote_mcp_path"
             @click="copyMcpConfig"
           ><Icon name="copy" class="small" />复制配置</button>
-          <span class="mcp-config-hint">{{ draft.remote_mcp_path ? '粘贴到客户端的 MCP 设置后点打开授权' : '开启后可复制配置' }}</span>
+          <a
+            class="mcp-token-link"
+            :href="mcpTokensHref"
+            @click.prevent="router.push('/settings/mcp-tokens')"
+          >申请令牌</a>
+          <span class="mcp-config-hint">{{ draft.remote_mcp_path ? '粘贴到客户端配置并填入访问令牌' : '开启后可复制配置' }}</span>
         </section>
         <div class="head-actions">
           <template v-if="canManage">
@@ -578,6 +583,7 @@ const route = useRoute(),
   router = useRouter(),
   authStore = useAuthStore();
 const canManage = computed(() => authStore.isAdmin);
+const mcpTokensHref = computed(() => router.resolve?.('/settings/mcp-tokens')?.href || '/settings/mcp-tokens');
 const api = createNl2SqlApiClient({
   defaultHeaders: DATAAGENT_CLIENT_HEADERS,
   onUnauthorized: () =>
@@ -846,8 +852,8 @@ async function copyMcpConfig() {
   if (!draft.remote_mcp_path) return;
   const config = { mcpServers: { [`dataagent-${form.name}`]: {
     type: "http",
-    url: `${window.location.origin}${draft.remote_mcp_path}`,
-    oauth: { type: "authorization_code", clientId: "dataagent" },
+    url: `${window.location.protocol}//${window.location.host}${draft.remote_mcp_path}`,
+    headers: { Authorization: "Bearer <你的 MCP 访问令牌>" },
   } } };
   try {
     // copyText falls back to execCommand: deployments reached over plain HTTP
@@ -1240,6 +1246,14 @@ onBeforeUnmount(() => { loadGeneration++; window.removeEventListener("beforeunlo
 .mcp-access-switch[aria-checked="true"] { background: var(--primary-dark); }
 .mcp-access-switch[aria-checked="true"]::after { transform: translateX(15px); }
 .mcp-config-copy { flex: 0 0 auto; white-space: nowrap; }
+.mcp-token-link {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--primary-dark);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.mcp-token-link:hover { text-decoration: underline; }
 .mcp-config-hint { font-size: 12px; }
 @media (max-width: 1160px) {
   .workspace-head:has(.mcp-access) { grid-template-columns: minmax(0, 1fr) auto; }

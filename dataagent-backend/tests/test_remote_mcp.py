@@ -1,95 +1,288 @@
 import asyncio
-from base64 import urlsafe_b64encode
+from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timedelta
 import hashlib
+import secrets
+import sqlite3
 from types import SimpleNamespace
-import time
-from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
-import jwt
+from starlette.responses import JSONResponse
 import pytest
 
 from api import remote_mcp
 from core import auth, remote_mcp_policy, remote_mcp_tokens
 from main import app
 
-ORIGIN = "https://agent.example:8443"
+ORIGIN = "http://agent.example:8443"
 OTHER_ORIGIN = "https://other.example"
-PREFIX = remote_mcp_policy.PREFIX
-OAUTH = remote_mcp_policy.OAUTH_PREFIX
-VERIFIER = "test-verifier-" * 4
-CHALLENGE = urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest()).rstrip(b"=").decode()
+MANAGEMENT = "/api/v1/dataagent/mcp-tokens"
+MCP = f"{remote_mcp_policy.PREFIX}/a1/mcp"
+DOWNLOAD = f"{remote_mcp_policy.PREFIX}/a1/threads/thread-1/files/output/report.csv"
 IDENTITY = auth.AuthIdentity("example:Alice", "Alice", "user", "example")
-AUTHORIZATION = {"response_type": "code", "client_id": "dataagent", "redirect_uri": "http://127.0.0.1:8765/cb?hello=1",
-                 "code_challenge": CHALLENGE, "code_challenge_method": "S256", "state": "state+with&symbols"}
+ADMIN = auth.AuthIdentity("local:root", "Root", "admin", "local")
+OTHER_USER = auth.AuthIdentity("example:alice", "Another user", "user", "example")
 BROWSER_HEADERS = {"X-DataAgent-Client": "dataagent", "Origin": ORIGIN}
 
 
-class FakeRedis:
-    def __init__(self):
-        self.entries = {}
-        self.expirations = {}
+class TokenCursor(sqlite3.Cursor):
+    def __enter__(self):
+        return self
 
-    async def set(self, key, value, *, ex, nx):
-        assert nx
-        self.entries[key] = value
-        self.expirations[key] = ex
-        return True
+    def __exit__(self, *args):
+        self.close()
 
-    async def getdel(self, key):
-        return self.entries.pop(key, None)
+    def execute(self, sql, parameters=()):
+        if sql.startswith("SELECT GET_LOCK("):
+            return super().execute("SELECT 1 AS acquired")
+        parameters = tuple(value.isoformat(sep=" ") if isinstance(value, datetime) else value
+                           for value in parameters)
+        return super().execute(sql.replace("%s", "?"), parameters)
 
 
-class FakeRefreshStore:
-    def __init__(self):
-        self.entries = {}
-
-    def save(self, token, grant):
-        self.entries[token] = grant
-
-    def rotate(self, token, client_id, replacement):
-        grant = self.entries.get(token)
-        if grant is None or grant["client_id"] != client_id:
-            return None
-        del self.entries[token]
-        self.entries[replacement] = grant
-        return grant
+def token_row(cursor, values):
+    return {column[0]: datetime.fromisoformat(value) if column[0].endswith("_at") and value else value
+            for column, value in zip(cursor.description, values)}
 
 
 @pytest.fixture
-def oauth(monkeypatch):
-    settings = auth.AuthSettings(enabled=True, secret_key="test-key-" * 5,
-                                 oauth=auth.OAuthSettings(provider_name="example", client_id="web", authorize_url="https://sso.example/auth",
-                                                          token_url="https://sso.example/token"))
-    fake_redis = FakeRedis()
-    refresh_store = FakeRefreshStore()
+def token_db(tmp_path, monkeypatch):
+    database = tmp_path / "mcp-tokens.db"
+    clock = SimpleNamespace(now=datetime(2026, 11, 22, 12))
+    statements = []
+
+    @contextmanager
+    def connect():
+        connection = sqlite3.connect(database)
+        connection.row_factory = token_row
+        connection.set_trace_callback(statements.append)
+        try:
+            yield SimpleNamespace(cursor=lambda: connection.cursor(factory=TokenCursor), commit=connection.commit)
+        finally:
+            connection.close()
+
+    with connect() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """CREATE TABLE da_mcp_access_token (
+               id INTEGER PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, token_prefix TEXT NOT NULL,
+               user_id TEXT NOT NULL, display_name TEXT NOT NULL, name TEXT NOT NULL,
+               created_at TEXT NOT NULL, last_used_at TEXT, expires_at TEXT, revoked_at TEXT)"""
+        )
+        connection.commit()
+    monkeypatch.setattr(remote_mcp_tokens, "_connect", connect)
+    monkeypatch.setattr(remote_mcp_tokens, "_now", lambda: clock.now)
+    return SimpleNamespace(connect=connect, clock=clock, statements=statements)
+
+
+@pytest.fixture
+def tokens_app(monkeypatch, token_db):
+    settings = auth.AuthSettings(
+        enabled=True, secret_key="test-key-" * 5, local_admins=[{"username": "root"}],
+        oauth=auth.OAuthSettings(provider_name="example", client_id="web",
+                                 authorize_url="https://sso.example/auth", token_url="https://sso.example/token"),
+    )
     monkeypatch.setattr(auth, "get_auth_settings", lambda: settings)
     monkeypatch.setattr(remote_mcp_policy, "get_auth_settings", lambda: settings)
-    monkeypatch.setattr(remote_mcp_tokens, "get_task_coordinator", lambda: SimpleNamespace(redis_client=fake_redis))
-    monkeypatch.setattr(remote_mcp_tokens, "save_refresh_token", refresh_store.save)
-    monkeypatch.setattr(remote_mcp_tokens, "rotate_refresh_token", refresh_store.rotate)
-    client = TestClient(app, base_url=ORIGIN, follow_redirects=False)
-    client.cookies.set(settings.cookie_name, auth.issue_session_token(IDENTITY))
-    yield SimpleNamespace(client=client, redis=fake_redis, settings=settings, refresh=refresh_store)
-    client.close()
+    monkeypatch.setattr(remote_mcp, "_require_agent_profile",
+                        lambda agent_id, context: {"remote_mcp_enabled": True})
+    server = remote_mcp.create_server()
+
+    @asynccontextmanager
+    async def lifespan(_):
+        async with server.session_manager.run():
+            yield
+
+    monkeypatch.setattr(app.router, "lifespan_context", lifespan)
+    monkeypatch.setattr(app.state, "remote_mcp", server, raising=False)
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as client:
+        def login(identity):
+            client.cookies.clear()
+            if identity is not None:
+                client.cookies.set(settings.cookie_name, auth.issue_session_token(identity))
+
+        login(IDENTITY)
+        yield SimpleNamespace(client=client, login=login, settings=settings, db=token_db)
 
 
-def decide(oauth, decision="allow", **parameters):
-    return oauth.client.post(f"{OAUTH}/authorize", headers=BROWSER_HEADERS,
-                             json=AUTHORIZATION | parameters | {"decision": decision})
+def create(client, name="ZCode", **options):
+    response = client.post(MANAGEMENT, headers=BROWSER_HEADERS, json={"name": name, **options})
+    assert response.status_code == 201, response.text
+    assert response.headers["Cache-Control"] == "no-store"
+    return response.json()
 
 
-def authorization_code(oauth, **parameters):
-    response = decide(oauth, **parameters)
+def bearer(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def mcp_call(client, token, **headers):
+    return client.post(
+        MCP, headers={**bearer(token), "Accept": "application/json, text/event-stream", **headers},
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+    )
+
+
+def test_create_and_list_mine_or_all(tokens_app):
+    client = tokens_app.client
+    first = create(client, "内网客户端 ")
+    item, token = first["item"], first["token"]
+    assert set(first) == {"item", "token"}
+    assert token.startswith("dak_") and len(token) == 47
+    assert item == {
+        "id": 1, "name": "内网客户端", "token_prefix": token[:10],
+        "user_id": IDENTITY.user_id, "display_name": IDENTITY.display_name, "status": "active",
+        "created_at": "2026-11-22T12:00:00Z", "expires_at": "2027-02-20T12:00:00Z",
+        "last_used_at": None, "revoked_at": None,
+    }
+    with tokens_app.db.connect() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT token_hash FROM da_mcp_access_token WHERE id = %s", (item["id"],))
+        assert cursor.fetchone()["token_hash"] == hashlib.sha256(token.encode()).hexdigest()
+    second = create(client, expires_in_days=None)["item"]
+    assert second["expires_at"] is None
+    tokens_app.login(OTHER_USER)
+    other = create(client, expires_in_days=30)["item"]
+    assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [other]}
+    assert client.get(f"{MANAGEMENT}?scope=all", headers=BROWSER_HEADERS).status_code == 403
+    tokens_app.login(ADMIN)
+    admin_item = create(client, expires_in_days=180, user_id=IDENTITY.user_id)["item"]
+    assert admin_item["user_id"] == ADMIN.user_id
+    assert client.get(f"{MANAGEMENT}?scope=mine", headers=BROWSER_HEADERS).json() == {"items": [admin_item]}
+    assert client.get(f"{MANAGEMENT}?scope=all", headers=BROWSER_HEADERS).json() == {
+        "items": [admin_item, other, second, item],
+    }
+
+
+def test_active_limit_frees_slots_after_expiry_and_revocation(tokens_app):
+    client = tokens_app.client
+    items = [create(client, f"token-{index}", expires_in_days=30)["item"] for index in range(10)]
+    assert client.post(MANAGEMENT, headers=BROWSER_HEADERS, json={"name": "extra"}).status_code == 409
+    assert client.delete(f"{MANAGEMENT}/{items[0]['id']}", headers=BROWSER_HEADERS).status_code == 200
+    create(client, expires_in_days=None)
+    assert client.post(MANAGEMENT, headers=BROWSER_HEADERS, json={"name": "extra"}).status_code == 409
+    tokens_app.db.clock.now += timedelta(days=30)
+    create(client)
+
+
+@pytest.mark.parametrize("payload", [
+    {}, {"name": ""}, {"name": " \t "}, {"name": "字" * 65}, {"name": 123},
+    {"name": "client", "expires_in_days": 31}, {"name": "client", "expires_in_days": "90"},
+    {"name": "client", "expires_in_days": 90.0}, {"name": "client", "expires_in_days": True},
+])
+def test_token_create_validates_request(tokens_app, payload):
+    assert tokens_app.client.post(MANAGEMENT, headers=BROWSER_HEADERS, json=payload).status_code == 422
+
+
+def test_management_requires_a_session_and_the_spa_header(tokens_app):
+    client = tokens_app.client
+    created = create(client)
+    path = f"{MANAGEMENT}/{created['item']['id']}"
+    calls = [("GET", MANAGEMENT), ("POST", MANAGEMENT), ("DELETE", path)]
+    for method, url in calls:
+        options = {"json": {"name": "client"}} if method == "POST" else {}
+        assert client.request(method, url, **options).status_code == 403
+        cross_origin = {**BROWSER_HEADERS, "Origin": OTHER_ORIGIN}
+        assert client.request(method, url, headers=cross_origin, **options).status_code == 403
+        same_site = {**BROWSER_HEADERS, "Sec-Fetch-Site": "same-site"}
+        assert client.request(method, url, headers=same_site, **options).status_code == 403
+    proxied_headers = {**BROWSER_HEADERS, "Host": "agent.example"}
+    assert client.post(MANAGEMENT, headers=proxied_headers, json={"name": "proxied"}).status_code == 201
+    tokens_app.login(None)
+    for method, url in calls:
+        options = {"json": {"name": "client"}} if method == "POST" else {}
+        headers = {**BROWSER_HEADERS, **bearer(created["token"])}
+        assert client.request(method, url, headers=headers, **options).status_code == 401
+        tokens_app.settings.enabled = False
+        assert client.request(method, url, headers=headers, **options).status_code == 404
+        tokens_app.settings.enabled = True
+    assert client.get(f"{MANAGEMENT}?scope=someone", headers=BROWSER_HEADERS).status_code == 401
+    tokens_app.login(IDENTITY)
+    assert client.get(f"{MANAGEMENT}?scope=someone", headers=BROWSER_HEADERS).status_code == 422
+
+
+def test_user_can_revoke_own_token_and_admin_can_revoke_others(tokens_app):
+    client = tokens_app.client
+    first = create(client)["item"]
+    second = create(client)["item"]
+    own_url = f"{MANAGEMENT}/{first['id']}"
+    other_url = f"{MANAGEMENT}/{second['id']}"
+    revoked = client.delete(own_url, headers=BROWSER_HEADERS).json()["item"]
+    assert revoked["status"] == "revoked" and revoked["revoked_at"] == revoked["created_at"]
+    tokens_app.db.clock.now += timedelta(minutes=2)
+    repeated = client.delete(own_url, headers=BROWSER_HEADERS)
+    assert repeated.status_code == 200 and repeated.json() == {"item": revoked}
+    tokens_app.login(OTHER_USER)
+    assert client.delete(other_url, headers=BROWSER_HEADERS).status_code == 404
+    tokens_app.login(ADMIN)
+    response = client.delete(other_url, headers=BROWSER_HEADERS)
+    assert response.status_code == 200 and response.json()["item"]["status"] == "revoked"
+    assert client.delete(f"{MANAGEMENT}/999", headers=BROWSER_HEADERS).status_code == 404
+
+
+def test_lists_only_active_and_recently_invalid_tokens(tokens_app):
+    client = tokens_app.client
+    revoked = create(client, "revoked", expires_in_days=None)["item"]
+    client.delete(f"{MANAGEMENT}/{revoked['id']}", headers=BROWSER_HEADERS)
+    expired = create(client, "expired", expires_in_days=30)["item"]
+    tokens_app.db.clock.now += timedelta(days=30, seconds=1)
+    active = create(client, "active", expires_in_days=None)["item"]
+    items = client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"]
+    assert [(item["id"], item["status"]) for item in items] == [
+        (active["id"], "active"), (expired["id"], "expired"),
+    ]
+    tokens_app.db.clock.now += timedelta(days=30)
+    assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [active]}
+
+
+def test_mcp_and_download_accept_valid_bearer_and_reject_revocation(tokens_app, monkeypatch):
+    client = tokens_app.client
+    created = create(client)
+    token = created["token"]
+    topic = {"agent_id": "a1"}
+    monkeypatch.setattr(remote_mcp, "get_topic_task_store", lambda: SimpleNamespace(get_topic=lambda *args, **kwargs: topic))
+    monkeypatch.setattr(remote_mcp, "topic_file_response", lambda *args, **kwargs: JSONResponse({"file": "report"}))
+    response = mcp_call(client, token)
     assert response.status_code == 200
-    query = parse_qs(urlsplit(response.json()["redirect_url"]).query)
-    return query["code"][0]
+    assert "ask" in {tool["name"] for tool in response.json()["result"]["tools"]}
+    assert client.get(DOWNLOAD, headers=bearer(token)).json() == {"file": "report"}
+    assert mcp_call(client, token, Origin=OTHER_ORIGIN).status_code == 403
+    client.delete(f"{MANAGEMENT}/{created['item']['id']}", headers=BROWSER_HEADERS)
+    for unauthorized in (mcp_call(client, token), client.get(DOWNLOAD, headers=bearer(token))):
+        assert unauthorized.status_code == 401
+        assert unauthorized.headers["WWW-Authenticate"] == 'Bearer realm="DataAgent MCP"'
 
 
-def exchange(oauth, code, **parameters):
-    return oauth.client.post(f"{OAUTH}/token", data={"grant_type": "authorization_code", "code": code,
-                             "client_id": AUTHORIZATION["client_id"], "redirect_uri": AUTHORIZATION["redirect_uri"],
-                             "code_verifier": VERIFIER} | parameters)
+def test_mcp_rejects_expired_unknown_and_session_tokens(tokens_app):
+    client = tokens_app.client
+    expiring = create(client, expires_in_days=30)["token"]
+    tokens_app.db.clock.now += timedelta(days=30)
+    unknown = "dak_" + secrets.token_urlsafe(32)
+    for token in (expiring, unknown, auth.issue_session_token(IDENTITY), ""):
+        response = mcp_call(client, token)
+        assert response.status_code == 401
+        assert response.headers["WWW-Authenticate"] == 'Bearer realm="DataAgent MCP"'
+
+
+def test_mcp_rejects_a_local_admin_removed_from_settings(tokens_app):
+    tokens_app.login(ADMIN)
+    token = create(tokens_app.client)["token"]
+    assert mcp_call(tokens_app.client, token).status_code == 200
+    tokens_app.settings.local_admins.clear()
+    assert mcp_call(tokens_app.client, token).status_code == 401
+
+
+def test_mcp_resolves_current_role_and_throttles_last_used(tokens_app):
+    client = tokens_app.client
+    token = create(client)["token"]
+    assert remote_mcp_policy.verify_identity(f"Bearer {token}") == IDENTITY
+    tokens_app.settings.admin_users.append(IDENTITY.user_id)
+    tokens_app.db.clock.now += timedelta(seconds=59)
+    assert remote_mcp_policy.verify_identity(f"Bearer {token}").is_admin
+    assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"][0]["last_used_at"] == "2026-11-22T12:00:00Z"
+    updates = [statement for statement in tokens_app.db.statements if "SET last_used_at" in statement]
+    assert len(updates) == 1
+    tokens_app.db.clock.now += timedelta(seconds=1)
+    assert mcp_call(client, token).status_code == 200
+    assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"][0]["last_used_at"] == "2026-11-22T12:01:00Z"
 
 
 def test_remote_tools_have_direct_structured_output():
@@ -97,48 +290,6 @@ def test_remote_tools_have_direct_structured_output():
     assert set(tools) == {"ask", "list_threads", "get_thread", "get_run", "feedback"}
     for tool in tools.values():
         assert tool.fn_metadata.output_schema["type"] == "object"
-
-
-def test_mcp_token_maps_to_web_identity_with_current_role(oauth):
-    token = exchange(oauth, authorization_code(oauth)).json()["access_token"]
-    assert remote_mcp_policy.verify_identity(f"Bearer {token}", "agent_one", ORIGIN) == IDENTITY
-    oauth.settings.admin_users.append(IDENTITY.user_id)
-    assert remote_mcp_policy.verify_identity(f"Bearer {token}", "agent_two", ORIGIN).role == "admin"
-    assert auth.verify_session_token(token) is None
-    oauth.settings.oauth = auth.OAuthSettings()
-    oauth.settings.local_admins = [{"username": "root"}]
-    assert remote_mcp_policy.enabled()
-    local = remote_mcp_policy.issue_access_token(ORIGIN, "local:root", "root", "dataagent", "dataagent:ask")
-    assert remote_mcp_policy.verify_identity(f"Bearer {local}", "agent_one", ORIGIN).role == "admin"
-
-
-def test_access_token_audience_issuer_expiry_and_scope(oauth):
-    claims = {"iss": ORIGIN, "sub": IDENTITY.user_id, "name": IDENTITY.display_name, "client_id": "dataagent",
-              "aud": remote_mcp_policy.endpoint(ORIGIN, "agent_one"), "scope": "dataagent:ask",
-              "exp": int(time.time()) + 60}
-
-    def token(**overrides):
-        return "Bearer " + jwt.encode(claims | overrides, remote_mcp_policy._key("access"), algorithm="HS256")
-
-    assert remote_mcp_policy.verify_identity(token(), "agent_one", ORIGIN) == IDENTITY
-    for agent, bearer, expected in [
-        ("agent_two", token(), "unauthorized"),
-        ("agent_one", token(aud=f"{ORIGIN}/elsewhere"), "unauthorized"),
-        ("agent_one", token(exp=1), "unauthorized"),
-        ("agent_one", token(scope=None), "forbidden"),
-        ("agent_one", token(iss=OTHER_ORIGIN), "unauthorized"),
-        ("agent_one", token(sub=None), "unauthorized"),
-    ]:
-        with pytest.raises(remote_mcp_policy.RemoteMcpError) as exc:
-            remote_mcp_policy.verify_identity(bearer, agent, ORIGIN)
-        assert exc.value.code == expected
-    no_scope = jwt.encode({key: value for key, value in claims.items() if key != "scope"},
-                          remote_mcp_policy._key("access"), algorithm="HS256")
-    with pytest.raises(remote_mcp_policy.RemoteMcpError) as exc:
-        remote_mcp_policy.verify_identity(f"Bearer {no_scope}", "agent_one", ORIGIN)
-    assert exc.value.code == "forbidden"
-    with pytest.raises(remote_mcp_policy.RemoteMcpError):
-        remote_mcp_policy.verify_identity(token(), "agent_one", OTHER_ORIGIN)
 
 
 def run(coro):
@@ -225,146 +376,3 @@ def test_a_busy_thread_is_reported_with_its_running_task(store):
     busy = run(remote_mcp.ask("继续", "key-00000004", thread_id="t-alice"))
     assert busy["error"]["code"] == "thread_busy" and busy["run_id"] == "task-9"
     assert store.submitted == []
-
-
-def test_metadata_documents_use_request_origin(oauth):
-    oauth.client.cookies.clear()
-    protected = oauth.client.get(f"/.well-known/oauth-protected-resource{PREFIX}/agent_one/mcp")
-    assert protected.json() == {"resource": f"{ORIGIN}{PREFIX}/agent_one/mcp", "authorization_servers": [ORIGIN],
-                                "scopes_supported": ["dataagent:ask"], "bearer_methods_supported": ["header"]}
-    unauthorized = oauth.client.post(f"{PREFIX}/agent_one/mcp")
-    assert unauthorized.status_code == 401
-    assert str(protected.request.url) in unauthorized.headers["www-authenticate"]
-    discovery = oauth.client.get("/.well-known/oauth-authorization-server")
-    assert discovery.json() == oauth.client.get("/.well-known/openid-configuration").json() == {
-        "issuer": ORIGIN, "authorization_endpoint": f"{ORIGIN}{OAUTH}/authorize", "token_endpoint": f"{ORIGIN}{OAUTH}/token",
-        "registration_endpoint": f"{ORIGIN}{OAUTH}/register", "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"], "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none"], "scopes_supported": ["dataagent:ask"],
-    }
-    oauth.settings.enabled = False
-    assert oauth.client.get("/.well-known/oauth-authorization-server").status_code == 404
-
-
-def test_stateless_public_registration_and_authorization(oauth):
-    uris = ["http://localhost:7890/cb", "http://127.0.0.1:5678/cb", "http://[::1]:8765/cb",
-            "https://client.example/cb", "example.desktop:/oauth/cb"]
-    response = oauth.client.post(f"{OAUTH}/register", json={"client_name": "客户端", "redirect_uris": uris})
-    assert response.status_code == 201
-    registration = response.json()
-    assert registration["token_endpoint_auth_method"] == "none"
-    assert "client_secret" not in registration
-    assert remote_mcp_policy.client_registration(registration["client_id"]) == {"client_name": "客户端", "redirect_uris": uris}
-    grant = AUTHORIZATION | {"client_id": registration["client_id"], "redirect_uri": uris[-1],
-                             "resource": f"{ORIGIN}{PREFIX}/agent_one/mcp"}
-    oauth.client.cookies.clear()
-    response = oauth.client.get(f"{OAUTH}/authorize", params=grant)
-    assert response.status_code == 302
-    assert urlsplit(response.headers["location"]).path == "/mcp-authorize"
-    assert parse_qs(urlsplit(response.headers["location"]).query) == {key: [value] for key, value in grant.items()}
-    wrong_redirect = oauth.client.get(f"{OAUTH}/authorize", params=grant | {"redirect_uri": "https://other.example/cb"})
-    assert wrong_redirect.status_code == 400 and "location" not in wrong_redirect.headers
-
-
-@pytest.mark.parametrize("uri", ["javascript:alert(1)", "http://evil.example/cb", "file:///tmp/cb", "data:text/html,hi",
-                                 "http://localhost@evil.example/cb", "https://client.example/cb#fragment"])
-def test_register_rejects_invalid_redirects(oauth, uri):
-    response = oauth.client.post(f"{OAUTH}/register", json={"redirect_uris": [uri]})
-    assert response.status_code == 400 and response.json()["error"] == "invalid_redirect_uri"
-
-
-@pytest.mark.parametrize(("overrides", "error"), [
-    ({"client_id": "unknown"}, "invalid_client"),
-    ({"redirect_uri": "http://evil.example/cb"}, "invalid_request"),
-    ({"code_challenge": ""}, "invalid_request"),
-    ({"code_challenge_method": "plain"}, "invalid_request"),
-    ({"state": ""}, "invalid_request"),
-    ({"scope": "openid"}, "invalid_scope"),
-    ({"response_type": "token"}, "unsupported_response_type"),
-    ({"resource": f"{OTHER_ORIGIN}{PREFIX}/agent_one/mcp"}, "invalid_target"),
-])
-def test_authorize_get_rejects_invalid_parameters(oauth, overrides, error):
-    response = oauth.client.get(f"{OAUTH}/authorize", params=AUTHORIZATION | overrides)
-    assert response.status_code == 400 and response.json()["error"] == error
-    assert "location" not in response.headers
-
-
-def test_authorize_post_requires_session_header_and_same_origin(oauth):
-    data = AUTHORIZATION | {"decision": "allow"}
-    assert oauth.client.post(f"{OAUTH}/authorize", json=data).status_code == 403
-    assert oauth.client.post(f"{OAUTH}/authorize", json=data,
-                             headers=BROWSER_HEADERS | {"Origin": OTHER_ORIGIN}).status_code == 403
-    oauth.client.cookies.clear()
-    assert oauth.client.post(f"{OAUTH}/authorize", json=data, headers=BROWSER_HEADERS).status_code == 401
-    assert not oauth.redis.entries
-
-
-def test_authorize_post_revalidates_and_returns_denial_or_single_use_code(oauth):
-    invalid = decide(oauth, redirect_uri="javascript:alert(1)")
-    assert invalid.status_code == 400
-    denied = decide(oauth, "deny")
-    assert denied.status_code == 200
-    assert parse_qs(urlsplit(denied.json()["redirect_url"]).query) == {
-        "hello": ["1"], "error": ["access_denied"], "state": [AUTHORIZATION["state"]],
-    }
-    assert not oauth.redis.entries
-    allowed = decide(oauth)
-    assert allowed.status_code == 200
-    callback = urlsplit(allowed.json()["redirect_url"])
-    query = parse_qs(callback.query)
-    assert callback.netloc == "127.0.0.1:8765"
-    assert query["hello"] == ["1"] and query["state"] == [AUTHORIZATION["state"]]
-    assert oauth.redis.expirations == {f"dataagent:mcp:code:{query['code'][0]}": 300}
-
-
-def test_token_exchange_and_reused_code(oauth):
-    code = authorization_code(oauth)
-    response = exchange(oauth, code)
-    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
-    result = response.json()
-    claims = jwt.decode(result["access_token"], remote_mcp_policy._key("access"), algorithms=["HS256"],
-                        issuer=ORIGIN, audience=f"{ORIGIN}{PREFIX}")
-    assert result["token_type"] == "Bearer" and result["expires_in"] == 3600 and result["scope"] == "dataagent:ask"
-    assert claims["sub"] == IDENTITY.user_id and claims["name"] == IDENTITY.display_name
-    assert claims["client_id"] == "dataagent" and "role" not in claims
-    assert result["refresh_token"] in oauth.refresh.entries
-    replay = exchange(oauth, code)
-    assert replay.status_code == 400 and replay.json()["error"] == "invalid_grant"
-
-
-def test_token_endpoint_rejects_json_and_http_client_authentication(oauth):
-    malformed = oauth.client.post(f"{OAUTH}/token", json={"grant_type": "authorization_code"})
-    assert malformed.status_code == 400 and malformed.json()["error"] == "invalid_request"
-    authenticated = oauth.client.post(f"{OAUTH}/token", headers={"Authorization": "Basic ZGF0YWFnZW50Og=="},
-                                      data={"grant_type": "authorization_code"})
-    assert authenticated.status_code == 401 and authenticated.json()["error"] == "invalid_client"
-    assert authenticated.headers["www-authenticate"].startswith("Basic ")
-
-
-@pytest.mark.parametrize("overrides", [{"code_verifier": "x" * 43}, {"redirect_uri": "http://localhost/cb"}])
-def test_token_exchange_rejects_wrong_verifier_or_redirect(oauth, overrides):
-    response = exchange(oauth, authorization_code(oauth), **overrides)
-    assert response.status_code == 400 and response.json()["error"] == "invalid_grant"
-    assert not oauth.refresh.entries
-
-
-def test_refresh_rotates_and_cannot_be_used_on_another_origin(oauth):
-    first = exchange(oauth, authorization_code(oauth)).json()
-    form = {"grant_type": "refresh_token", "client_id": "dataagent", "refresh_token": first["refresh_token"]}
-    foreign = oauth.client.post(f"{OTHER_ORIGIN}{OAUTH}/token", data=form)
-    assert foreign.status_code == 400 and foreign.json()["error"] == "invalid_grant"
-    rotated = oauth.client.post(f"{OAUTH}/token", data=form)
-    assert rotated.status_code == 200 and rotated.json()["refresh_token"] != first["refresh_token"]
-    assert rotated.json()["access_token"] != first["access_token"]
-    assert remote_mcp_policy.verify_identity(f"Bearer {rotated.json()['access_token']}", "agent_one", ORIGIN) == IDENTITY
-    rejected = oauth.client.post(f"{OAUTH}/token", data=form)
-    assert rejected.status_code == 400 and rejected.json()["error"] == "invalid_grant"
-
-
-def test_legacy_discovery_setting_is_ignored():
-    settings = auth._parse_oauth_providers([{"name": "example", "remote_app": {
-        "client_id": "web", "client_secret": "web-secret", "authorize_url": "https://sso.example/auth",
-        "access_token_url": "https://sso.example/token", "api_base_url": "https://sso.example/",
-        "redirect_uri": "https://agent.example/oauth-authorized/example", "server_metadata_url": "not a URL",
-    }}])
-    assert settings.configured and not hasattr(settings, "server_metadata_url")

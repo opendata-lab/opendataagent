@@ -19,7 +19,7 @@ vi.mock('@/stores/auth', () => ({
 
 // 路由组件本身与守卫无关，替换为轻量桩，避免加载重型视图。
 vi.mock('@/views/LoginView.vue', () => ({ default: { template: '<div>login</div>' } }))
-vi.mock('@/views/McpAuthorizeView.vue', () => ({ default: { template: '<div>consent</div>' } }))
+vi.mock('@/views/settings/McpTokensView.vue', () => ({ default: { template: '<div>mcp-tokens</div>' } }))
 vi.mock('@/views/intelligence/IntelligentQueryView.vue', () => ({ default: { template: '<div><router-view /></div>' } }))
 vi.mock('@/views/intelligence/NL2SqlChatV2.vue', () => ({ default: { template: '<div>chat</div>' } }))
 vi.mock('@/views/settings/SettingsLayout.vue', () => ({ default: { template: '<div><router-view /></div>' } }))
@@ -55,15 +55,14 @@ describe('auth router guard', () => {
     expect(route.path).toBe('/chat')
   })
 
-  it('preserves the MCP authorization request at login and accepts a non-admin afterward', async () => {
+  it('redirects unauthenticated users from /settings/mcp-tokens to /login and returns afterward', async () => {
     authState.enabled = true
-    const login = await navigate('/mcp-authorize?client_id=dataagent&state=state%2B1')
+    const login = await navigate('/settings/mcp-tokens')
     expect(login.path).toBe('/login')
-    expect(login.query.redirect).toContain('/mcp-authorize?client_id=dataagent&state=state%2B1')
+    expect(login.query.redirect).toContain('/settings/mcp-tokens')
     authState.currentUser = { role: 'user' }
     await router.push(login.query.redirect)
-    expect(router.currentRoute.value.name).toBe('McpAuthorize')
-    expect(router.currentRoute.value.query.state).toBe('state+1')
+    expect(router.currentRoute.value.name).toBe('McpTokens')
   })
 
   it('redirects unauthenticated users to /login with redirect', async () => {
@@ -105,7 +104,7 @@ describe('auth router guard', () => {
     expect(route.query.agent_id).toBe('agent_sales')
   })
 
-  it.each(['/settings/skills', '/settings/skills/demo', '/agents', '/agents/agent_1'])(
+  it.each(['/settings/skills', '/settings/skills/demo', '/settings/mcp-tokens', '/agents', '/agents/agent_1'])(
     'lets non-admin users access readable route %s',
     async (path) => {
       authState.enabled = true

@@ -79,12 +79,6 @@ export const routes = [
     meta: { public: true, title: '登录' }
   },
   {
-    path: '/mcp-authorize',
-    name: 'McpAuthorize',
-    component: () => import('@/views/McpAuthorizeView.vue'),
-    meta: { title: 'MCP 授权' }
-  },
-  {
     path: '/',
     component: () => import('@/views/intelligence/IntelligentQueryView.vue'),
     children: [
@@ -159,6 +153,12 @@ export const routes = [
         // 与 skills 同样对登录用户开放只读视图；写操作由页面内 canManage 与
         // 后端 admin 路由双重收口，非 admin 读到的凭证字段已脱敏。
         meta: { tab: 'mcp', title: 'MCP 服务' }
+      },
+      {
+        path: 'mcp-tokens',
+        name: 'McpTokens',
+        component: () => import('@/views/settings/McpTokensView.vue'),
+        meta: { tab: 'mcp-tokens', title: 'MCP 访问令牌' }
       },
       {
         path: 'models',
