@@ -32,6 +32,7 @@
             v-model:visible="mcpMenuOpen"
             role="dialog"
             title="更多操作"
+            popper-class="agent-actions-popover"
             placement="bottom-end"
             trigger="click"
             :teleported="false"
@@ -1230,6 +1231,10 @@ onBeforeUnmount(() => { loadGeneration++; window.removeEventListener("beforeunlo
 .mcp-popover-trigger[aria-expanded="true"] {
   color: var(--primary-dark);
   background: var(--primary-soft);
+}
+/* Element Plus also uses the title as the popover's accessible name. */
+.head-actions :deep(.agent-actions-popover .el-popover__title) {
+  display: none;
 }
 .mcp-popover {
   display: grid;
