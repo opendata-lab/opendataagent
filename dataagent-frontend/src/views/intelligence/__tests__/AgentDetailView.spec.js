@@ -147,7 +147,10 @@ describe('agent draft workbench', () => {
     const wrapper = mount()
     await flushPromises()
 
-    expect(wrapper.get('.mcp-popover-trigger').attributes('aria-label')).toBe('MCP 操作')
+    expect(wrapper.get('.mcp-popover-trigger').attributes()).toMatchObject({
+      'aria-label': '智能体更多操作',
+      title: '更多操作',
+    })
     const menu = wrapper.getComponent({ name: 'ElPopover' })
     menu.vm.$emit('update:visible', true)
     await wrapper.vm.$nextTick()
@@ -204,13 +207,31 @@ describe('agent draft workbench', () => {
     wrapper.unmount()
   })
 
-  it('invalidates publication immediately when editing, and saves with a revision', async () => {
+  it('shows Save Draft only for unsaved changes and saves with a revision', async () => {
     const wrapper = mount()
     await flushPromises()
-    await wrapper.find('#custom-prompt').setValue('更新后的草稿')
+    const findSaveButton = () => wrapper.findAll('.head-actions button')
+      .find((button) => button.text() === '保存草稿')
+    const prompt = wrapper.get('#custom-prompt')
+
+    expect(wrapper.vm.draft.has_changes).toBe(true)
+    expect(wrapper.vm.canPublish).toBe(true)
+    expect(findSaveButton()).toBeUndefined()
+    await prompt.setValue('更新后的草稿')
     expect(wrapper.vm.canPublish).toBe(false)
-    await wrapper.vm.handleSave()
+    expect(findSaveButton()).toBeDefined()
+    await prompt.setValue(profile.system_prompt)
+    expect(findSaveButton()).toBeUndefined()
+
+    dataagentApi.updateAgent.mockResolvedValueOnce({
+      ...profile,
+      revision: 4,
+      system_prompt: '更新后的草稿',
+    })
+    await prompt.setValue('更新后的草稿')
+    await findSaveButton().trigger('click')
     await flushPromises()
+    expect(findSaveButton()).toBeUndefined()
     expect(dataagentApi.updateAgent).toHaveBeenCalledWith(
       'agent_1',
       expect.objectContaining({

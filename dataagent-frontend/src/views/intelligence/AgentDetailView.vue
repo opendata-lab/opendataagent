@@ -31,7 +31,7 @@
             v-if="!loading && !loadError && (canManage || canConfigureMcp)"
             v-model:visible="mcpMenuOpen"
             role="dialog"
-            title="MCP 操作"
+            title="更多操作"
             placement="bottom-end"
             trigger="click"
             :teleported="false"
@@ -41,8 +41,8 @@
               <button
                 type="button"
                 class="icon-button mcp-popover-trigger"
-                aria-label="MCP 操作"
-                title="MCP 操作"
+                aria-label="智能体更多操作"
+                title="更多操作"
               >
                 <MoreFilled aria-hidden="true" />
               </button>
@@ -70,6 +70,7 @@
           </el-popover>
           <template v-if="canManage">
             <button
+              v-if="dirty"
               class="button secondary"
               :disabled="busy || loading || !!loadError"
               @click="handleSave()"
