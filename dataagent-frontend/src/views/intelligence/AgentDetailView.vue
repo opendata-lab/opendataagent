@@ -26,34 +26,57 @@
             >
           </div>
         </div>
-        <section v-if="!loading && !loadError && (canManage || draft.remote_mcp_path)" class="mcp-access" aria-label="MCP 访问">
-          <label v-if="canManage" class="mcp-access-label" for="remote-mcp-switch">MCP 访问</label>
-          <button
-            v-if="canManage"
-            id="remote-mcp-switch"
-            type="button"
-            role="switch"
-            class="mcp-access-switch"
-            aria-label="MCP 访问"
-            :aria-checked="draft.remote_mcp_enabled"
-            :disabled="busy || switchingMcp || !draft.published_version || (!draft.remote_mcp_available && !draft.remote_mcp_enabled)"
-            :title="!draft.published_version ? '发布后可开启' : draft.remote_mcp_available ? '开关立即生效' : '需要管理员开启平台登录'"
-            @click="toggleRemoteMcp"
-          />
-          <button
-            class="button secondary mcp-config-copy"
-            type="button"
-            :disabled="!draft.remote_mcp_path"
-            @click="copyMcpConfig"
-          ><Icon name="copy" class="small" />复制配置</button>
-          <a
-            class="mcp-token-link"
-            :href="mcpTokensHref"
-            @click.prevent="router.push('/settings/mcp-tokens')"
-          >申请令牌</a>
-          <span class="mcp-config-hint">{{ draft.remote_mcp_path ? '粘贴到客户端配置并填入访问令牌' : '开启后可复制配置' }}</span>
-        </section>
         <div class="head-actions">
+          <el-popover
+            v-if="!loading && !loadError && (canManage || mcpEndpoint)"
+            role="dialog"
+            title="MCP 配置"
+            placement="bottom-end"
+            trigger="click"
+            width="min(360px, calc(100vw - 24px))"
+          >
+            <template #reference>
+              <button
+                type="button"
+                class="icon-button mcp-popover-trigger"
+                aria-label="MCP 配置"
+                title="MCP 配置"
+              >
+                <Link aria-hidden="true" />
+              </button>
+            </template>
+            <div class="mcp-popover">
+              <div v-if="canManage" class="mcp-access-control">
+                <label for="remote-mcp-switch">MCP 访问</label>
+                <button
+                  id="remote-mcp-switch"
+                  type="button"
+                  role="switch"
+                  class="mcp-access-switch"
+                  aria-label="MCP 访问"
+                  :aria-checked="draft.remote_mcp_enabled"
+                  :disabled="busy || switchingMcp || !draft.published_version || (!draft.remote_mcp_available && !draft.remote_mcp_enabled)"
+                  :title="!draft.published_version ? '发布后可开启' : draft.remote_mcp_available ? '开关立即生效' : '需要管理员开启平台登录'"
+                  @click="toggleRemoteMcp"
+                />
+              </div>
+              <div v-if="mcpEndpoint" class="mcp-endpoint">
+                <span>MCP 地址</span>
+                <code>{{ mcpEndpoint }}</code>
+              </div>
+              <p v-else class="mcp-config-hint">开启 MCP 访问后显示地址。</p>
+              <div class="mcp-popover-actions">
+                <el-button class="mcp-config-copy" :disabled="!mcpEndpoint" @click="copyMcpConfig">
+                  <Icon name="copy" class="small" />复制 MCP 配置
+                </el-button>
+                <a
+                  class="mcp-token-link"
+                  :href="mcpTokensHref"
+                  @click.prevent="router.push('/settings/mcp-tokens')"
+                >申请令牌</a>
+              </div>
+            </div>
+          </el-popover>
           <template v-if="canManage">
             <button
               class="button secondary"
@@ -570,9 +593,10 @@ import {
   useRouter,
 } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { Link } from "@element-plus/icons-vue";
 import { dataagentApi } from "@/api/dataagent";
 import { copyText } from "@/utils/clipboard";
-import { stringifyMcpClientConfig } from "@/utils/mcpClientConfig";
+import { mcpClientEndpoint, stringifyMcpClientConfig } from "@/utils/mcpClientConfig";
 import { createNl2SqlApiClient, DATAAGENT_CLIENT_HEADERS } from "@/api/nl2sql";
 import { useAuthStore } from "@/stores/auth";
 import { withAgentContext } from "@/router/agentContext";
@@ -624,6 +648,7 @@ const draft = reactive({
   remote_mcp_path: "",
 });
 const switchingMcp = ref(false);
+const mcpEndpoint = computed(() => draft.remote_mcp_path ? mcpClientEndpoint(draft.remote_mcp_path) : "");
 const builtinPrompt = ref(""),
   envVarsText = ref("{}"),
   baseline = ref("");
@@ -1199,24 +1224,42 @@ onBeforeUnmount(() => { loadGeneration++; window.removeEventListener("beforeunlo
 .agent-workbench {
   min-height: 100%;
 }
-.workspace-head:has(.mcp-access) {
+.mcp-popover-trigger {
+  flex: none;
+  width: 36px;
+  height: 36px;
+}
+.mcp-popover-trigger svg { width: 17px; height: 17px; }
+.mcp-popover-trigger[aria-expanded="true"] {
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+}
+.mcp-popover {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 16px;
+  gap: 12px;
 }
-.mcp-access {
+.mcp-access-control,
+.mcp-popover-actions {
   display: flex;
-  gap: 7px;
   align-items: center;
-  min-width: 0;
-  max-width: 610px;
-  border-left: 1px solid var(--border);
-  padding-left: 16px;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
-.mcp-access-label {
-  white-space: nowrap;
+.mcp-access-control label,
+.mcp-endpoint span { font-weight: 600; }
+.mcp-endpoint {
+  display: grid;
+  gap: 5px;
+}
+.mcp-endpoint code {
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #27364b;
+  padding: 8px 10px;
   font-size: 12px;
-  font-weight: 600;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 .mcp-access-switch {
   width: 34px;
@@ -1238,26 +1281,24 @@ onBeforeUnmount(() => { loadGeneration++; window.removeEventListener("beforeunlo
   border-radius: 50%;
   background: white;
 }
-.mcp-access-switch[aria-checked="true"] { background: var(--primary-dark); }
+.mcp-access-switch[aria-checked="true"] { background: #2563eb; }
 .mcp-access-switch[aria-checked="true"]::after { transform: translateX(15px); }
-.mcp-config-copy { flex: 0 0 auto; white-space: nowrap; }
+.mcp-config-copy { flex: none; white-space: nowrap; }
+.mcp-config-copy .icon { margin-right: 6px; }
+.mcp-access-switch:focus-visible,
+.mcp-token-link:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
 .mcp-token-link {
-  flex: 0 0 auto;
-  font-size: 12px;
-  color: var(--primary-dark);
-  text-decoration: none;
-  white-space: nowrap;
+  flex: none;
+  font-size: 13px;
+  color: #245db1;
 }
-.mcp-token-link:hover { text-decoration: underline; }
-.mcp-config-hint { font-size: 12px; }
-@media (max-width: 1160px) {
-  .workspace-head:has(.mcp-access) { grid-template-columns: minmax(0, 1fr) auto; }
-  .mcp-access { grid-row: 2; grid-column: 1 / -1; padding-left: 0; border-left: 0; }
-  .workspace-head:has(.mcp-access) .head-actions { grid-column: 2; grid-row: 1; }
-}
-@media (max-width: 600px) {
-  .workspace-head:has(.mcp-access) { grid-template-columns: minmax(0, 1fr); }
-  .workspace-head:has(.mcp-access) .head-actions { grid-column: 1; grid-row: 3; margin-left: 0; }
+.mcp-config-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #475569;
 }
 .config-scroll {
   border: 0;

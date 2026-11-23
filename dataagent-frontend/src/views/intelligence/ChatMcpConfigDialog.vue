@@ -23,10 +23,21 @@
                 :value="token.id"
               />
             </el-select>
+            <el-button
+              :icon="Refresh"
+              :loading="refreshingTokens"
+              class="chat-mcp-refresh"
+              aria-label="刷新令牌"
+              title="刷新令牌"
+              @click="refreshTokens"
+            />
             <RouterLink
               v-if="!tokens.length"
               class="chat-mcp-token-link"
-              :to="{ name: 'McpTokens', query: { create: '1', agent_id: agentId } }"
+              :to="{ name: 'McpTokenCreate', query: { agent_id: agentId } }"
+              target="_blank"
+              rel="noopener"
+              title="在新标签页创建令牌"
             >新增令牌</RouterLink>
           </div>
           <template v-if="selectedToken">
@@ -67,6 +78,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
 import { copyText } from '@/utils/clipboard'
 import { stringifyMcpClientConfig } from '@/utils/mcpClientConfig'
@@ -79,6 +91,7 @@ const loading = ref(true)
 const loadError = ref('')
 const profile = ref(null)
 const tokens = ref([])
+const refreshingTokens = ref(false)
 const tokenId = ref()
 const tokenInput = ref('')
 
@@ -104,16 +117,33 @@ async function loadConfig() {
   loadError.value = ''
   try {
     const nextProfile = await dataagentApi.getAgentProfile(props.agentId)
-    if (nextProfile?.remote_mcp_path) {
-      const { items } = await dataagentApi.listMcpTokens('mine')
-      tokens.value = items.filter(({ status }) => status === 'active')
-      tokenId.value = tokens.value.length === 1 ? tokens.value[0].id : undefined
-    }
+    if (nextProfile?.remote_mcp_path) await loadTokens()
     profile.value = nextProfile
   } catch {
     loadError.value = '加载 MCP 配置失败。'
   } finally {
     loading.value = false
+  }
+}
+
+async function loadTokens() {
+  const { items } = await dataagentApi.listMcpTokens('mine')
+  tokens.value = items.filter(({ status }) => status === 'active')
+  if (!selectedToken.value) {
+    tokenId.value = tokens.value.length === 1 ? tokens.value[0].id : undefined
+  }
+}
+
+async function refreshTokens() {
+  if (refreshingTokens.value) return
+  refreshingTokens.value = true
+  try {
+    await loadTokens()
+    ElMessage.success('令牌列表已刷新')
+  } catch (error) {
+    if (!error?.__odwNotified) ElMessage.error('刷新令牌失败，请重试')
+  } finally {
+    refreshingTokens.value = false
   }
 }
 
@@ -153,6 +183,12 @@ onMounted(loadConfig)
 .chat-mcp-token :deep(.el-select) {
   min-width: 0;
   flex: 1;
+}
+
+.chat-mcp-refresh {
+  flex: none;
+  width: 32px;
+  padding: 0;
 }
 
 .chat-mcp-token-link {

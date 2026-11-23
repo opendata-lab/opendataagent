@@ -71,6 +71,8 @@ const mount = () =>
         Icon: true,
         ElSelect: { template: '<div><slot /></div>' },
         ElOption: true,
+        ElButton: { props: ['disabled'], template: '<button :disabled="disabled"><slot /></button>' },
+        ElPopover: { template: '<div><slot name="reference" /><slot /></div>' },
       },
       config: {
         compilerOptions: {
@@ -138,7 +140,9 @@ describe('agent draft workbench', () => {
     dataagentApi.setAgentRemoteMcp.mockResolvedValueOnce({ ...live, remote_mcp_enabled: true, remote_mcp_path: path })
     const wrapper = mount()
     await flushPromises()
+    expect(wrapper.get('.mcp-popover-trigger').attributes('aria-label')).toBe('MCP 配置')
     expect(wrapper.get('.mcp-config-copy').element.disabled).toBe(true)
+    expect(wrapper.find('.mcp-endpoint').exists()).toBe(false)
     await wrapper.get('[role="switch"][aria-label="MCP 访问"]').trigger('click')
     await flushPromises()
     expect(dataagentApi.setAgentRemoteMcp).toHaveBeenCalledWith('agent_1', true)
@@ -149,7 +153,8 @@ describe('agent draft workbench', () => {
     try {
       const copy = wrapper.get('.mcp-config-copy')
       expect(copy.element.disabled).toBe(false)
-      expect(copy.text()).toContain('复制配置')
+      expect(copy.text()).toContain('复制 MCP 配置')
+      expect(wrapper.get('.mcp-endpoint code').text()).toBe(window.location.origin + path)
       await copy.trigger('click')
       expect(JSON.parse(writeText.mock.calls[0][0])).toEqual({ mcpServers: {
         [`dataagent-${profile.name}`]: {

@@ -158,11 +158,14 @@ export const routes = [
         path: 'mcp-tokens',
         name: 'McpTokens',
         component: () => import('@/views/settings/McpTokensView.vue'),
-        props: (route) => ({
-          openCreate: route.query.create === '1',
-          configAgentId: route.query.create === '1' ? normalizeAgentId(route.query.agent_id) : ''
-        }),
         meta: { tab: 'mcp-tokens', title: '访问令牌' }
+      },
+      {
+        path: 'mcp-tokens/new',
+        name: 'McpTokenCreate',
+        component: () => import('@/views/settings/McpTokenCreateView.vue'),
+        props: (route) => ({ configAgentId: normalizeAgentId(route.query.agent_id) }),
+        meta: { tab: 'mcp-tokens', title: '新建访问令牌' }
       },
       {
         path: 'models',
