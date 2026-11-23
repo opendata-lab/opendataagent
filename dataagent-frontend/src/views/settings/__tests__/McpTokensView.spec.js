@@ -9,6 +9,7 @@ const authState = vi.hoisted(() => ({
 }))
 
 const apiMocks = vi.hoisted(() => ({
+  getAgentProfile: vi.fn(),
   listMcpTokens: vi.fn(),
   createMcpToken: vi.fn(),
   revokeMcpToken: vi.fn()
@@ -59,8 +60,9 @@ const revokedToken = {
   status: 'revoked'
 }
 
-const mountView = async () => {
+const mountView = async (props = {}) => {
   const wrapper = mount(McpTokensView, {
+    props,
     global: { plugins: [ElementPlus] },
     attachTo: document.body
   })
@@ -73,6 +75,7 @@ describe('McpTokensView', () => {
     authState.enabled = true
     authState.isAdmin = false
     authState.currentUser = { user_id: 'local:alice', display_name: 'Alice', role: 'user' }
+    apiMocks.getAgentProfile.mockReset()
     apiMocks.listMcpTokens.mockReset().mockResolvedValue({ items: [activeToken, revokedToken] })
     apiMocks.createMcpToken.mockReset()
     apiMocks.revokeMcpToken.mockReset()
@@ -140,7 +143,7 @@ describe('McpTokensView', () => {
       display_name: 'Alice',
       created_at: '2026-11-22T08:00:00Z',
       last_used_at: null,
-      expires_at: '2027-02-20T08:00:00Z',
+      expires_at: null,
       revoked_at: null,
       status: 'active'
     }
@@ -158,13 +161,13 @@ describe('McpTokensView', () => {
     expect(apiMocks.createMcpToken).not.toHaveBeenCalled()
 
     await wrapper.get('[data-testid="token-name-input"]').setValue('  新客户端  ')
-    expect(wrapper.vm.$.setupState.createForm.expiry).toBe(90)
+    expect(wrapper.vm.$.setupState.createForm.expiry).toBe('never')
     await wrapper.get('[data-testid="submit-create-token"]').trigger('click')
     await flushPromises()
 
     expect(apiMocks.createMcpToken).toHaveBeenCalledWith({
       name: '新客户端',
-      expires_in_days: 90
+      expires_in_days: null
     })
 
     const tokenInput = document.body.querySelector('[data-testid="created-token-value"]')
@@ -183,23 +186,48 @@ describe('McpTokensView', () => {
     wrapper.unmount()
   })
 
-  it('sends expires_in_days null when 永不过期 is selected', async () => {
+  it('opens creation from the chat entry and exports the newly issued token for its assistant', async () => {
+    const path = '/api/v1/remote-agents/agent_sales/mcp'
+    apiMocks.getAgentProfile.mockResolvedValue({ name: 'Sales', remote_mcp_path: path })
+    apiMocks.createMcpToken.mockResolvedValueOnce({ item: activeToken, token: 'dak_new_test_token' })
+
+    const wrapper = await mountView({ openCreate: true, configAgentId: 'agent_sales' })
+    await wrapper.get('[data-testid="token-name-input"]').setValue('Client')
+    await wrapper.get('[data-testid="submit-create-token"]').trigger('click')
+    await flushPromises()
+
+    const copyButton = wrapper.findAll('button').find((button) => button.text() === '复制 MCP 配置')
+    await copyButton.trigger('click')
+    expect(apiMocks.createMcpToken).toHaveBeenCalledWith({ name: 'Client', expires_in_days: null })
+    expect(JSON.parse(copyTextMock.mock.lastCall[0])).toEqual({
+      mcpServers: {
+        'dataagent-Sales': {
+          type: 'http',
+          url: window.location.origin + path,
+          headers: { Authorization: 'Bearer dak_new_test_token' }
+        }
+      }
+    })
+    wrapper.unmount()
+  })
+
+  it('sends the chosen expiry in days when a fixed term is selected', async () => {
     apiMocks.createMcpToken.mockResolvedValueOnce({
-      item: { ...activeToken, id: 4, name: '长期令牌', expires_at: null },
-      token: 'dak_forever_secret'
+      item: { ...activeToken, id: 4, name: '限期令牌', expires_at: '2027-02-20T08:00:00Z' },
+      token: 'dak_fixed_secret'
     })
     const wrapper = await mountView()
     await wrapper.get('[data-testid="open-create-token"]').trigger('click')
     await flushPromises()
 
-    await wrapper.get('[data-testid="token-name-input"]').setValue('长期令牌')
-    wrapper.vm.$.setupState.createForm.expiry = 'never'
+    await wrapper.get('[data-testid="token-name-input"]').setValue('限期令牌')
+    wrapper.vm.$.setupState.createForm.expiry = 30
     await wrapper.get('[data-testid="submit-create-token"]').trigger('click')
     await flushPromises()
 
     expect(apiMocks.createMcpToken).toHaveBeenCalledWith({
-      name: '长期令牌',
-      expires_in_days: null
+      name: '限期令牌',
+      expires_in_days: 30
     })
     wrapper.unmount()
   })

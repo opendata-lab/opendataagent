@@ -45,6 +45,10 @@ const routeState = vi.hoisted(() => ({
 }))
 
 const routerReplace = vi.hoisted(() => vi.fn())
+const routerResolve = vi.hoisted(() => vi.fn())
+const copyText = vi.hoisted(() => vi.fn())
+
+vi.mock('@/utils/clipboard', () => ({ copyText }))
 
 const dataagentApiMock = vi.hoisted(() => ({
   listAdminTopics: vi.fn(),
@@ -66,7 +70,8 @@ vi.mock('@/api/dataagent', () => ({
 vi.mock('vue-router', () => ({
   useRoute: () => routeState,
   useRouter: () => ({
-    replace: routerReplace
+    replace: routerReplace,
+    resolve: routerResolve
   })
 }))
 
@@ -76,7 +81,8 @@ vi.mock('element-plus', () => ({
   ElDropdownMenu: { name: 'ElDropdownMenu' },
   ElMessage: {
     error: vi.fn(),
-    warning: vi.fn()
+    warning: vi.fn(),
+    success: vi.fn()
   },
   ElMessageBox: {
     confirm: vi.fn(async () => true)
@@ -206,6 +212,7 @@ const mountChat = ({ withAgent = true, admin = false } = {}) => {
         template: '<option class="el-option-stub" :data-value="value" :value="value">{{ label }}</option>'
       },
       ElDropdown: {
+        name: 'ElDropdown',
         template: '<div class="el-dropdown-stub"><slot /><slot name="dropdown" /></div>'
       },
       ElDropdownMenu: {
@@ -257,6 +264,8 @@ describe('NL2SqlChatV2 URL location', () => {
     Object.values(apiMocks.agentApi).forEach((fn) => fn.mockReset())
     Object.values(dataagentApiMock).forEach((fn) => fn.mockReset())
     routerReplace.mockReset()
+    routerResolve.mockReset()
+    copyText.mockReset()
     scrollbarSetScrollTop.mockReset()
 
     dataagentApiMock.listAdminTopics.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 })
@@ -349,6 +358,24 @@ describe('NL2SqlChatV2 URL location', () => {
     expect(typeof conversation(wrapper).transportFactory).toBe('function')
     expect(wrapper.find('.v2-agent-title').text()).toBe('Sales agent')
     expect(wrapper.find('.v2-agent-select').exists()).toBe(true)
+  })
+
+  it('copies the selected conversation link under the configured router base', async () => {
+    routeState.query = { agent_id: 'agent_default', topic_id: 'topic-2', message_id: 'a2' }
+    const href = '/dataagent/chat?agent_id=agent_default&topic_id=topic-2'
+    routerResolve.mockReturnValue({ href })
+    const wrapper = mountChat()
+    await flushPromises()
+
+    const dropdown = wrapper.findComponent({ name: 'ElDropdown' })
+    dropdown.vm.$emit('command', 'copy-link')
+    await flushPromises()
+
+    expect(routerResolve).toHaveBeenCalledWith({
+      path: '/chat',
+      query: { agent_id: 'agent_default', topic_id: 'topic-2' }
+    })
+    expect(copyText).toHaveBeenCalledWith(window.location.origin + href)
   })
 
   it('returns an invalid assistant URL to the welcome page', async () => {

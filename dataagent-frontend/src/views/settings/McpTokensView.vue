@@ -161,6 +161,8 @@
         </el-button>
       </div>
       <template #footer>
+        <el-button v-if="mcpConfig" @click="downloadConfig">下载 MCP 配置</el-button>
+        <el-button v-if="mcpConfig" @click="copyConfig">复制 MCP 配置</el-button>
         <el-button
           type="primary"
           data-testid="close-created-token"
@@ -181,6 +183,10 @@ import { CopyDocument, Plus, Refresh } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
 import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
+import { stringifyMcpClientConfig } from '@/utils/mcpClientConfig'
+import { downloadTextFile } from '@/utils/tableExport'
+
+const props = defineProps({ openCreate: Boolean, configAgentId: String })
 
 const EXPIRY_OPTIONS = [
   { value: 30, label: '30 天' },
@@ -205,11 +211,17 @@ const creating = ref(false)
 const revokingId = ref(null)
 
 const createDialogVisible = ref(false)
-const createForm = reactive({ name: '', expiry: 90 })
+const createForm = reactive({ name: '', expiry: 'never' })
 const nameError = ref('')
 
 const tokenDialogVisible = ref(false)
 const createdToken = ref('')
+const configAgent = ref(null)
+const mcpConfig = computed(() => (
+  createdToken.value && configAgent.value?.remote_mcp_path
+    ? stringifyMcpClientConfig(configAgent.value.name, configAgent.value.remote_mcp_path, createdToken.value)
+    : ''
+))
 
 const formatTime = (value) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '—')
 
@@ -245,7 +257,7 @@ async function loadTokens() {
 
 function openCreateDialog() {
   createForm.name = ''
-  createForm.expiry = 90
+  createForm.expiry = 'never'
   nameError.value = ''
   createDialogVisible.value = true
 }
@@ -304,6 +316,20 @@ async function copyCreatedToken() {
   }
 }
 
+async function copyConfig() {
+  if (!mcpConfig.value) return
+  try {
+    await copyText(mcpConfig.value)
+    ElMessage.success('已复制 MCP 配置')
+  } catch {
+    ElMessage.error('无法访问剪贴板，请手动复制令牌')
+  }
+}
+
+function downloadConfig() {
+  if (mcpConfig.value) downloadTextFile('mcp.json', mcpConfig.value, 'application/json')
+}
+
 async function confirmRevoke(row) {
   try {
     await ElMessageBox.confirm(
@@ -346,6 +372,23 @@ watch(isAdmin, (admin) => {
     scope.value = 'mine'
   }
 })
+
+watch(() => props.openCreate, (open) => {
+  if (open) openCreateDialog()
+}, { immediate: true })
+
+watch(() => props.configAgentId, async (agentId, _, onCleanup) => {
+  configAgent.value = null
+  if (!agentId) return
+  let current = true
+  onCleanup(() => { current = false })
+  try {
+    const profile = await dataagentApi.getAgentProfile(agentId)
+    if (current) configAgent.value = profile
+  } catch {
+    // A token can still be created or copied if its assistant is unavailable.
+  }
+}, { immediate: true })
 
 onMounted(loadTokens)
 </script>
