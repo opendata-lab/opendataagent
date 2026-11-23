@@ -69,7 +69,6 @@ OAUTH_PROVIDERS = [
     #         "grant_type": "authorization_code",
     #         # 可选：OIDC 发现地址。填写后才能把助手发布为 MCP，服务从中读取
     #         # issuer 和签名公钥来校验 MCP 客户端的令牌。
-    #         "server_metadata_url": "https://sso.example.com/.well-known/openid-configuration",
     #     },
     # }
 ]

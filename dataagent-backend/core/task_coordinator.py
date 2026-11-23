@@ -62,6 +62,10 @@ class TaskCoordinator:
         if self.settings.dataagent_experience_digest_enabled:
             self._experience_task = asyncio.create_task(self._experience_loop(), name="dataagent-experience-digest")
 
+    @property
+    def redis_client(self) -> redis.Redis | None:
+        return self._redis
+
     async def stop(self) -> None:
         self._closing = True
         loops = (self._queue_task, self._recovery_task, self._schedule_task, self._experience_task)

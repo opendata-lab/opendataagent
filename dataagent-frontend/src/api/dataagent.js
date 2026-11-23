@@ -44,6 +44,9 @@ dataagentRequest.interceptors.response.use(
 )
 
 export const dataagentApi = {
+  decideMcpAuthorization(data) {
+    return dataagentRequest.post('/v1/remote-agents/oauth/authorize', data)
+  },
   listAgentWorkbench() {
     return dataagentRequest.get('/v1/dataagent/agents/workbench')
   },

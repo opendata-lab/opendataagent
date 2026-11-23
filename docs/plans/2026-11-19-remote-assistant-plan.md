@@ -10,6 +10,8 @@
 4. **发布与部署。** 助手草稿保存「MCP 访问」开关，发布后返回地址路径，页面拼上当前域名；nginx 转发 MCP、资源元数据和下载路由；部署文档说明 IdP 要求。
 5. **配置合并（2026-11-20）。** 删除 `REMOTE_MCP_PUBLIC_ORIGIN`、`REMOTE_MCP_OAUTH_ISSUER`、`REMOTE_MCP_OAUTH_JWKS_URL`、`REMOTE_MCP_OAUTH_SUBJECT_CLAIM`：签发方和公钥从 `OAUTH_PROVIDERS` 的 `server_metadata_url` 读取，对外地址取自请求，主体固定为 `sub`。已按旧变量部署的环境改为填写 `server_metadata_url`，并确认令牌 `sub` 与用户信息钩子的 `sub` 一致。
 
+6. **DataAgent 作为授权服务器（2026-11-20）。** 按设计第 4 节实现授权服务器元数据、动态注册、授权、令牌接口和前端授权页，删除 `server_metadata_url` 及拉取发现文档、校验外部 JWKS 的代码；迁移新增 `da_mcp_refresh_token`；nginx 转发两个发现地址；助手页改为「复制配置」；部署文档删去 IdP 侧 MCP 配置，只保留「开启平台登录」。
+
 ## 验证
 
 - 单元：令牌映射与拒绝（过期、错误 audience、缺 scope、缺主体）；`ask` 建出非交互任务、同键重试幂等、换问题冲突；他人会话不可读写；会话忙返回在运行任务；运行时非交互不挂起。

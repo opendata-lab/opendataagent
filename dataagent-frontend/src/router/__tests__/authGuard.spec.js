@@ -19,6 +19,7 @@ vi.mock('@/stores/auth', () => ({
 
 // 路由组件本身与守卫无关，替换为轻量桩，避免加载重型视图。
 vi.mock('@/views/LoginView.vue', () => ({ default: { template: '<div>login</div>' } }))
+vi.mock('@/views/McpAuthorizeView.vue', () => ({ default: { template: '<div>consent</div>' } }))
 vi.mock('@/views/intelligence/IntelligentQueryView.vue', () => ({ default: { template: '<div><router-view /></div>' } }))
 vi.mock('@/views/intelligence/NL2SqlChatV2.vue', () => ({ default: { template: '<div>chat</div>' } }))
 vi.mock('@/views/settings/SettingsLayout.vue', () => ({ default: { template: '<div><router-view /></div>' } }))
@@ -52,6 +53,17 @@ describe('auth router guard', () => {
   it('is transparent when auth is disabled', async () => {
     const route = await navigate('/chat')
     expect(route.path).toBe('/chat')
+  })
+
+  it('preserves the MCP authorization request at login and accepts a non-admin afterward', async () => {
+    authState.enabled = true
+    const login = await navigate('/mcp-authorize?client_id=dataagent&state=state%2B1')
+    expect(login.path).toBe('/login')
+    expect(login.query.redirect).toContain('/mcp-authorize?client_id=dataagent&state=state%2B1')
+    authState.currentUser = { role: 'user' }
+    await router.push(login.query.redirect)
+    expect(router.currentRoute.value.name).toBe('McpAuthorize')
+    expect(router.currentRoute.value.query.state).toBe('state+1')
   })
 
   it('redirects unauthenticated users to /login with redirect', async () => {

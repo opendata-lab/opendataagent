@@ -13,23 +13,24 @@ import hashlib
 import re
 from time import monotonic
 from typing import Annotated, Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, unquote_plus, urlencode
 
 import pymysql
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, RedirectResponse
 from starlette.routing import Route, Router
 
 from api.routes import _require_agent_profile
 from api.topic_file_response import topic_file_response
 from core import remote_mcp_policy as policy
+from core import remote_mcp_tokens as tokens
 from core.agent_profile_service import build_agent_snapshot
-from core.auth import AuthIdentity
+from core.auth import AuthIdentity, require_identity
 from core.task_status import ACTIVE_TASK_STATUSES
 from core.task_submission_service import submit_message_task
 from core.topic_task_store import get_topic_task_store
@@ -45,6 +46,9 @@ PageSize = Annotated[int, Field(ge=1, le=30)]
 Search = Annotated[str, Field(max_length=100)]
 WAIT_SECONDS = 8.0
 _PUBLIC_STATUS = {"finished": "answered", "error": "failed", "suspended": "cancelled"}
+_OAUTH_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+_CONSENT_HEADERS = {**_OAUTH_HEADERS, "Referrer-Policy": "no-referrer"}
+_MAX_CLIENT_ID_LENGTH = 3072
 
 
 def _error(code: str, message: str, **extra: Any) -> dict[str, Any]:
@@ -245,8 +249,6 @@ async def _authenticate(request: StarletteRequest, agent_id: str) -> dict[str, s
             raise HTTPException(403, str(exc), headers={
                 "WWW-Authenticate": f'Bearer error="insufficient_scope", scope="{policy.SCOPE}"',
             }) from exc
-        if exc.code == "unavailable":
-            raise HTTPException(503, str(exc)) from exc
         raise HTTPException(404, str(exc)) from exc
 
 
@@ -274,15 +276,209 @@ transport = Router(routes=[Route("/{agent_id}/mcp", RemoteTransport())], redirec
 
 @router.get("/.well-known/oauth-protected-resource" + policy.PREFIX + "/{agent_id}/mcp")
 def resource_metadata(agent_id: str, request: Request):
-    if not policy.enabled() or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", agent_id):
+    origin = _origin(request)
+    resource = f"{origin}{policy.PREFIX}/{agent_id}/mcp"
+    if not policy.enabled() or not policy.valid_resource(origin, resource):
         raise HTTPException(404)
-    try:
-        issuer = policy.issuer()
-    except policy.RemoteMcpError as exc:
-        raise HTTPException(503, str(exc)) from exc
-    return {"resource": policy.endpoint(_origin(request), agent_id),
-            "authorization_servers": [issuer],
+    return {"resource": resource, "authorization_servers": [origin],
             "scopes_supported": [policy.SCOPE], "bearer_methods_supported": ["header"]}
+
+
+def _require_oauth_enabled() -> None:
+    if not policy.enabled():
+        raise HTTPException(404)
+
+
+def _oauth_error(exc: policy.RemoteMcpError, *, browser: bool = False, auth_scheme: str = "") -> JSONResponse:
+    headers = _CONSENT_HEADERS if browser else _OAUTH_HEADERS
+    status = 503 if exc.code == "temporarily_unavailable" else 400
+    if auth_scheme:
+        headers = {**headers, "WWW-Authenticate": f'{auth_scheme} realm="DataAgent MCP"'}
+        status = 401
+    return JSONResponse({"error": exc.code, "error_description": str(exc)}, status_code=status, headers=headers)
+
+
+@router.get("/.well-known/oauth-authorization-server")
+@router.get("/.well-known/openid-configuration")
+def authorization_metadata(request: Request):
+    _require_oauth_enabled()
+    origin = _origin(request)
+    base = origin + policy.OAUTH_PREFIX
+    return {"issuer": origin, "authorization_endpoint": f"{base}/authorize", "token_endpoint": f"{base}/token",
+            "registration_endpoint": f"{base}/register", "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "code_challenge_methods_supported": ["S256"], "token_endpoint_auth_methods_supported": ["none"],
+            "scopes_supported": [policy.SCOPE]}
+
+
+async def _json_object(request: Request) -> dict:
+    try:
+        data = await request.json()
+    except ValueError as exc:
+        raise policy.RemoteMcpError("invalid_request", "Expected a JSON object.") from exc
+    if not isinstance(data, dict):
+        raise policy.RemoteMcpError("invalid_request", "Expected a JSON object.")
+    return data
+
+
+@router.post(policy.OAUTH_PREFIX + "/register")
+async def register_client(request: Request):
+    _require_oauth_enabled()
+    try:
+        data = await _json_object(request)
+        redirect_uris = data.get("redirect_uris")
+        if not isinstance(redirect_uris, list) or not redirect_uris or not all(map(policy.valid_redirect_uri, redirect_uris)):
+            raise policy.RemoteMcpError("invalid_redirect_uri", "Registration requires valid redirect URIs.")
+        name = data.get("client_name", policy.PUBLIC_CLIENT_ID)
+        grant_types = data.get("grant_types", ["authorization_code", "refresh_token"])
+        if (not isinstance(name, str) or not name.strip() or len(name) > 255
+                or data.get("token_endpoint_auth_method", "none") != "none"
+                or data.get("response_types", ["code"]) != ["code"]
+                or not isinstance(grant_types, list) or "authorization_code" not in grant_types
+                or any(grant not in ("authorization_code", "refresh_token") for grant in grant_types)):
+            raise policy.RemoteMcpError("invalid_client_metadata", "Only public authorization code clients are supported.")
+        client_id = policy.register_client(name, redirect_uris)
+        if len(client_id) > _MAX_CLIENT_ID_LENGTH:
+            raise policy.RemoteMcpError("invalid_client_metadata", "Client registration is too long.")
+    except policy.RemoteMcpError as exc:
+        return _oauth_error(exc)
+    return JSONResponse({"client_id": client_id, "client_name": name, "redirect_uris": redirect_uris,
+                         "token_endpoint_auth_method": "none", "response_types": ["code"],
+                         "grant_types": grant_types}, status_code=201, headers=_OAUTH_HEADERS)
+
+
+def _parameter(data, name: str, *, default: str = "", limit: int = 2048) -> str:
+    value = data.get(name, default)
+    if not isinstance(value, str) or len(value) > limit:
+        raise policy.RemoteMcpError("invalid_request", f"Invalid {name} parameter.")
+    return value
+
+
+def _single_values(data) -> dict:
+    values = dict(data)
+    if len(data.multi_items()) != len(values):
+        raise policy.RemoteMcpError("invalid_request", "Request contains duplicate parameters.")
+    return values
+
+
+def _callback_url(redirect_uri: str, state: str, **result: str) -> str:
+    base, _, query = redirect_uri.partition("?")
+    reserved = {"code", "error", "error_description", "error_uri", "state"}
+    existing = [part for part in query.split("&") if part and unquote_plus(part.partition("=")[0]) not in reserved]
+    return base + "?" + "&".join([*existing, urlencode({**result, "state": state})])
+
+
+def _validate_resource(data: dict, origin: str) -> None:
+    if "resource" in data and not policy.valid_resource(origin, _parameter(data, "resource")):
+        raise policy.RemoteMcpError("invalid_target", "Invalid resource URI.")
+
+
+def _authorization_grant(data: dict, origin: str) -> dict:
+    client_id = _parameter(data, "client_id", limit=_MAX_CLIENT_ID_LENGTH)
+    redirect_uri = _parameter(data, "redirect_uri")
+    policy.validate_client(client_id, redirect_uri)
+    if _parameter(data, "response_type") != "code":
+        raise policy.RemoteMcpError("unsupported_response_type", "Only response_type=code is supported.")
+    challenge = _parameter(data, "code_challenge")
+    if not policy.valid_challenge(challenge, _parameter(data, "code_challenge_method")):
+        raise policy.RemoteMcpError("invalid_request", "An S256 PKCE challenge is required.")
+    state = _parameter(data, "state")
+    if not state.strip() or not re.fullmatch(r"[\x20-\x7e]+", state):
+        raise policy.RemoteMcpError("invalid_request", "A valid state parameter is required.")
+    scope = _parameter(data, "scope", default=policy.SCOPE)
+    if scope != policy.SCOPE:
+        raise policy.RemoteMcpError("invalid_scope", "Unknown scope.")
+    _validate_resource(data, origin)
+    return {"client_id": client_id, "redirect_uri": redirect_uri, "challenge": challenge,
+            "state": state, "scope": scope, "origin": origin}
+
+
+@router.get(policy.OAUTH_PREFIX + "/authorize")
+def authorize_client(request: Request):
+    _require_oauth_enabled()
+    try:
+        _authorization_grant(_single_values(request.query_params), _origin(request))
+    except policy.RemoteMcpError as exc:
+        return _oauth_error(exc, browser=True)
+    return RedirectResponse(f"/mcp-authorize?{request.url.query}", status_code=302, headers=_CONSENT_HEADERS)
+
+
+@router.post(policy.OAUTH_PREFIX + "/authorize", dependencies=[Depends(_require_oauth_enabled)])
+async def decide_authorization(request: Request, identity: Annotated[AuthIdentity, Depends(require_identity)]):
+    origin = _origin(request)
+    if (request.headers.get("X-DataAgent-Client") != "dataagent"
+            or request.headers.get("Origin", origin) != origin):
+        raise HTTPException(403, "请求必须来自 DataAgent 网页")
+    try:
+        data = await _json_object(request)
+        grant = _authorization_grant(data, origin)
+        decision = _parameter(data, "decision")
+        state = grant.pop("state")
+        if decision == "allow":
+            code = await tokens.create_code({**grant, "user_id": identity.user_id, "display_name": identity.display_name})
+            url = _callback_url(grant["redirect_uri"], state, code=code)
+        elif decision == "deny":
+            url = _callback_url(grant["redirect_uri"], state, error="access_denied")
+        else:
+            raise policy.RemoteMcpError("invalid_request", "Invalid consent decision.")
+    except policy.RemoteMcpError as exc:
+        return _oauth_error(exc, browser=True)
+    return JSONResponse({"redirect_url": url}, headers=_CONSENT_HEADERS)
+
+
+@router.post(policy.OAUTH_PREFIX + "/token")
+async def exchange_token(request: Request):
+    _require_oauth_enabled()
+    origin = _origin(request)
+    if "authorization" in request.headers:
+        scheme = request.headers["authorization"].split(" ", 1)[0]
+        return _oauth_error(policy.RemoteMcpError("invalid_client", "Client authentication is not supported."),
+                            auth_scheme=scheme if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", scheme) else "Basic")
+    try:
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/x-www-form-urlencoded":
+            raise policy.RemoteMcpError("invalid_request", "Expected a URL-encoded form.")
+        async with request.form() as form:
+            data = _single_values(form)
+        grant_type = _parameter(data, "grant_type")
+        client_id = _parameter(data, "client_id", limit=_MAX_CLIENT_ID_LENGTH)
+        if not grant_type or not client_id:
+            raise policy.RemoteMcpError("invalid_request", "The grant type and client ID are required.")
+        if "client_secret" in data:
+            raise policy.RemoteMcpError("invalid_client", "Client authentication is not supported.")
+        policy.client_registration(client_id)
+        _validate_resource(data, origin)
+        refresh = policy.issue_refresh_token(origin)
+        if grant_type == "authorization_code":
+            code = _parameter(data, "code")
+            redirect_uri = _parameter(data, "redirect_uri")
+            verifier = _parameter(data, "code_verifier")
+            if not code or not redirect_uri or not verifier:
+                raise policy.RemoteMcpError("invalid_request", "The code, redirect URI and PKCE verifier are required.")
+            grant = await tokens.consume_code(code)
+            if (grant is None or grant["origin"] != origin or grant["client_id"] != client_id
+                    or grant["redirect_uri"] != redirect_uri or not policy.verify_pkce(verifier, grant["challenge"])):
+                raise policy.RemoteMcpError("invalid_grant", "Authorization code is invalid or already used.")
+            await asyncio.to_thread(tokens.save_refresh_token, refresh, grant)
+        elif grant_type == "refresh_token":
+            previous = _parameter(data, "refresh_token")
+            if not previous:
+                raise policy.RemoteMcpError("invalid_request", "A refresh token is required.")
+            if _parameter(data, "scope", default=policy.SCOPE) != policy.SCOPE:
+                raise policy.RemoteMcpError("invalid_scope", "The refresh token scope cannot be changed.")
+            grant = None
+            if policy.valid_refresh_token(previous, origin):
+                grant = await asyncio.to_thread(tokens.rotate_refresh_token, previous, client_id, refresh)
+            if grant is None:
+                raise policy.RemoteMcpError("invalid_grant", "Refresh token is invalid or already used.")
+        else:
+            raise policy.RemoteMcpError("unsupported_grant_type", "Unsupported grant type.")
+    except policy.RemoteMcpError as exc:
+        return _oauth_error(exc)
+    except pymysql.MySQLError:
+        return _oauth_error(policy.RemoteMcpError("temporarily_unavailable", "Refresh token storage is unavailable."))
+    access = policy.issue_access_token(origin, grant["user_id"], grant["display_name"], client_id, grant["scope"])
+    return JSONResponse({"access_token": access, "token_type": "Bearer", "expires_in": policy.ACCESS_TTL,
+                         "refresh_token": refresh, "scope": grant["scope"]}, headers=_OAUTH_HEADERS)
 
 
 @router.get(policy.PREFIX + "/{agent_id}/threads/{thread_id}/files/{rel_path:path}")

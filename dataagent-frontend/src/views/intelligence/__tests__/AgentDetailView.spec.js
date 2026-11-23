@@ -130,7 +130,7 @@ describe('agent draft workbench', () => {
     expect(wrapper.findAll('.workbench > .panel')).toHaveLength(3)
     wrapper.unmount()
   })
-  it('saves the MCP switch as a draft and shows the address only after publishing', async () => {
+  it('saves the MCP switch as a draft and copies the configuration only after publishing', async () => {
     const path = '/api/v1/remote-agents/agent_1/mcp'
     const enabled = { ...profile, remote_mcp_available: true, remote_mcp_enabled: true, remote_mcp_path: '' }
     dataagentApi.getAgentDraft.mockResolvedValueOnce({ ...enabled, remote_mcp_enabled: false })
@@ -142,15 +142,29 @@ describe('agent draft workbench', () => {
     await flushPromises()
     await wrapper.get('[role="switch"][aria-label="MCP 访问"]').trigger('click')
     expect(wrapper.get('#remote-mcp-switch').attributes('aria-checked')).toBe('true')
-    expect(wrapper.get('.mcp-address-copy').element.disabled).toBe(true)
+    expect(wrapper.get('.mcp-config-copy').element.disabled).toBe(true)
     await wrapper.vm.handleSave()
     expect(dataagentApi.updateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({ remote_mcp_enabled: true }))
-    expect(wrapper.get('.mcp-address').element.value).toBe('')
+    expect(wrapper.get('.mcp-config-copy').element.disabled).toBe(true)
     wrapper.vm.openPublish()
     wrapper.vm.publishAck = true
     await wrapper.vm.handlePublish()
-    expect(wrapper.get('.mcp-address').element.value).toBe(`${window.location.origin}${path}`)
-    expect(wrapper.get('.mcp-address-copy').element.disabled).toBe(false)
+    const writeText = vi.fn().mockResolvedValue()
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    try {
+      const copy = wrapper.get('.mcp-config-copy')
+      expect(copy.element.disabled).toBe(false)
+      expect(copy.text()).toContain('复制配置')
+      await copy.trigger('click')
+      expect(JSON.parse(writeText.mock.calls[0][0])).toEqual({ mcpServers: {
+        [`dataagent-${profile.name}`]: {
+          type: 'http', url: `${window.location.origin}${path}`,
+          oauth: { type: 'authorization_code', clientId: 'dataagent' },
+        },
+      } })
+    } finally {
+      vi.unstubAllGlobals()
+    }
     wrapper.unmount()
   })
   it('ignores an older detail response after a newer load has completed', async () => {
