@@ -97,4 +97,4 @@ POST /tasks/deliver-message
 | `get_run` | 传 `run_id` 取结果。状态为 `in_progress` 时，按 `retry_after_ms` 轮询。完成后返回 `answered`（含 `answer`、`message_id` 和本轮生成文件的 `files`）、`failed` 或 `cancelled`。 |
 | `feedback` | 传 `thread_id`、`message_id` 和 `rating`（`like` 或 `dislike`），与网页点赞点踩相同。 |
 
-`files` 是网页会话文件面板里的同一批文件，下载地址使用同一 MCP 令牌，并按助手、会话和用户检查访问权限。参见 [部署文档](../../deploy/README.md#单助手-mcp-发布)。
+`files` 是网页会话文件面板里的同一批文件，客户端可用同一 MCP 令牌下载。在浏览器打开链接前，先登录同一地址的 DataAgent。下载时仍校验助手可见性、会话归属和文件路径。若请求携带 Authorization，则使用该凭据。参见 [部署文档](../../deploy/README.md#单助手-mcp-发布)。
