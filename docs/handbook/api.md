@@ -89,6 +89,8 @@ POST /tasks/deliver-message
 
 ### 助手工具
 
+Streamable HTTP 请求的 `Accept` 同时包含 `application/json` 和 `text/event-stream`。默认 `ask` 在同一次 SSE 响应中返回终态结果。客户端提供 `_meta.progressToken` 时可接收进度通知。服务器等待 15 分钟后若任务仍未完成，返回 `in_progress` 和 `run_id`，任务可继续执行。断线后用 `get_run` 取结果；若还未收到句柄，用原问题、原会话参数和同一个 `request_key` 重试。
+
 | 工具 | 用法 |
 | --- | --- |
 | `ask` | 传 `question`、`request_key`，续聊时带已有 `thread_id`。首问自动建会话。原请求重试用相同键和相同参数。会话已有在途任务时返回 `thread_busy` 和该任务的 `run_id`。默认通过同一次 SSE 调用等待结果；显式传 `background: true` 时立即返回当前状态和 `run_id`。 |
@@ -96,7 +98,5 @@ POST /tasks/deliver-message
 | `get_thread` | 传 `thread_id` 和可选分页参数，读取最新在前的消息。 |
 | `get_run` | 传 `run_id` 取结果。状态为 `in_progress` 时，按 `retry_after_ms` 轮询。完成后返回 `answered`（含 `answer`、`message_id` 和本轮生成文件的 `files`）、`failed` 或 `cancelled`。 |
 | `feedback` | 传 `thread_id`、`message_id` 和 `rating`（`like` 或 `dislike`），与网页点赞点踩相同。 |
-
-Streamable HTTP 请求的 `Accept` 同时包含 `application/json` 和 `text/event-stream`。默认 `ask` 在同一次 SSE 响应中返回终态结果。客户端提供 `_meta.progressToken` 时可接收进度通知。服务器等待 15 分钟后若任务仍未完成，返回 `in_progress` 和 `run_id`，任务可继续执行。断线后用 `get_run` 取结果；若还未收到句柄，用原问题、原会话参数和同一个 `request_key` 重试。
 
 `files` 是网页会话文件面板里的同一批文件，下载地址使用同一 MCP 令牌，并按助手、会话和用户检查访问权限。参见 [部署文档](../../deploy/README.md#单助手-mcp-发布)。
