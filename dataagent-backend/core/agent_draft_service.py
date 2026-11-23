@@ -22,11 +22,7 @@ def configuration(profile: dict[str, Any]) -> dict[str, Any]:
     keys = ("agent_id", "name", "description", "system_prompt",
             "mcp_server_ids", "skill_folders", "max_turns", "plan_timeout_action", "env_vars",
             "visibility", "preset_questions", "is_default", "is_builtin")
-    result = {key: profile.get(key, [] if key == "preset_questions" else None) for key in keys}
-    # Kept out of the key list so drafts that predate the switch still compare equal.
-    if profile.get("remote_mcp_enabled") is True:
-        result["remote_mcp_enabled"] = True
-    return result
+    return {key: profile.get(key, [] if key == "preset_questions" else None) for key in keys}
 
 
 def encode(value: Any) -> str:
@@ -68,14 +64,14 @@ class AgentDraftStore:
     def _result(self, row: dict) -> dict:
         from core.remote_mcp_policy import PREFIX, enabled
         draft = json.loads(row["draft_json"])
-        published = json.loads(row.get("published_json") or "{}")
         available = enabled()
-        return {**configuration(draft), "remote_mcp_enabled": bool(draft.get("remote_mcp_enabled")),
+        # The MCP switch is not part of the draft: it acts on the published
+        # assistant at once. A path: the page prefixes the origin it was opened from.
+        live = get_agent_profile(draft["agent_id"]) if int(row["published_version"]) else None
+        on = bool(live and live.get("remote_mcp_enabled"))
+        return {**configuration(draft), "remote_mcp_enabled": on,
                 "remote_mcp_available": available,
-                # The address works once the switch is published. A path: the page
-                # prefixes the origin it was opened from, as MCP clients will use.
-                "remote_mcp_path": f"{PREFIX}/{draft['agent_id']}/mcp"
-                if available and published.get("remote_mcp_enabled") else "",
+                "remote_mcp_path": f"{PREFIX}/{draft['agent_id']}/mcp" if available and on else "",
                 "revision": int(row["revision"]),
                 "published_version": int(row["published_version"]),
                 "has_changes": row.get("published_json") != row["draft_json"],
@@ -208,6 +204,21 @@ class AgentDraftStore:
                 get_agent_profile_store().write_profile(cur, json.loads(row["draft_json"]))
                 cur.execute("""UPDATE da_agent_draft SET published_json = draft_json,
                                published_version = published_version + 1 WHERE agent_id = %s""", (agent_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        return self.get(agent_id)
+
+    def set_remote_mcp(self, agent_id: str, enabled: bool) -> dict:
+        """Open or close MCP access on the published assistant, without a publish."""
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                row = self._read(cur, agent_id, lock=True)
+                if not int(row["published_version"]):
+                    raise DraftConflict("请先发布助手，再开启 MCP 访问")
+                cur.execute("UPDATE da_agent_profile SET remote_mcp_enabled = %s WHERE agent_id = %s",
+                            (1 if enabled else 0, agent_id))
             conn.commit()
         finally:
             conn.close()

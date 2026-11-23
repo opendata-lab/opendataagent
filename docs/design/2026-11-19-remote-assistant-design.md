@@ -2,7 +2,7 @@
 
 日期 2026-11-19 · 基于 DataAgent main `f93adf1`
 
-管理员在助手上开启「MCP 访问」并发布，页面提供该助手的连接地址。用户在本地 MCP 客户端配置地址并登录后，即可向该助手问数、追问和评价。
+管理员在已发布的助手上打开「MCP 访问」开关（立即生效，不需要再发布），页面提供可复制的客户端配置。用户在本地 MCP 客户端配置地址并登录后，即可向该助手问数、追问和评价。
 
 例如「经营分析助手」的地址是 `https://dataagent.example.com/api/v1/remote-agents/agent_sales/mcp`。每个地址绑定一个 `agent_id`，所有助手共用同一个 FastAPI 进程和任务协调器。
 
@@ -102,7 +102,7 @@ MCP 客户端 ⇄ DataAgent（授权与令牌）
 - 迁移：新增 `da_mcp_refresh_token`（令牌哈希、用户 ID、显示名、`client_id`、scope、过期时间、创建时间）。
 - 配置：无 MCP 专用配置。删除 `OAUTH_PROVIDERS` 的 `server_metadata_url`（配置了会被忽略）。对外地址由请求的 `Host` 和 `X-Forwarded-Proto` 得出，后端容器的 uvicorn 信任代理传来的协议头；nginx 另外转发 `/.well-known/oauth-authorization-server` 和 `/.well-known/openid-configuration`。启用条件为平台登录已开启（SSO 或本地账号任一）。
 - 运行时 `interactive` 开关：`cell.ts`、`frames.ts`、`pi_runtime.py`、`task_executor.py`，以及 `prompts/non_interactive_mode.md`。
-- 助手编辑页标题右侧：「MCP 访问」开关和「复制配置」按钮，发布后可用。复制的内容为客户端配置，页面用当前域名拼出地址，并提示「粘贴到客户端的 MCP 设置后点打开授权」：
+- 助手编辑页标题右侧：「MCP 访问」开关和「复制配置」按钮。开关不属于草稿，作用于已发布的助手、切换即生效（`PUT /api/v1/dataagent/agents/<agent_id>/remote-mcp`，仅管理员；助手从未发布时不可开启）；开启后可复制配置。复制的内容为客户端配置，页面用当前域名拼出地址，并提示「粘贴到客户端的 MCP 设置后点打开授权」：
 
 ```json
 { "mcpServers": { "dataagent-<助手名>": {

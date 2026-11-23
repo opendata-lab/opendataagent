@@ -78,6 +78,7 @@ from models.schemas import (
     AgentProfileCreateRequest,
     AgentProfileUpdateRequest,
     AgentDraftRevisionRequest,
+    AgentRemoteMcpRequest,
     AgentPreviewMessageRequest,
     AgentReadableProfile,
     AgentSlashCommandsResponse,
@@ -632,6 +633,15 @@ def get_agent_draft(agent_id: str, identity: AuthIdentity | None = Depends(requi
         if identity and preview_id and not get_topic_task_store().get_topic(preview_id, context=_preview_owner_context(identity)):
             return {**draft, "preview_topic_id": None, "preview_task_id": None, "preview_status": None}
         return draft
+    except ValueError as exc:
+        raise _draft_error(exc) from exc
+
+
+@skills_router.put("/agents/{agent_id}/remote-mcp")
+def set_agent_remote_mcp(agent_id: str, request: AgentRemoteMcpRequest):
+    """MCP access acts on the published assistant at once, without a publish."""
+    try:
+        return agent_drafts.set_remote_mcp(agent_id, request.enabled)
     except ValueError as exc:
         raise _draft_error(exc) from exc
 
