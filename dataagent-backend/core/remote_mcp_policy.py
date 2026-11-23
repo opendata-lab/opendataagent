@@ -12,9 +12,10 @@ _TOKEN = re.compile(rf"{remote_mcp_tokens.TOKEN_PREFIX}[A-Za-z0-9_-]{{43}}")
 
 
 class RemoteMcpError(ValueError):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, next_step: str = ""):
         super().__init__(message)
         self.code = code
+        self.next_step = next_step
 
 
 def enabled() -> bool:
