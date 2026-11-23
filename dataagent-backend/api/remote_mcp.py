@@ -16,7 +16,8 @@ from urllib.parse import quote
 
 import pymysql
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, StringConstraints, field_validator
@@ -43,7 +44,8 @@ Question = Annotated[str, Field(min_length=1, max_length=16384)]
 Page = Annotated[int, Field(ge=1, le=10000)]
 PageSize = Annotated[int, Field(ge=1, le=30)]
 Search = Annotated[str, Field(max_length=100)]
-WAIT_SECONDS = 8.0
+WAIT_SECONDS = 900.0
+WAIT_POLL_SECONDS = 5.0
 _PUBLIC_STATUS = {"finished": "answered", "error": "failed", "suspended": "cancelled"}
 _TOKEN_MANAGEMENT_PATH = "/api/v1/dataagent/mcp-tokens"
 
@@ -73,19 +75,23 @@ def _file_url(topic_id: str, rel_path: str) -> str:
     return f"{origin}{policy.PREFIX}/{agent_id}/threads/{topic_id}/files/{quote(rel_path)}"
 
 
-def _run(run_id: str) -> dict[str, Any]:
-    store = get_topic_task_store()
-    task = store.get_task(run_id)
-    if not task:
+def _run_task(run_id: str) -> dict[str, Any]:
+    agent_id, context, _ = _caller.get()
+    task = get_topic_task_store().get_task(run_id, context=context)
+    if not task or task["agent_id"] != agent_id:
         raise policy.RemoteMcpError("not_found", "找不到该任务")
-    topic_id = str(task["topic_id"])
-    _thread(topic_id)
+    return task
+
+
+def _run_result(task: dict[str, Any]) -> dict[str, Any]:
+    run_id, topic_id = task["task_id"], task["topic_id"]
     ids = {"run_id": run_id, "thread_id": topic_id}
     status = str(task.get("task_status") or "")
     if status in ACTIVE_TASK_STATUSES:
         return {**ids, "status": "in_progress", "retry_after_ms": 2000}
-    page = store.list_topic_messages_page(topic_id=topic_id, page=1, page_size=50, order="desc",
-                                          context=_caller.get()[1])
+    page = get_topic_task_store().list_topic_messages_page(
+        topic_id=topic_id, page=1, page_size=50, order="desc", context=_caller.get()[1],
+    )
     answer = next((m for m in page["items"] if m.get("task_id") == run_id and m.get("sender_type") == "assistant"), {})
     result = {**ids, "status": _PUBLIC_STATUS.get(status, "failed"), "message_id": answer.get("message_id", ""),
               "answer": answer.get("content", "")}
@@ -98,48 +104,83 @@ def _run(run_id: str) -> dict[str, Any]:
     return result
 
 
-async def ask(question: Question, request_key: RequestKey, thread_id: Identifier | None = None) -> dict[str, Any]:
-    """Ask the connected assistant. Reuse the request key on retry and pass the thread ID for follow-ups."""
+def _run(run_id: str) -> dict[str, Any]:
+    return _run_result(_run_task(run_id))
+
+
+async def _wait_for_run(run_id: str, ctx: Context) -> dict[str, Any]:
+    started_at = monotonic()
+    deadline = started_at + WAIT_SECONDS
+    task = await asyncio.to_thread(_run_task, run_id)
+    while task["task_status"] in ACTIVE_TASK_STATUSES:
+        now = monotonic()
+        remaining = deadline - now
+        if remaining <= 0:
+            break
+        message = "任务排队中" if task["task_status"] == "waiting" else "任务执行中"
+        await ctx.report_progress(now - started_at, message=message)
+        await asyncio.sleep(min(WAIT_POLL_SECONDS, remaining))
+        task = await asyncio.to_thread(_run_task, run_id)
+
+    # The HTTP response is already an SSE stream, so late authorization failures
+    # are tool errors rather than a change to the HTTP response status.
+    try:
+        await _authenticate(ctx.request_context.request, _caller.get()[0])
+    except HTTPException as exc:
+        raise ToolError("无法访问该助手，请重新连接。如仍失败，请联系管理员。") from exc
+    return await asyncio.to_thread(_run_result, task)
+
+
+async def ask(
+    question: Question, request_key: RequestKey, thread_id: Identifier | None = None,
+    background: bool = False, *, ctx: Context,
+) -> dict[str, Any]:
+    """Ask the assistant and wait for its answer. Set background to return promptly with the run ID.
+
+    Reuse the request key and question on retry, and pass the thread ID for follow-ups.
+    Use get_run to retrieve an unfinished run returned by this tool.
+    """
     agent_id, context, _ = _caller.get()
     store = get_topic_task_store()
     question = question.strip()
-    # Keys are scoped to the caller and assistant; the stored task holds the
-    # question and thread, so a retry is recognised without another table.
+    # Keys are scoped to the caller and assistant so reconnecting can find the same task.
     key = hashlib.sha256(f"{agent_id}\n{context['auth_user_id']}\n{request_key}".encode()).hexdigest()
     try:
         previous = await asyncio.to_thread(store.find_task_by_request_key, key)
-        if previous:
-            if previous.get("prompt") != question or (thread_id and previous.get("topic_id") != thread_id):
-                return _error("request_conflict", "此请求键已用于其他问题")
-            return await asyncio.to_thread(_run, previous["task_id"])
-        created = False
-        if thread_id:
+        topic = None
+        if previous is None and thread_id:
             topic = await asyncio.to_thread(_thread, thread_id)
             if topic.get("current_task_status") in ACTIVE_TASK_STATUSES:
-                return _error("thread_busy", "此会话已有任务在运行，请等待完成后重试",
-                              thread_id=thread_id, run_id=topic.get("current_task_id"), retry_after_ms=2000)
-        else:
-            profile = _require_agent_profile(agent_id, context=context)
-            topic = await asyncio.to_thread(store.create_topic, title=question[:60],
-                                            agent_snapshot=build_agent_snapshot(profile), context=context)
-            created = True
-        try:
-            submitted = await submit_message_task(topic_id=topic["topic_id"], message_type="text",
-                                                  message_content=question, agent_id=agent_id,
-                                                  interactive=False, request_key=key)
-        except pymysql.err.IntegrityError:
-            # A concurrent retry with the same key won; answer with its task.
+                # A same-key submission may have started since the initial lookup.
+                previous = await asyncio.to_thread(store.find_task_by_request_key, key)
+                if previous is None:
+                    return _error("thread_busy", "此会话已有任务在运行，请等待完成后重试",
+                                  thread_id=thread_id, run_id=topic.get("current_task_id"), retry_after_ms=2000)
+        if previous is None:
+            created = topic is None
             if created:
-                await asyncio.to_thread(store.delete_topic, topic["topic_id"])
-            previous = await asyncio.to_thread(store.find_task_by_request_key, key)
-            return await asyncio.to_thread(_run, previous["task_id"])
-        run_id = submitted["task_id"]
-        until = monotonic() + WAIT_SECONDS
-        result = await asyncio.to_thread(_run, run_id)
-        while result["status"] == "in_progress" and monotonic() < until:
-            await asyncio.sleep(0.5)
-            result = await asyncio.to_thread(_run, run_id)
-        return result
+                profile = await asyncio.to_thread(_require_agent_profile, agent_id, context=context)
+                topic = await asyncio.to_thread(store.create_topic, title=question[:60],
+                                                agent_snapshot=build_agent_snapshot(profile), context=context)
+            try:
+                submitted = await submit_message_task(topic_id=topic["topic_id"], message_type="text",
+                                                      message_content=question, agent_id=agent_id,
+                                                      interactive=False, request_key=key)
+                run_id = submitted["task_id"]
+            except pymysql.err.IntegrityError:
+                previous = await asyncio.to_thread(store.find_task_by_request_key, key)
+                if created:
+                    await asyncio.to_thread(store.delete_topic, topic["topic_id"])
+                if previous is None:
+                    raise
+        if previous is not None:
+            if previous.get("prompt") != question or (thread_id and previous.get("topic_id") != thread_id):
+                return _error("request_conflict", "请求异常，请重新发起请求。如仍失败，请联系管理员。")
+            run_id = previous["task_id"]
+
+        if background:
+            return await asyncio.to_thread(_run, run_id)
+        return await _wait_for_run(run_id, ctx)
     except HTTPException:
         return _error("not_found", "找不到可访问的助手")
     except policy.RemoteMcpError as exc:
@@ -195,7 +236,7 @@ async def feedback(thread_id: Identifier, message_id: Identifier, rating: Litera
 
 def create_server() -> FastMCP:
     # Origin is checked against the address the caller used, in _authenticate.
-    server = FastMCP("DataAgent assistant", stateless_http=True, json_response=True,
+    server = FastMCP("DataAgent assistant", stateless_http=True, json_response=False,
                      transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
     server.add_tool(ask, annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True))
     server.add_tool(list_threads, annotations=ToolAnnotations(readOnlyHint=True))

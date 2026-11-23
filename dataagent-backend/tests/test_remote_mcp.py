@@ -2,11 +2,14 @@ import asyncio
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
 import hashlib
+import json
 import secrets
 import sqlite3
 from types import SimpleNamespace
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from mcp.server.fastmcp.exceptions import ToolError
 from starlette.responses import JSONResponse
 import pytest
 
@@ -120,6 +123,11 @@ def mcp_call(client, token, **headers):
         MCP, headers={**bearer(token), "Accept": "application/json, text/event-stream", **headers},
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
     )
+
+
+def rpc_messages(response):
+    assert response.headers["content-type"].startswith("text/event-stream")
+    return [json.loads(line[5:]) for line in response.text.splitlines() if line.startswith("data: {")]
 
 
 def test_create_and_list_mine_or_all(tokens_app):
@@ -238,7 +246,7 @@ def test_mcp_and_download_accept_valid_bearer_and_reject_revocation(tokens_app, 
     monkeypatch.setattr(remote_mcp, "topic_file_response", lambda *args, **kwargs: JSONResponse({"file": "report"}))
     response = mcp_call(client, token)
     assert response.status_code == 200
-    assert "ask" in {tool["name"] for tool in response.json()["result"]["tools"]}
+    assert "ask" in {tool["name"] for tool in rpc_messages(response)[-1]["result"]["tools"]}
     assert client.get(DOWNLOAD, headers=bearer(token)).json() == {"file": "report"}
     assert mcp_call(client, token, Origin=OTHER_ORIGIN).status_code == 403
     client.delete(f"{MANAGEMENT}/{created['item']['id']}", headers=BROWSER_HEADERS)
@@ -309,9 +317,33 @@ def test_readable_assistant_exposes_only_its_enabled_mcp_path(tokens_app, monkey
     assert tokens_app.client.put("/api/v1/dataagent/agents/a1/remote-mcp", json={"enabled": True}).status_code == 403
 
 
+def test_foreground_ask_returns_the_final_result_on_its_http_stream(tokens_app, monkeypatch):
+    store = SimpleNamespace(
+        find_task_by_request_key=lambda _key: {"task_id": "task-1", "topic_id": "thread-1", "prompt": "销售额"},
+        get_task=lambda _id, context: {"task_id": "task-1", "topic_id": "thread-1", "agent_id": "a1",
+                                       "task_status": "finished"},
+        list_topic_messages_page=lambda **_kwargs: {"items": [
+            {"task_id": "task-1", "sender_type": "assistant", "message_id": "m1", "content": "42"},
+        ]},
+    )
+    monkeypatch.setattr(remote_mcp, "get_topic_task_store", lambda: store)
+    token = create(tokens_app.client)["token"]
+    response = tokens_app.client.post(
+        MCP, headers={**bearer(token), "Accept": "application/json, text/event-stream"},
+        json={"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+              "params": {"name": "ask", "arguments": {"question": "销售额", "request_key": "key-sse-test"}}},
+    )
+    messages = rpc_messages(response)
+    assert len(messages) == 1 and messages[0]["id"] == 4
+    assert messages[0]["result"]["structuredContent"]["answer"] == "42"
+
+
 def test_remote_tools_have_direct_structured_output():
     tools = {item.name: item for item in remote_mcp.create_server()._tool_manager.list_tools()}
     assert set(tools) == {"ask", "list_threads", "get_thread", "get_run", "feedback"}
+    properties = tools["ask"].parameters["properties"]
+    assert "ctx" not in properties
+    assert properties["background"]["default"] is False
     for tool in tools.values():
         assert tool.fn_metadata.output_schema["type"] == "object"
 
@@ -348,8 +380,9 @@ class FakeStore:
     def find_task_by_request_key(self, key):
         return next((t for t in self.tasks.values() if t["request_key"] == key), None)
 
-    def get_task(self, task_id):
-        return self.tasks.get(task_id)
+    def get_task(self, task_id, context=None):
+        task = self.tasks.get(task_id)
+        return task if task and self.get_topic(task["topic_id"], context=context) else None
 
     def list_topic_messages_page(self, **kwargs):
         task = next(iter(self.tasks.values()))
@@ -361,42 +394,112 @@ class FakeStore:
 def store(monkeypatch):
     fake = FakeStore()
     submitted = []
+    progress = []
+    fixture = SimpleNamespace(status="finished")
 
     async def submit(**kwargs):
         submitted.append(kwargs)
         fake.tasks["task-1"] = {"task_id": "task-1", "topic_id": kwargs["topic_id"], "prompt": kwargs["message_content"],
-                                "request_key": kwargs["request_key"], "task_status": "finished"}
+                                "request_key": kwargs["request_key"], "task_status": fixture.status, "agent_id": "a1"}
         return {"task_id": "task-1"}
 
     monkeypatch.setattr(remote_mcp, "get_topic_task_store", lambda: fake)
     monkeypatch.setattr(remote_mcp, "submit_message_task", submit)
     monkeypatch.setattr(remote_mcp, "_require_agent_profile", lambda agent_id, context: {"agent_id": agent_id})
     monkeypatch.setattr(remote_mcp, "build_agent_snapshot", lambda profile: profile)
+    monkeypatch.setattr(remote_mcp, "WAIT_POLL_SECONDS", 0.001)
+
+    async def report_progress(elapsed, *, message):
+        progress.append((elapsed, message))
+
+    async def authorize(*_args):
+        return ALICE
+
+    monkeypatch.setattr(remote_mcp, "_authenticate", authorize)
+    fixture.ctx = SimpleNamespace(request_context=SimpleNamespace(request=None), report_progress=report_progress)
+    fixture.fake, fixture.submitted, fixture.progress = fake, submitted, progress
     token = remote_mcp._caller.set(("a1", ALICE, "https://agent.example"))
-    yield SimpleNamespace(fake=fake, submitted=submitted)
+    yield fixture
     remote_mcp._caller.reset(token)
 
 
 def test_ask_starts_an_ordinary_non_interactive_task_and_retries_are_idempotent(store):
-    first = run(remote_mcp.ask("本月销售额", "key-00000001"))
+    first = run(remote_mcp.ask("本月销售额", "key-00000001", ctx=store.ctx))
     assert first["status"] == "answered" and first["answer"] == "42" and first["thread_id"] == "t-new"
     assert first["files"][0]["download_url"] == "https://agent.example/api/v1/remote-agents/a1/threads/t-new/files/output/r.csv"
     assert store.fake.topics["t-new"]["source"] == "remote"
     assert store.submitted[0]["interactive"] is False
-    again = run(remote_mcp.ask("本月销售额", "key-00000001"))
+    again = run(remote_mcp.ask("本月销售额", "key-00000001", ctx=store.ctx))
     assert again["run_id"] == "task-1" and len(store.submitted) == 1
-    conflict = run(remote_mcp.ask("上月销售额", "key-00000001"))
-    assert conflict["error"]["code"] == "request_conflict"
+    conflict = run(remote_mcp.ask("上月销售额", "key-00000001", ctx=store.ctx))
+    assert conflict["error"] == {
+        "code": "request_conflict",
+        "message": "请求异常，请重新发起请求。如仍失败，请联系管理员。",
+    }
 
 
 def test_threads_are_the_callers_own(store):
-    assert (run(remote_mcp.ask("继续", "key-00000002", thread_id="t-alice")))["thread_id"] == "t-alice"
-    assert (run(remote_mcp.ask("偷看", "key-00000003", thread_id="t-bob")))["error"]["code"] == "not_found"
+    assert (run(remote_mcp.ask("继续", "key-00000002", ctx=store.ctx, thread_id="t-alice")))["thread_id"] == "t-alice"
+    assert (run(remote_mcp.ask("偷看", "key-00000003", ctx=store.ctx, thread_id="t-bob")))["error"]["code"] == "not_found"
     assert (run(remote_mcp.get_thread("t-bob")))["error"]["code"] == "not_found"
 
 
 def test_a_busy_thread_is_reported_with_its_running_task(store):
     store.fake.topics["t-alice"].update(current_task_status="running", current_task_id="task-9")
-    busy = run(remote_mcp.ask("继续", "key-00000004", thread_id="t-alice"))
+    busy = run(remote_mcp.ask("继续", "key-00000004", ctx=store.ctx, thread_id="t-alice"))
     assert busy["error"]["code"] == "thread_busy" and busy["run_id"] == "task-9"
     assert store.submitted == []
+
+
+def test_background_returns_unfinished_handle_without_waiting(store):
+    store.status = "waiting"
+    result = run(remote_mcp.ask("本月销售额", "key-background", background=True, ctx=store.ctx))
+    assert result == {"run_id": "task-1", "thread_id": "t-new", "status": "in_progress", "retry_after_ms": 2000}
+    assert store.progress == []
+    store.fake.tasks["task-1"]["task_status"] = "finished"
+    assert run(remote_mcp.get_run("task-1"))["answer"] == "42"
+
+
+def test_foreground_reports_progress_and_returns_one_terminal_result(store):
+    store.status = "waiting"
+
+    async def report(elapsed, *, message):
+        store.progress.append((elapsed, message))
+        store.fake.tasks["task-1"]["task_status"] = "running" if len(store.progress) == 1 else "finished"
+
+    store.ctx.report_progress = report
+    result = run(remote_mcp.ask("本月销售额", "key-foreground", ctx=store.ctx))
+    assert result["status"] == "answered"
+    assert [message for _, message in store.progress] == ["任务排队中", "任务执行中"]
+    assert store.progress[1][0] > store.progress[0][0]
+
+
+def test_foreground_wait_deadline_returns_the_existing_run(store, monkeypatch):
+    monkeypatch.setattr(remote_mcp, "WAIT_SECONDS", 0.005)
+    store.status = "running"
+    result = run(remote_mcp.ask("本月销售额", "key-deadline", ctx=store.ctx))
+    resumed = run(remote_mcp.ask("本月销售额", "key-deadline", background=True, ctx=store.ctx))
+    assert result == resumed
+    assert result["status"] == "in_progress" and len(store.submitted) == 1
+
+
+def test_foreground_rechecks_authorization_before_releasing_result(store, monkeypatch):
+    async def revoke(*_args):
+        raise HTTPException(401)
+
+    monkeypatch.setattr(remote_mcp, "_authenticate", revoke)
+    with pytest.raises(ToolError, match="无法访问该助手，请重新连接"):
+        run(remote_mcp.ask("本月销售额", "key-revoked", ctx=store.ctx))
+    assert store.fake.tasks["task-1"]["task_status"] == "finished"
+
+
+def test_busy_thread_reuses_same_key_inserted_after_first_lookup(store, monkeypatch):
+    from unittest.mock import Mock
+
+    previous = {"task_id": "task-1", "topic_id": "t-alice", "prompt": "继续", "agent_id": "a1",
+                "task_status": "running"}
+    store.fake.tasks["task-1"] = previous
+    store.fake.topics["t-alice"].update(current_task_status="running", current_task_id="task-1")
+    monkeypatch.setattr(store.fake, "find_task_by_request_key", Mock(side_effect=[None, previous]))
+    result = run(remote_mcp.ask("继续", "key-concurrent", thread_id="t-alice", background=True, ctx=store.ctx))
+    assert result["run_id"] == "task-1" and store.submitted == []

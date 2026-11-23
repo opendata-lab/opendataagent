@@ -156,6 +156,8 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint pyth
 
 MCP 会话属于令牌所有者，可在网页上看到并续聊。运行采用无人值守模式，跳过需要用户确认的操作。助手默认关闭「MCP 访问」，关闭开关会立即停用该地址。服务在每次调用时检查令牌是否有效及助手是否可见。令牌过期后重新申请，并更新客户端配置。用目标客户端验收 Bearer 连接、令牌撤销、会话隔离和带令牌下载。[MCP 接口与工具](../docs/handbook/api.md#单助手-mcp)
 
+默认 `ask` 使用 Streamable HTTP 的 SSE 响应，等待上限为 15 分钟。代理须逐段转发，默认 MCP location 的读写超时为 1860 秒。外部代理和客户端的长请求上限需覆盖等待时间并预留网络余量。ZCode CLI 的 `timeoutMs` 见其[配置说明](https://github.com/zai-org/ZCode/blob/main/apps/zcode-cli/docs/usage/07-mcp.md)，桌面版本长调用以实际验收为准。需要立即返回时用 `background: true`，再以 `get_run` 读取结果。
+
 ## 被其他门户内嵌
 
 门户通过 widget 内嵌 DataAgent 时，由门户自己的反向代理把以下路径转发到本部署（可以在另一台机器上）：
