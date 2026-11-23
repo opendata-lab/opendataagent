@@ -245,6 +245,7 @@
                     type="button"
                     class="query-message-tool query-message-feedback query-message-feedback-like"
                     :class="{ active: msg.feedback === 'like' }"
+                    :aria-pressed="msg.feedback === 'like'"
                     title="有帮助"
                     aria-label="有帮助"
                     :data-testid="`feedback-like-${msg.id}`"
@@ -256,6 +257,7 @@
                     type="button"
                     class="query-message-tool query-message-feedback query-message-feedback-dislike"
                     :class="{ active: msg.feedback === 'dislike' }"
+                    :aria-pressed="msg.feedback === 'dislike'"
                     title="没帮助"
                     aria-label="没帮助"
                     :data-testid="`feedback-dislike-${msg.id}`"
@@ -1421,6 +1423,10 @@ onBeforeUnmount(() => {
 .query-message-tool.active {
   background: #eef4ff;
   color: var(--odw-widget-color, #4A90A4);
+}
+
+.query-message-feedback.active svg {
+  fill: currentColor;
 }
 
 .query-message-feedback-dislike.active {

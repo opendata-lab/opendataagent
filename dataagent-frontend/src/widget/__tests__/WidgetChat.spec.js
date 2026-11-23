@@ -491,6 +491,7 @@ describe('WidgetChat history conversations', () => {
     await wrapper.get('[data-testid="feedback-like-msg-topic-2"]').trigger('click')
     expect(apiMocks.topicApi.updateMessageFeedback).toHaveBeenCalledWith('topic-2', 'msg-topic-2', 'like')
     expect(wrapper.get('[data-testid="feedback-like-msg-topic-2"]').classes()).toContain('active')
+    expect(wrapper.get('[data-testid="feedback-like-msg-topic-2"]').attributes('aria-pressed')).toBe('true')
 
     await wrapper.get('[data-testid="feedback-dislike-msg-topic-2"]').trigger('click')
     expect(apiMocks.topicApi.updateMessageFeedback).toHaveBeenCalledWith('topic-2', 'msg-topic-2', 'dislike')

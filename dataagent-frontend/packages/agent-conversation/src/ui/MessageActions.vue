@@ -24,7 +24,20 @@
         :aria-pressed="message.feedback === 'like'"
         aria-label="有帮助"
         @click="$emit('feedback', { message, value: 'like' })"
-      >👍</button>
+      >
+        <svg
+          class="dac-thumb"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M7 11v10H4a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h3Z" />
+          <path d="M7 11 12 2a3 3 0 0 1 3 3v4h4a2 2 0 0 1 2 2l-1 8a2 2 0 0 1-2 2H7" />
+        </svg>
+      </button>
       <button
         type="button"
         class="dac-action"
@@ -34,7 +47,20 @@
         :aria-pressed="message.feedback === 'dislike'"
         aria-label="没帮助"
         @click="$emit('feedback', { message, value: 'dislike' })"
-      >👎</button>
+      >
+        <svg
+          class="dac-thumb"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M17 13V3h3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-3Z" />
+          <path d="M17 13 12 22a3 3 0 0 1-3-3v-4H5a2 2 0 0 1-2-2l1-8a2 2 0 0 1 2-2h11" />
+        </svg>
+      </button>
     </template>
   </div>
 </template>
@@ -101,4 +127,6 @@ const copy = async () => {
 }
 .dac-action:hover { background: var(--dac-assistant-bubble-bg, #f1f5f9); }
 .dac-action.is-on { color: var(--dac-accent, #0f766e); }
+.dac-thumb { display: block; width: 14px; height: 14px; }
+.dac-action.is-on .dac-thumb { fill: currentColor; }
 </style>
