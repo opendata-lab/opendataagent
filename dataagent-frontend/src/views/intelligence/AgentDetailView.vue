@@ -34,10 +34,10 @@
             role="switch"
             class="mcp-access-switch"
             aria-label="MCP 访问"
-            :aria-checked="form.remote_mcp_enabled"
-            :disabled="busy || (!draft.remote_mcp_available && !form.remote_mcp_enabled)"
-            :title="draft.remote_mcp_available ? '发布后生效' : '需要管理员开启平台登录'"
-            @click="form.remote_mcp_enabled = !form.remote_mcp_enabled"
+            :aria-checked="draft.remote_mcp_enabled"
+            :disabled="busy || switchingMcp || !draft.published_version || (!draft.remote_mcp_available && !draft.remote_mcp_enabled)"
+            :title="!draft.published_version ? '发布后可开启' : draft.remote_mcp_available ? '开关立即生效' : '需要管理员开启平台登录'"
+            @click="toggleRemoteMcp"
           />
           <button
             class="button secondary mcp-config-copy"
@@ -45,7 +45,7 @@
             :disabled="!draft.remote_mcp_path"
             @click="copyMcpConfig"
           ><Icon name="copy" class="small" />复制配置</button>
-          <span class="mcp-config-hint">{{ draft.remote_mcp_path ? '粘贴到客户端的 MCP 设置后点打开授权' : '开启并发布后可复制配置' }}</span>
+          <span class="mcp-config-hint">{{ draft.remote_mcp_path ? '粘贴到客户端的 MCP 设置后点打开授权' : '开启后可复制配置' }}</span>
         </section>
         <div class="head-actions">
           <template v-if="canManage">
@@ -515,10 +515,6 @@
             {{ form.mcp_server_ids.length }} MCP
           </dd>
         </div>
-        <div v-if="form.remote_mcp_enabled || draft.remote_mcp_path">
-          <dt>MCP 访问</dt>
-          <dd>{{ form.remote_mcp_enabled ? '开启' : '关闭' }}</dd>
-        </div>
         <div>
           <dt>调试状态</dt>
           <dd :class="{ 'success-text': runLabel === '调试完成' }">{{ runLabel }}</dd>
@@ -607,7 +603,6 @@ const form = reactive({
   env_vars: {},
   visibility: { mode: "all", allowed_users: [], allowed_groups: [] },
   preset_questions: ["", "", ""],
-  remote_mcp_enabled: false,
   is_default: false,
 });
 const draft = reactive({
@@ -617,8 +612,10 @@ const draft = reactive({
   can_publish: false,
   preview_status: null,
   remote_mcp_available: false,
+  remote_mcp_enabled: false,
   remote_mcp_path: "",
 });
+const switchingMcp = ref(false);
 const builtinPrompt = ref(""),
   envVarsText = ref("{}"),
   baseline = ref("");
@@ -764,7 +761,6 @@ function applyAgent(agent) {
     },
     env_vars: agent.env_vars || {},
     plan_timeout_action: agent.plan_timeout_action || "park",
-    remote_mcp_enabled: agent.remote_mcp_enabled === true,
     preset_questions: [
       agent.preset_questions?.[0] || "",
       agent.preset_questions?.[1] || "",
@@ -781,6 +777,7 @@ function applyAgent(agent) {
     "preview_topic_id",
     "preview_status",
     "remote_mcp_available",
+    "remote_mcp_enabled",
     "remote_mcp_path",
   ])
     delete form[key];
@@ -796,6 +793,7 @@ function syncDraft(agent) {
     "can_publish",
     "preview_status",
     "remote_mcp_available",
+    "remote_mcp_enabled",
     "remote_mcp_path",
   ])
     if (key in agent) draft[key] = agent[key];
@@ -818,7 +816,6 @@ function buildPayload() {
     skill_folders: [...form.skill_folders],
     max_turns: Number(form.max_turns || 0),
     plan_timeout_action: form.plan_timeout_action || "park",
-    remote_mcp_enabled: form.remote_mcp_enabled,
     env_vars: env,
     visibility: {
       ...form.visibility,
@@ -831,6 +828,19 @@ function buildPayload() {
       .filter(Boolean),
     expected_revision: draft.revision,
   };
+}
+// MCP access is not part of the draft: the switch acts on the published assistant at once.
+async function toggleRemoteMcp() {
+  if (switchingMcp.value) return;
+  switchingMcp.value = true;
+  try {
+    syncDraft(await dataagentApi.setAgentRemoteMcp(agentId.value, !draft.remote_mcp_enabled));
+    ElMessage.success(draft.remote_mcp_enabled ? "已开启 MCP 访问" : "已关闭 MCP 访问");
+  } catch (error) {
+    notifyError(error, "切换 MCP 访问失败");
+  } finally {
+    switchingMcp.value = false;
+  }
 }
 async function copyMcpConfig() {
   if (!draft.remote_mcp_path) return;

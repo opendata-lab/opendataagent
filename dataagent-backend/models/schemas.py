@@ -476,7 +476,6 @@ class AgentCatalogProfile(AgentSummary):
 
 
 class AgentProfileBase(BaseModel):
-    remote_mcp_enabled: Optional[bool] = None
     name: Optional[str] = None
     description: Optional[str] = None
     system_prompt: Optional[str] = None
@@ -499,6 +498,10 @@ class AgentProfileUpdateRequest(AgentProfileBase):
 
 class AgentDraftRevisionRequest(BaseModel):
     expected_revision: int = Field(ge=1)
+
+
+class AgentRemoteMcpRequest(BaseModel):
+    enabled: bool
 
 
 class AgentPreviewMessageRequest(AgentDraftRevisionRequest):

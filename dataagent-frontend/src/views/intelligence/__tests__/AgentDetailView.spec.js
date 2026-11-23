@@ -13,6 +13,7 @@ const dataagentApi = vi.hoisted(() =>
       'listAuthUsers',
       'updateAgent',
       'publishAgent',
+      'setAgentRemoteMcp',
       'createAgentPreviewTopic',
       'submitAgentPreview',
     ].map((key) => [key, vi.fn()]),
@@ -130,25 +131,19 @@ describe('agent draft workbench', () => {
     expect(wrapper.findAll('.workbench > .panel')).toHaveLength(3)
     wrapper.unmount()
   })
-  it('saves the MCP switch as a draft and copies the configuration only after publishing', async () => {
+  it('turns MCP access on at once, without a publish, and then copies the configuration', async () => {
     const path = '/api/v1/remote-agents/agent_1/mcp'
-    const enabled = { ...profile, remote_mcp_available: true, remote_mcp_enabled: true, remote_mcp_path: '' }
-    dataagentApi.getAgentDraft.mockResolvedValueOnce({ ...enabled, remote_mcp_enabled: false })
-    dataagentApi.updateAgent.mockResolvedValueOnce({ ...enabled, revision: 4 })
-    dataagentApi.publishAgent.mockResolvedValueOnce({
-      ...enabled, revision: 4, published_version: 2, remote_mcp_path: path, can_publish: false, has_changes: false,
-    })
+    const live = { ...profile, published_version: 1, remote_mcp_available: true }
+    dataagentApi.getAgentDraft.mockResolvedValueOnce({ ...live, remote_mcp_enabled: false, remote_mcp_path: '' })
+    dataagentApi.setAgentRemoteMcp.mockResolvedValueOnce({ ...live, remote_mcp_enabled: true, remote_mcp_path: path })
     const wrapper = mount()
     await flushPromises()
+    expect(wrapper.get('.mcp-config-copy').element.disabled).toBe(true)
     await wrapper.get('[role="switch"][aria-label="MCP 访问"]').trigger('click')
+    await flushPromises()
+    expect(dataagentApi.setAgentRemoteMcp).toHaveBeenCalledWith('agent_1', true)
+    expect(dataagentApi.publishAgent).not.toHaveBeenCalled()
     expect(wrapper.get('#remote-mcp-switch').attributes('aria-checked')).toBe('true')
-    expect(wrapper.get('.mcp-config-copy').element.disabled).toBe(true)
-    await wrapper.vm.handleSave()
-    expect(dataagentApi.updateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({ remote_mcp_enabled: true }))
-    expect(wrapper.get('.mcp-config-copy').element.disabled).toBe(true)
-    wrapper.vm.openPublish()
-    wrapper.vm.publishAck = true
-    await wrapper.vm.handlePublish()
     const writeText = vi.fn().mockResolvedValue()
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     try {

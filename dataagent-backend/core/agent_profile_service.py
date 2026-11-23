@@ -211,7 +211,6 @@ def normalize_agent_profile_payload(
         "plan_timeout_action": plan_timeout_action,
         "env_vars": env_vars,
         "visibility": visibility,
-        "remote_mcp_enabled": data.get("remote_mcp_enabled", base.get("remote_mcp_enabled")) is True,
         "preset_questions": preset_questions,
     }
 
@@ -411,7 +410,6 @@ class AgentProfileStore:
                 env_vars_json = VALUES(env_vars_json),
                 visibility_json = VALUES(visibility_json),
                 preset_questions_json = VALUES(preset_questions_json),
-                remote_mcp_enabled = VALUES(remote_mcp_enabled),
                 is_default = VALUES(is_default),
                 is_builtin = VALUES(is_builtin),
                 updated_at = CURRENT_TIMESTAMP

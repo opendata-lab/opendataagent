@@ -56,6 +56,9 @@ export const dataagentApi = {
   getAgentBuiltinPrompt() {
     return dataagentRequest.get('/v1/dataagent/agents/builtin-prompt')
   },
+  setAgentRemoteMcp(agentId, enabled) {
+    return dataagentRequest.put(`/v1/dataagent/agents/${encodeURIComponent(agentId)}/remote-mcp`, { enabled })
+  },
   publishAgent(agentId, revision) {
     return dataagentRequest.post(`/v1/dataagent/agents/${encodeURIComponent(agentId)}/publish`, { expected_revision: revision })
   },
