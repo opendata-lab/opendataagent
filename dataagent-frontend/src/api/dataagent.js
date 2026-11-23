@@ -44,8 +44,14 @@ dataagentRequest.interceptors.response.use(
 )
 
 export const dataagentApi = {
-  decideMcpAuthorization(data) {
-    return dataagentRequest.post('/v1/remote-agents/oauth/authorize', data)
+  listMcpTokens(scope = 'mine') {
+    return dataagentRequest.get('/v1/dataagent/mcp-tokens', { params: { scope } })
+  },
+  createMcpToken({ name, expires_in_days }) {
+    return dataagentRequest.post('/v1/dataagent/mcp-tokens', { name, expires_in_days })
+  },
+  revokeMcpToken(id) {
+    return dataagentRequest.delete(`/v1/dataagent/mcp-tokens/${encodeURIComponent(id)}`)
   },
   listAgentWorkbench() {
     return dataagentRequest.get('/v1/dataagent/agents/workbench')

@@ -27,3 +27,24 @@
 端到端（2026-11-20，Keycloak 26.0.7 + HTTPS 统一入口 + 官方 MCP Python SDK 1.30 的 OAuth 客户端 + Playwright，模型与 MCP 服务用仓库的冒烟桩）：剧本 29 个用例全部通过，覆盖首次登录（授权码 + PKCE）、问数、取结果、带令牌下载、幂等重试与冲突、续聊、会话忙、评价、网页查看与续聊、管理员只读与文件预览、反馈跳转、Widget 本人会话、跨用户与跨助手隔离、令牌过期续期、关闭 MCP 访问、需要确认的写操作被拒绝。测试中修正三处：Keycloak 不支持 RFC 8707，标准客户端只请求服务端给出的 scope，改为同时接受共用 audience；MCP 开关原先未写入助手资料表；平台登录模式的 Widget 未列出本人的 MCP 会话。
 
 配置合并复测（2026-11-20，同一套 Keycloak 环境）：OAuth 配置只加 `server_metadata_url`，不设任何 MCP 环境变量，用户信息钩子返回 Keycloak 的 `sub`。27 个用例全部通过；另确认 401 的元数据地址和资源元数据中的 `resource` 都取自请求域名，`authorization_servers` 来自发现文档，外域 Origin 返回 403。该环境中 nginx 经 localhost 访问后端，未能体现 `--forwarded-allow-ips` 的作用，需在 compose 部署上确认。
+
+## 个人访问令牌替换 OAuth（2026-11-22）
+
+依据设计第 4 节更新。后端与前端分开实施，接口契约以设计 4.2 为准。
+
+1. **后端。** 迁移 `20261122_000040`（删 `da_mcp_refresh_token`、建 `da_mcp_access_token`，可降级）；`remote_mcp_tokens.py` 改为令牌创建、列表、撤销、按哈希查找；`remote_mcp_policy.verify_identity` 改查令牌表；`remote_mcp.py` 删除资源元数据、授权服务器元数据和 `/oauth/*` 路由，401 不带 `resource_metadata`，新增 `/api/v1/dataagent/mcp-tokens` 三个接口；两份 nginx 配置删除 well-known 转发；`tests/test_remote_mcp.py` 删 OAuth 用例、补令牌用例；更新 `docs/handbook/api.md`、`deploy/README.md`。
+2. **前端。** 删除 `McpAuthorizeView.vue`、其测试、`/mcp-authorize` 路由和登录守卫特例；`api/dataagent.js` 增加三个令牌接口；新增 `/settings/mcp-tokens`（登录用户可见）和用户菜单入口；`AgentDetailView.vue` 复制配置改为 `headers.Authorization`，加「申请令牌」链接；更新相应单测。
+3. **待办。** `docs/TODO.md`「远端问数助手对外调用」中的 OAuth 审查遗留和「查看/撤销已授权客户端」作废，移到「已完成」并注明被本次替换；ZCode 实测改为验证 HTTP + 固定令牌。
+
+验证：
+- 后端：`pytest tests/test_remote_mcp.py` 及迁移升降级（Docker MySQL `127.0.0.1:3326` 临时库）。
+- 前端：`McpTokensView`、`AgentDetailView`、`authGuard` 的单测，`npm run build`。
+- 端到端：本地起后端和前端，网页申请令牌，用 MCP Python SDK 以 HTTP + Bearer 调用 `ask` 和 `get_run`，撤销后再调用应得 401；ZCode 实测由用户执行。
+
+### PR #57 审查修正（2026-11-22）
+
+1. 管理接口采用登录会话与完整 Origin 校验。Nginx 保留端口，Vite 保留浏览器 Host 并代理 MCP。
+2. 登录会话保留 SSO 显式角色。迁移为已有令牌设置普通用户权限，签发时保留显式授权或现有普通用户权限。普通用户可从可见助手的只读详情复制配置，管理开关仍限管理员。页面入口统一为「访问令牌」。
+3. 后端验证角色优先级、跨源拒绝和可见性，前端验证普通用户复制配置。升级本地隔离 MySQL，使用浏览器签发普通用户令牌，再通过官方 MCP Python SDK 在 HTTP 上调用工具并验证撤销。回退应用版本前降级角色字段迁移。
+
+本地验证（2026-11-22）：Docker MySQL `127.0.0.1:3326` 临时库、Docker Redis `127.0.0.1:6389`（DB 13）、Python 3.13。迁移从 000040 升至 000041，浏览器以普通用户测试会话复制助手配置、创建和撤销令牌。官方 MCP Python SDK 1.30.0 通过 HTTP 初始化、列工具和调用 `list_threads`，撤销后返回 401。使用本地签发的测试登录会话。真实 SSO、ZCode 与模型问数未运行。

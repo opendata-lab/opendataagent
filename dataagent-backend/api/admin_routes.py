@@ -11,6 +11,7 @@ from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Reques
 from fastapi.responses import Response
 
 from api.topic_file_response import topic_file_response
+from core import remote_mcp_policy
 from core.auth import AuthIdentity, is_auth_enabled, require_admin, require_user, resolve_identity
 from core.agent_draft_service import agent_drafts, DraftConflict, check_revision
 from core.task_submission_service import submit_message_task
@@ -134,7 +135,10 @@ def _catalog_identity(request: Request) -> AuthIdentity | None:
 def _readable_agent_payload(profile: dict) -> dict:
     """登录用户读侧只暴露 visibility 的 mode 摘要，allow-list 名单仅 admin 可见。"""
     visibility = profile.get("visibility") or {}
-    return {**profile, "visibility_mode": str(visibility.get("mode") or "all")}
+    path = ""
+    if profile.get("remote_mcp_enabled") and remote_mcp_policy.enabled():
+        path = remote_mcp_policy.endpoint("", profile["agent_id"])
+    return {**profile, "visibility_mode": str(visibility.get("mode") or "all"), "remote_mcp_path": path}
 
 
 def _provider_catalog() -> list[ProviderConfig]:

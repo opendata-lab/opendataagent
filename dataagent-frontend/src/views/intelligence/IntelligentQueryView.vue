@@ -37,6 +37,7 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item command="mcp-tokens">访问令牌</el-dropdown-item>
                 <el-dropdown-item command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -75,6 +76,10 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const handleUserCommand = async (command) => {
+  if (command === 'mcp-tokens') {
+    router.push('/settings/mcp-tokens')
+    return
+  }
   if (command !== 'logout') return
   const agentId = String(route.query?.agent_id || '').trim()
   const redirect = route.fullPath || (agentId ? `/chat?agent_id=${encodeURIComponent(agentId)}` : '/chat')

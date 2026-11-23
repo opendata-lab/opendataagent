@@ -29,6 +29,7 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item command="mcp-tokens">访问令牌</el-dropdown-item>
                 <el-dropdown-item command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -63,7 +64,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Collection, Connection, Cpu, Monitor, User } from '@element-plus/icons-vue'
+import { ArrowLeft, Collection, Connection, Cpu, Key, Monitor, User } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -87,6 +88,11 @@ const GROUPS = [
     title: '接入',
     adminOnly: true,
     items: [{ index: 'widget', label: 'Widget 接入', icon: Monitor, path: '/settings/widget-access' }]
+  },
+  {
+    title: '个人',
+    adminOnly: false,
+    items: [{ index: 'mcp-tokens', label: '访问令牌', icon: Key, path: '/settings/mcp-tokens' }]
   }
 ]
 
@@ -115,6 +121,10 @@ const goToLogin = () => {
 }
 
 const handleUserCommand = async (command) => {
+  if (command === 'mcp-tokens') {
+    router.push('/settings/mcp-tokens')
+    return
+  }
   if (command !== 'logout') return
   const agentId = String(route.query?.agent_id || '').trim()
   const redirect = route.fullPath || (agentId ? `/chat?agent_id=${encodeURIComponent(agentId)}` : '/chat')

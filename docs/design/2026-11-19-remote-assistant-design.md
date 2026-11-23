@@ -2,9 +2,9 @@
 
 日期 2026-11-19 · 基于 DataAgent main `f93adf1`
 
-管理员在已发布的助手上打开「MCP 访问」开关（立即生效，不需要再发布），页面提供可复制的客户端配置。用户在本地 MCP 客户端配置地址并登录后，即可向该助手问数、追问和评价。
+管理员在已发布的助手上打开「MCP 访问」开关（立即生效，不需要再发布），页面提供可复制的客户端配置。用户在网页申请个人 MCP 访问令牌，填入本地 MCP 客户端后，即可向该助手问数、追问和评价。
 
-例如「经营分析助手」的地址是 `https://dataagent.example.com/api/v1/remote-agents/agent_sales/mcp`。每个地址绑定一个 `agent_id`，所有助手共用同一个 FastAPI 进程和任务协调器。
+例如「经营分析助手」的地址是 `http://dataagent.example.com:8901/api/v1/remote-agents/agent_sales/mcp`。每个地址绑定一个 `agent_id`，所有助手共用同一个 FastAPI 进程和任务协调器。
 
 ## 1. 原则：MCP 会话就是普通会话
 
@@ -18,7 +18,7 @@ MCP 只是又一个入口。用户通过 MCP 发起的会话，和网页、Widge
 
 | 方面 | 做法 | 复用的现有能力 |
 | --- | --- | --- |
-| 身份 | DataAgent 自己签发 MCP 令牌（第 4 节）。用户在授权页上以网页登录的身份同意，令牌的主体就是该平台用户 ID（`<provider>:<sub>` 或 `local:<name>`）；角色和可见范围每次请求实时判定 | 网页登录（SSO 或本地账号）、`resolve_oauth_role` |
+| 身份 | DataAgent 自己签发 MCP 令牌（第 4 节）。用户用网页会话申请令牌，令牌的主体就是该平台用户 ID（`<provider>:<sub>` 或 `local:<name>`）；角色按签发授权与配置判定，可见范围每次请求检查 | 网页登录（SSO 或本地账号）、`resolve_oauth_role` |
 | 能否使用 | 助手已发布且开启「MCP 访问」，并对该用户可见 | 助手可见范围 `agent_visible_to` |
 | 会话 | 首问按网页同样的方式建会话，来源 `remote`；续聊传 `thread_id`，只能是自己在该助手下的会话。网页、MCP 和平台登录模式的 Widget 都列出本人的这些会话 | `create_topic`、本人会话判断 |
 | 问数 | 提交为普通任务，标记 `interactive=false` | `submit_message_task`、协调器、执行器 |
@@ -51,66 +51,75 @@ MCP 只是又一个入口。用户通过 MCP 发起的会话，和网页、Widge
 
 `request_key` 用于重试：任务表的 `request_key` 列存「助手 + 用户 + 键」的摘要并唯一。同键同问题返回原任务；同键换了问题或会话返回 `request_conflict`。`files` 中每个文件带下载地址 `.../remote-agents/<agent_id>/threads/<thread_id>/files/<path>`，须携带同一令牌。
 
-## 4. 授权：DataAgent 作为授权服务器
+## 4. 授权：个人访问令牌
 
-MCP 客户端与 DataAgent 之间走标准 MCP 授权（OAuth 2.1：授权码 + PKCE），授权服务器就是 DataAgent 自己；DataAgent 再通过现有网页登录认人。SSO 不需要为 MCP 注册客户端、回调地址、scope 或 audience，DataAgent 也没有 MCP 专用配置。这与 Figma、Notion、Atlassian 等远程 MCP 服务的做法一致：用户登录的是服务自己的账号，企业 SSO 接在服务登录之后。
+2026-11-22 更新：原方案由 DataAgent 充当 OAuth 授权服务器（#55）。MCP 客户端（如 ZCode）走 OAuth 发现和授权时要求 HTTPS，内网部署就得为此配证书，因此改为用户自行申请的固定令牌，整套 OAuth 授权服务器删除，不并存。
 
 ```
-MCP 客户端 ⇄ DataAgent（授权与令牌）
-              └─ 用户未登录时走现有网页登录 ⇄ SSO（原样不动）
+用户（网页登录）── 申请令牌 ──> DataAgent（只存哈希）
+MCP 客户端 ── Authorization: Bearer dak_… ──> DataAgent MCP 地址
 ```
 
-### 4.1 流程
+### 4.1 申请与管理
 
-1. 客户端无令牌请求助手地址，收到 401 和 `WWW-Authenticate`，读受保护资源元数据，其 `authorization_servers` 为 DataAgent 自己的地址（`<origin>`，取自请求）。
-2. 客户端读 `<origin>/.well-known/oauth-authorization-server`（同一内容也在 `/.well-known/openid-configuration`），得到授权、令牌和注册地址。
-3. 客户端动态注册，或直接使用固定的公开客户端 `dataagent`。
-4. 浏览器打开授权地址。DataAgent 校验参数后跳到前端授权页 `/mcp-authorize`；未登录时先经现有登录守卫完成网页登录再回来。页面显示客户端名称、回调地址的主机和当前用户，用户点「允许」或「拒绝」。
-5. 浏览器回到客户端的回调地址，带授权码；客户端换取访问令牌和刷新令牌，之后每次请求携带 `Authorization: Bearer`，过期时用刷新令牌续期。
+- 入口：顶部用户菜单「访问令牌」，页面 `/settings/mcp-tokens`，所有已登录用户可用（不是 `adminOnly`）。
+- 新建：填名称（必填，≤64 字），选有效期 30 / 90 / 180 天或永不过期，默认 90 天。完整令牌只在创建成功的弹窗里显示一次，提供复制按钮；关闭后无法再看到。
+- 列表：名称、令牌前缀（`dak_` 后 6 位）、创建时间、最后使用时间、过期时间、状态（有效 / 已过期 / 已撤销），可撤销。只列有效和最近 30 天内失效的。
+- 每个用户最多 10 个有效令牌，超出时创建返回 409。
+- 管理员在同一页可切换「全部用户」，查看并撤销任何人的令牌（不能替别人创建）。
 
 ### 4.2 接口
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /.well-known/oauth-protected-resource/api/v1/remote-agents/<agent_id>/mcp` | `resource` 为该助手地址，`authorization_servers` 为 `[<origin>]`，`scopes_supported` 为 `["dataagent:ask"]` |
-| `GET /.well-known/oauth-authorization-server`、`GET /.well-known/openid-configuration` | `issuer=<origin>`；`authorization_endpoint`、`token_endpoint`、`registration_endpoint`；`response_types_supported=["code"]`；`grant_types_supported=["authorization_code","refresh_token"]`；`code_challenge_methods_supported=["S256"]`；`token_endpoint_auth_methods_supported=["none"]` |
-| `POST /api/v1/remote-agents/oauth/register` | RFC 7591 动态注册，只发公开客户端。不落库：`client_id` 是 DataAgent 签名的 `{client_name, redirect_uris}`。另接受固定 `client_id=dataagent`，无需注册 |
-| `GET /api/v1/remote-agents/oauth/authorize` | 校验 `response_type=code`、客户端、`redirect_uri`、`code_challenge`（必须 S256）、`state`、`scope`（缺省为 `dataagent:ask`）、`resource`（可选）；通过后 302 到 `/mcp-authorize?<原参数>`。客户端或回调地址无效时直接显示错误，不回跳 |
-| `POST /api/v1/remote-agents/oauth/authorize` | 前端授权页提交 `{参数, decision: allow\|deny}`，需网页登录会话和现有防 CSRF 头；返回带 `code`/`state` 或 `error=access_denied` 的回跳地址 |
-| `POST /api/v1/remote-agents/oauth/token` | 表单提交。`authorization_code`：校验授权码、客户端、`redirect_uri` 和 PKCE；`refresh_token`：校验并轮换。返回 `access_token`、`token_type=Bearer`、`expires_in`、`refresh_token`、`scope` |
+| `GET /api/v1/dataagent/mcp-tokens?scope=mine\|all` | 列表；`all` 仅管理员。不返回令牌或哈希 |
+| `POST /api/v1/dataagent/mcp-tokens` | `{name, expires_in_days: 30\|90\|180\|null}`；返回记录和一次性的 `token` |
+| `DELETE /api/v1/dataagent/mcp-tokens/{token_id}` | 撤销（写 `revoked_at`，不删行）；本人或管理员 |
 
-### 4.3 令牌
+记录字段：`{id, name, token_prefix, user_id, display_name, created_at, last_used_at, expires_at, revoked_at, status}`，时间为 ISO 8601 UTC，`status` 为 `active|expired|revoked`。列表返回 `{items: [记录]}`，按创建时间倒序；创建返回 `{item: 记录, token: "dak_…"}`（201）；撤销返回 `{item: 记录}`，已撤销的再撤销照样返回 200。名称为空或过长、有效期不在允许值内返回 422。
+
+管理接口需要网页登录会话。创建和撤销必须携带与请求协议、主机、端口完全一致的 `Origin`，列表拒绝显式跨源请求。入口代理传递完整 `Host` 和外部协议。平台登录未开启时返回 404。
+
+### 4.3 令牌与校验
 
 | 项 | 做法 |
 | --- | --- |
-| 访问令牌 | HS256 JWT，密钥由 `SECRET_KEY` 派生（与会话签名分开派生）；`iss=<origin>`，`aud=<origin>/api/v1/remote-agents`（共用受众，可用于该用户可见的任一已开启 MCP 的助手），`sub` 为平台用户 ID，含显示名、`client_id`、`scope`；1 小时有效 |
-| 刷新令牌 | 随机串，库中只存哈希；30 天有效，每次使用即作废并签发新的 |
-| 授权码 | Redis，5 分钟有效，只能用一次，绑定客户端、回调地址、PKCE 挑战和用户 |
-| 角色与可见范围 | 不进令牌，每次请求按现有规则实时判定 |
+| 格式 | `dak_` + `secrets.token_urlsafe(32)` |
+| 存储 | 表 `da_mcp_access_token` 只存 SHA-256 哈希，明文不落库、不进日志 |
+| 校验 | MCP 地址和下载路由取 `Authorization: Bearer`，按哈希查表，要求未撤销、未过期；`last_used_at` 最多每分钟写一次 |
+| 身份 | 记录中的 `user_id`（`provider:account`）和显示名组成 `AuthIdentity`；本地账号每次查 `local_admins`；SSO 令牌沿用签发时会话的显式角色，普通用户签发的令牌不会提权。由 `ADMIN_USERS` 授权的管理员令牌每次重新核对配置 |
+| 可见范围 | 不进令牌：令牌可用于该用户可见的任一已开启 MCP 的助手，仍由 `_published` 判断 |
+| 401 | `WWW-Authenticate: Bearer realm="DataAgent MCP"`，**不带** `resource_metadata`，客户端不会发起 OAuth 发现 |
 
-回调地址只允许：本机 http（`localhost`、`127.0.0.1`、`[::1]`，端口不限）、https，以及桌面应用的自定义协议；拒绝 `javascript`、`data`、`file` 和非本机 http。授权页显示回调地址的主机供用户确认。
+保留 `Origin` 头与请求来源一致的检查。
 
-### 4.4 不做
+### 4.4 代价与不做
 
-- 用户查看和撤销已授权的客户端；退出网页登录不撤销 MCP 授权。撤销途径暂为等待刷新令牌过期，或关闭助手的「MCP 访问」。已记入[待办](../TODO.md#远端问数助手对外调用)。
+- 走 HTTP 时令牌明文传输，只适用于内网或可信网络；需要上公网时在部署层加 HTTPS，代码不变。
+- SSO 身份源的停用和显式角色变更不会主动通知 DataAgent。管理员可撤销已有令牌，默认有效期 90 天。
+- 不做自动续期；过期后重新申请并更新客户端配置。
+- 不做按助手限定的令牌。
 
 ## 5. 数据与代码
 
 - 迁移 `20261119_000038`：`da_agent_profile` 增加 `remote_mcp_enabled`；`da_agent_task` 增加 `interactive`（默认 1）和 `request_key`（可空，唯一）。
-- `api/remote_mcp.py`：5 个工具、资源元数据和下载路由，均调用现有存储与提交服务。
-- `core/remote_mcp_policy.py`：令牌校验与身份映射；授权服务器接口与令牌签发（第 4 节）。
-- 迁移：新增 `da_mcp_refresh_token`（令牌哈希、用户 ID、显示名、`client_id`、scope、过期时间、创建时间）。
-- 配置：无 MCP 专用配置。删除 `OAUTH_PROVIDERS` 的 `server_metadata_url`（配置了会被忽略）。对外地址由请求的 `Host` 和 `X-Forwarded-Proto` 得出，后端容器的 uvicorn 信任代理传来的协议头；nginx 另外转发 `/.well-known/oauth-authorization-server` 和 `/.well-known/openid-configuration`。启用条件为平台登录已开启（SSO 或本地账号任一）。
+- 迁移 `20261122_000040`：删除 `da_mcp_refresh_token`；新增 `da_mcp_access_token`（`id` 自增主键、`token_hash` CHAR(64) 唯一、`token_prefix`、`user_id`、`display_name`、`name`、`expires_at` 可空、`last_used_at` 可空、`revoked_at` 可空、`created_at`；索引 `user_id`）。时间均为 UTC。
+- 迁移 `20261122_000041`：记录 SSO 令牌的角色覆盖，存量令牌按普通用户处理，网页登录可重新签发。
+- `api/remote_mcp.py`：5 个工具和下载路由，均调用现有存储与提交服务；删除资源元数据、授权服务器元数据、`/oauth/register|authorize|token` 路由。
+- `core/remote_mcp_policy.py`：只保留启用判断、地址拼接和 `verify_identity`（改为查令牌表）；删除 JWT、PKCE、客户端注册和刷新令牌相关代码。
+- `core/remote_mcp_tokens.py`：改为个人令牌的创建、列表、撤销和查找；删除授权码（Redis）与刷新令牌存储。
+- 令牌管理接口放在 `api/remote_mcp.py`（与 MCP 同一模块，`/api/v1/dataagent/mcp-tokens`）。
+- 配置：无 MCP 专用配置，启用条件为平台登录已开启（SSO 或本地账号任一）。对外地址由请求的 `Host` 和 `X-Forwarded-Proto` 得出。nginx 删除 `/.well-known/oauth-authorization-server` 和 `/.well-known/openid-configuration` 两条转发（`deploy/docker/nginx/default.conf`、`dataagent-frontend/nginx.conf`）。
 - 运行时 `interactive` 开关：`cell.ts`、`frames.ts`、`pi_runtime.py`、`task_executor.py`，以及 `prompts/non_interactive_mode.md`。
-- 助手编辑页标题右侧：「MCP 访问」开关和「复制配置」按钮。开关不属于草稿，作用于已发布的助手、切换即生效（`PUT /api/v1/dataagent/agents/<agent_id>/remote-mcp`，仅管理员；助手从未发布时不可开启）；开启后可复制配置。复制的内容为客户端配置，页面用当前域名拼出地址，并提示「粘贴到客户端的 MCP 设置后点打开授权」：
+- 助手编辑页标题右侧：「MCP 访问」开关和「复制配置」按钮。开关不属于草稿，作用于已发布的助手、切换即生效（`PUT /api/v1/dataagent/agents/<agent_id>/remote-mcp`，仅管理员；助手从未发布时不可开启）；所有有权查看已开启 MCP 助手的登录用户均可复制配置。助手只读详情返回已启用的 `remote_mcp_path`，旁边提供「申请令牌」链接到 `/settings/mcp-tokens`。复制的内容用当前页面的协议和域名拼出地址：
 
 ```json
 { "mcpServers": { "dataagent-<助手名>": {
     "type": "http",
-    "url": "https://<当前域名>/api/v1/remote-agents/<agent_id>/mcp",
-    "oauth": { "type": "authorization_code", "clientId": "dataagent" } } } }
+    "url": "<当前协议>://<当前域名>/api/v1/remote-agents/<agent_id>/mcp",
+    "headers": { "Authorization": "Bearer <你的访问令牌>" } } } }
 ```
 
-- 前端授权页 `/mcp-authorize`：沿用登录守卫，显示客户端、回调主机和当前用户，「允许」「拒绝」两个按钮。
+- 前端删除授权页 `/mcp-authorize`（`McpAuthorizeView.vue`、路由和登录守卫中的特例）；新增 `views/settings/McpTokensView.vue` 及用户菜单入口。
 
 [实施计划](../plans/2026-11-19-remote-assistant-plan.md)

@@ -114,6 +114,7 @@ class AuthIdentity:
     display_name: str
     role: str
     provider: str
+    oauth_role: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -404,6 +405,7 @@ def issue_session_token(identity: AuthIdentity, now: float | None = None) -> str
         "name": identity.display_name,
         "role": identity.role,
         "provider": identity.provider,
+        "oauth_role": identity.oauth_role,
         "iat": issued_at,
         "exp": issued_at + cfg.session_ttl_seconds,
     }
@@ -424,11 +426,13 @@ def verify_session_token(token: str) -> AuthIdentity | None:
     if not user_id:
         return None
     role = str(payload.get("role") or ROLE_USER)
+    oauth_role = payload.get("oauth_role")
     return AuthIdentity(
         user_id=user_id,
         display_name=str(payload.get("name") or user_id),
         role=role if role in {ROLE_ADMIN, ROLE_USER} else ROLE_USER,
         provider=str(payload.get("provider") or ""),
+        oauth_role=oauth_role if oauth_role in (ROLE_ADMIN, ROLE_USER) else None,
     )
 
 
