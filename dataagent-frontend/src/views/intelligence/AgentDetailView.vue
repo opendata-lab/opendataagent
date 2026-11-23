@@ -569,6 +569,7 @@ import {
 } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { dataagentApi } from "@/api/dataagent";
+import { copyText } from "@/utils/clipboard";
 import { createNl2SqlApiClient, DATAAGENT_CLIENT_HEADERS } from "@/api/nl2sql";
 import { useAuthStore } from "@/stores/auth";
 import { withAgentContext } from "@/router/agentContext";
@@ -839,7 +840,9 @@ async function copyMcpConfig() {
     oauth: { type: "authorization_code", clientId: "dataagent" },
   } } };
   try {
-    await navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+    // copyText falls back to execCommand: deployments reached over plain HTTP
+    // (LAN IP) are not a secure context and have no navigator.clipboard.
+    await copyText(JSON.stringify(config, null, 2));
     ElMessage.success("已复制 MCP 配置");
   } catch {
     ElMessage.error("无法访问剪贴板，请检查浏览器权限后重试");

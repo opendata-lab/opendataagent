@@ -162,8 +162,15 @@ describe('agent draft workbench', () => {
           oauth: { type: 'authorization_code', clientId: 'dataagent' },
         },
       } })
+      // Plain-HTTP deployments have no navigator.clipboard; the copy still works.
+      vi.stubGlobal('navigator', {})
+      const execCommand = vi.fn(() => true)
+      document.execCommand = execCommand
+      await copy.trigger('click')
+      expect(execCommand).toHaveBeenCalledWith('copy')
     } finally {
       vi.unstubAllGlobals()
+      delete document.execCommand
     }
     wrapper.unmount()
   })
