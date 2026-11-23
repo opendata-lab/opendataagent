@@ -40,3 +40,11 @@
 - 后端：`pytest tests/test_remote_mcp.py` 及迁移升降级（Docker MySQL `127.0.0.1:3326` 临时库）。
 - 前端：`McpTokensView`、`AgentDetailView`、`authGuard` 的单测，`npm run build`。
 - 端到端：本地起后端和前端，网页申请令牌，用 MCP Python SDK 以 HTTP + Bearer 调用 `ask` 和 `get_run`，撤销后再调用应得 401；ZCode 实测由用户执行。
+
+### PR #57 审查修正（2026-11-22）
+
+1. 管理接口采用登录会话与完整 Origin 校验。Nginx 保留端口，Vite 保留浏览器 Host 并代理 MCP。
+2. 登录会话保留 SSO 显式角色。迁移为已有令牌设置普通用户权限，签发时保留显式授权或现有普通用户权限。普通用户可从可见助手的只读详情复制配置，管理开关仍限管理员。页面入口统一为「访问令牌」。
+3. 后端验证角色优先级、跨源拒绝和可见性，前端验证普通用户复制配置。升级本地隔离 MySQL，使用浏览器签发普通用户令牌，再通过官方 MCP Python SDK 在 HTTP 上调用工具并验证撤销。回退应用版本前降级角色字段迁移。
+
+本地验证（2026-11-22）：Docker MySQL `127.0.0.1:3326` 临时库、Docker Redis `127.0.0.1:6389`（DB 13）、Python 3.13。迁移从 000040 升至 000041，浏览器以普通用户测试会话复制助手配置、创建和撤销令牌。官方 MCP Python SDK 1.30.0 通过 HTTP 初始化、列工具和调用 `list_threads`，撤销后返回 401。使用本地签发的测试登录会话。真实 SSO、ZCode 与模型问数未运行。

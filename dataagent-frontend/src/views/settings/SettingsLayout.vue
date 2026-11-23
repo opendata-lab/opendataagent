@@ -29,7 +29,7 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="mcp-tokens">MCP 访问令牌</el-dropdown-item>
+                <el-dropdown-item command="mcp-tokens">访问令牌</el-dropdown-item>
                 <el-dropdown-item command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -92,7 +92,7 @@ const GROUPS = [
   {
     title: '个人',
     adminOnly: false,
-    items: [{ index: 'mcp-tokens', label: 'MCP 访问令牌', icon: Key, path: '/settings/mcp-tokens' }]
+    items: [{ index: 'mcp-tokens', label: '访问令牌', icon: Key, path: '/settings/mcp-tokens' }]
   }
 ]
 

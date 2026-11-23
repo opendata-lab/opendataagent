@@ -119,8 +119,10 @@ export default defineConfig(() => {
           changeOrigin: true
         },
         '/api/v1/dataagent': {
-          target: 'http://localhost:8900',
-          changeOrigin: true
+          target: 'http://localhost:8900'
+        },
+        '/api/v1/remote-agents': {
+          target: 'http://localhost:8900'
         },
         '/api/v1/nl2sql-admin': {
           target: 'http://localhost:8900',

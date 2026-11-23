@@ -44,6 +44,6 @@ def verify_identity(authorization: str) -> AuthIdentity:
             raise RemoteMcpError("unauthorized", "令牌无法映射到平台用户")
         role = ROLE_ADMIN
     else:
-        role = resolve_oauth_role(provider, account)
+        role = record["oauth_role"] or resolve_oauth_role(provider, account)
     remote_mcp_tokens.record_use(record["id"], record["last_used_at"])
     return AuthIdentity(user_id=subject, display_name=record["display_name"], role=role, provider=provider)

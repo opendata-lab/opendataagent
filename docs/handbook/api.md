@@ -71,13 +71,13 @@ POST /tasks/deliver-message
 
 ## 单助手 MCP
 
-登录 DataAgent 后，从用户菜单「MCP 访问令牌」新建令牌并复制。进入已开启「MCP 访问」的助手详情页「复制配置」，将令牌填入客户端配置的 `headers.Authorization`，值为 `Bearer dak_…`。客户端通过 Streamable HTTP 连接 `<scheme>://<host>/api/v1/remote-agents/<agent_id>/mcp`，协议和域名与打开详情页时一致。
+登录 DataAgent 后，从用户菜单「访问令牌」新建令牌并复制。进入已开启「MCP 访问」的助手详情页「复制配置」，将令牌填入客户端配置的 `headers.Authorization`，值为 `Bearer dak_…`。客户端通过 Streamable HTTP 连接 `<scheme>://<host>/api/v1/remote-agents/<agent_id>/mcp`，协议和域名与打开详情页时一致。
 
 每次请求都会检查令牌状态和助手可见性。令牌缺失、无效、过期或已撤销时，返回 `401` 和 `WWW-Authenticate: Bearer realm="DataAgent MCP"`。令牌过期后重新申请，并更新客户端配置。
 
 ### 管理 MCP 访问令牌
 
-以下接口需要网页登录会话和 `X-DataAgent-Client: dataagent` 请求头。平台登录关闭时返回 `404`。
+以下接口需要网页登录会话。创建和撤销还需要与页面一致的 `Origin`（协议、主机和端口）。平台登录关闭时返回 `404`。
 
 | 接口 | 请求与响应 |
 | --- | --- |

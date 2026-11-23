@@ -8,7 +8,7 @@ import secrets
 import pymysql
 
 from config import get_settings
-from core.auth import AuthIdentity
+from core.auth import AuthIdentity, ROLE_USER
 
 TOKEN_PREFIX = "dak_"
 _MAX_ACTIVE_TOKENS = 10
@@ -70,11 +70,12 @@ def create_token(identity: AuthIdentity, name: str, expires_in_days: int | None)
         token = TOKEN_PREFIX + secrets.token_urlsafe(32)
         prefix = token[:len(TOKEN_PREFIX) + 6]
         expires_at = now + timedelta(days=expires_in_days) if expires_in_days is not None else None
+        oauth_role = identity.oauth_role if identity.is_admin else ROLE_USER
         cursor.execute(
             """INSERT INTO da_mcp_access_token
-               (token_hash, token_prefix, user_id, display_name, name, expires_at, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-            (_hash(token), prefix, identity.user_id, identity.display_name, name, expires_at, now),
+               (token_hash, token_prefix, user_id, display_name, name, expires_at, created_at, oauth_role)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (_hash(token), prefix, identity.user_id, identity.display_name, name, expires_at, now, oauth_role),
         )
         cursor.execute(f"SELECT {_FIELDS} FROM da_mcp_access_token WHERE id = %s", (cursor.lastrowid,))
         item = _record(cursor.fetchone(), now)
@@ -116,7 +117,7 @@ def revoke_token(token_id: int, identity: AuthIdentity) -> dict | None:
 def find_active_token(token: str) -> dict | None:
     with _connect() as connection, connection.cursor() as cursor:
         cursor.execute(
-            f"SELECT id, user_id, display_name, last_used_at FROM da_mcp_access_token "
+            f"SELECT id, user_id, display_name, last_used_at, oauth_role FROM da_mcp_access_token "
             f"WHERE token_hash = %s AND {_ACTIVE}",
             (_hash(token), _now()),
         )

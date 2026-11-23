@@ -26,9 +26,10 @@
             >
           </div>
         </div>
-        <section v-if="canManage && !loading && !loadError" class="mcp-access" aria-label="MCP 访问">
-          <label class="mcp-access-label" for="remote-mcp-switch">MCP 访问</label>
+        <section v-if="!loading && !loadError && (canManage || draft.remote_mcp_path)" class="mcp-access" aria-label="MCP 访问">
+          <label v-if="canManage" class="mcp-access-label" for="remote-mcp-switch">MCP 访问</label>
           <button
+            v-if="canManage"
             id="remote-mcp-switch"
             type="button"
             role="switch"
@@ -853,7 +854,7 @@ async function copyMcpConfig() {
   const config = { mcpServers: { [`dataagent-${form.name}`]: {
     type: "http",
     url: `${window.location.protocol}//${window.location.host}${draft.remote_mcp_path}`,
-    headers: { Authorization: "Bearer <你的 MCP 访问令牌>" },
+    headers: { Authorization: "Bearer <你的访问令牌>" },
   } } };
   try {
     // copyText falls back to execCommand: deployments reached over plain HTTP

@@ -155,7 +155,7 @@ describe('agent draft workbench', () => {
         [`dataagent-${profile.name}`]: {
           type: 'http',
           url: `${window.location.protocol}//${window.location.host}${path}`,
-          headers: { Authorization: 'Bearer <你的 MCP 访问令牌>' },
+          headers: { Authorization: 'Bearer <你的访问令牌>' },
         },
       } })
       const tokenLink = wrapper.get('.mcp-token-link')
@@ -174,6 +174,25 @@ describe('agent draft workbench', () => {
       delete document.execCommand
     }
     wrapper.unmount()
+  })
+  it('lets a reader copy the published MCP configuration without changing access', async () => {
+    authState.isAdmin = false
+    const path = '/api/v1/remote-agents/agent_1/mcp'
+    dataagentApi.getAgentProfile.mockResolvedValueOnce({ ...profile, remote_mcp_path: path })
+    const wrapper = mount()
+    const writeText = vi.fn().mockResolvedValue()
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    try {
+      await flushPromises()
+      expect(wrapper.find('#remote-mcp-switch').exists()).toBe(false)
+      expect(dataagentApi.getAgentDraft).not.toHaveBeenCalled()
+      await wrapper.get('.mcp-config-copy').trigger('click')
+      expect(JSON.parse(writeText.mock.calls[0][0]).mcpServers[`dataagent-${profile.name}`].url)
+        .toBe(window.location.origin + path)
+    } finally {
+      vi.unstubAllGlobals()
+      wrapper.unmount()
+    }
   })
   it('ignores an older detail response after a newer load has completed', async () => {
     const wrapper = mount()

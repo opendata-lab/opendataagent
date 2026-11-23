@@ -561,6 +561,7 @@ class AgentReadableProfile(BaseModel):
     max_turns: int = 0
     plan_timeout_action: str = "park"
     visibility_mode: str = "all"
+    remote_mcp_path: str = ""
     preset_questions: List[str] = Field(default_factory=list)
     is_default: bool = False
     is_builtin: bool = False

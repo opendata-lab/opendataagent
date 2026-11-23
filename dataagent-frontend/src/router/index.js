@@ -158,7 +158,7 @@ export const routes = [
         path: 'mcp-tokens',
         name: 'McpTokens',
         component: () => import('@/views/settings/McpTokensView.vue'),
-        meta: { tab: 'mcp-tokens', title: 'MCP 访问令牌' }
+        meta: { tab: 'mcp-tokens', title: '访问令牌' }
       },
       {
         path: 'models',

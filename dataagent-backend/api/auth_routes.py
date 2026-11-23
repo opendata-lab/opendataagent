@@ -327,6 +327,7 @@ async def oauth_callback(provider: str, request: Request):
         # 钩子显式返回 role 时优先生效；否则按 ADMIN_USERS（provider:sub）提名。
         role=mapped_role or resolve_oauth_role(provider, oauth_user_id),
         provider=provider,
+        oauth_role=mapped_role,
     )
 
     redirect_path = sanitize_redirect_path(

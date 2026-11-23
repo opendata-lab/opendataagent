@@ -12,7 +12,7 @@ from contextvars import ContextVar
 import hashlib
 from time import monotonic
 from typing import Annotated, Any, Literal
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import pymysql
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -29,7 +29,7 @@ from api.topic_file_response import topic_file_response
 from core import remote_mcp_policy as policy
 from core import remote_mcp_tokens as tokens
 from core.agent_profile_service import build_agent_snapshot
-from core.auth import AuthIdentity, require_user
+from core.auth import AuthIdentity, require_identity
 from core.task_status import ACTIVE_TASK_STATUSES
 from core.task_submission_service import submit_message_task
 from core.topic_task_store import get_topic_task_store
@@ -283,23 +283,11 @@ def _require_mcp_enabled() -> None:
 def _token_user(
     request: Request,
     _: Annotated[None, Depends(_require_mcp_enabled)],
-    identity: Annotated[AuthIdentity, Depends(require_user)],
+    identity: Annotated[AuthIdentity, Depends(require_identity)],
 ) -> AuthIdentity:
-    if request.headers.get("X-DataAgent-Client") != "dataagent":
-        raise HTTPException(403, "请求必须来自 DataAgent 网页")
-    fetch_site = request.headers.get("Sec-Fetch-Site")
-    if fetch_site in {"same-site", "cross-site"}:
-        raise HTTPException(403, "请求必须来自 DataAgent 网页")
     origin = request.headers.get("Origin")
-    if origin and fetch_site != "same-origin":
-        # HTTP intranet browsers may omit Fetch Metadata, and the SPA proxy can
-        # strip the browser's port from Host.
-        try:
-            origin_host = urlsplit(origin).hostname
-        except ValueError:
-            origin_host = None
-        if origin_host != request.url.hostname:
-            raise HTTPException(403, "请求必须来自 DataAgent 网页")
+    if (request.method != "GET" or origin is not None) and origin != _origin(request):
+        raise HTTPException(403, "请求必须来自 DataAgent 网页")
     return identity
 
 
@@ -318,9 +306,9 @@ def create_mcp_token(payload: CreateMcpTokenRequest, response: Response, identit
     try:
         item, token = tokens.create_token(identity, payload.name, payload.expires_in_days)
     except tokens.TokenLimitReached as exc:
-        raise HTTPException(409, "每个用户最多可有 10 个有效的 MCP 访问令牌") from exc
+        raise HTTPException(409, "每个用户最多可有 10 个有效的访问令牌") from exc
     except TimeoutError as exc:
-        raise HTTPException(503, "暂时无法创建 MCP 访问令牌，请重试") from exc
+        raise HTTPException(503, "暂时无法创建访问令牌，请重试") from exc
     response.headers["Cache-Control"] = "no-store"
     return {"item": item, "token": token}
 
@@ -329,7 +317,7 @@ def create_mcp_token(payload: CreateMcpTokenRequest, response: Response, identit
 def revoke_mcp_token(token_id: int, identity: TokenUser):
     item = tokens.revoke_token(token_id, identity)
     if item is None:
-        raise HTTPException(404, "找不到 MCP 访问令牌")
+        raise HTTPException(404, "找不到访问令牌")
     return {"item": item}
 
 

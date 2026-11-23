@@ -2,7 +2,7 @@
   <div class="mcp-tokens-view">
     <div class="mcp-tokens__toolbar">
       <div>
-        <div class="mcp-tokens__title">MCP 访问令牌</div>
+        <div class="mcp-tokens__title">访问令牌</div>
         <div class="mcp-tokens__subtitle">
           用于本地 MCP 客户端通过 Bearer Token 访问已开启 MCP 的智能体，每个用户最多 10 个有效令牌。仅展示有效和最近 30 天内失效的令牌。
         </div>
@@ -33,7 +33,7 @@
       :data="tokens"
       stripe
       class="mcp-tokens__table"
-      empty-text="暂无 MCP 访问令牌"
+      empty-text="暂无访问令牌"
     >
       <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
       <el-table-column
@@ -87,7 +87,7 @@
 
     <el-dialog
       v-model="createDialogVisible"
-      title="新建 MCP 访问令牌"
+      title="新建访问令牌"
       width="min(480px, calc(100vw - 32px))"
       :close-on-click-modal="false"
     >
@@ -308,7 +308,7 @@ async function confirmRevoke(row) {
   try {
     await ElMessageBox.confirm(
       `确认撤销令牌「${row.name}」吗？撤销后使用该令牌的 MCP 客户端将立即失效。`,
-      '撤销 MCP 访问令牌',
+      '撤销访问令牌',
       {
         confirmButtonText: '撤销',
         cancelButtonText: '取消',

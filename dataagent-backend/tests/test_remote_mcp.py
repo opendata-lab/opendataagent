@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse
 import pytest
 
-from api import remote_mcp
+from api import admin_routes, remote_mcp
 from core import auth, remote_mcp_policy, remote_mcp_tokens
 from main import app
 
@@ -22,7 +22,7 @@ DOWNLOAD = f"{remote_mcp_policy.PREFIX}/a1/threads/thread-1/files/output/report.
 IDENTITY = auth.AuthIdentity("example:Alice", "Alice", "user", "example")
 ADMIN = auth.AuthIdentity("local:root", "Root", "admin", "local")
 OTHER_USER = auth.AuthIdentity("example:alice", "Another user", "user", "example")
-BROWSER_HEADERS = {"X-DataAgent-Client": "dataagent", "Origin": ORIGIN}
+BROWSER_HEADERS = {"Origin": ORIGIN}
 
 
 class TokenCursor(sqlite3.Cursor):
@@ -66,7 +66,7 @@ def token_db(tmp_path, monkeypatch):
             """CREATE TABLE da_mcp_access_token (
                id INTEGER PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, token_prefix TEXT NOT NULL,
                user_id TEXT NOT NULL, display_name TEXT NOT NULL, name TEXT NOT NULL,
-               created_at TEXT NOT NULL, last_used_at TEXT, expires_at TEXT, revoked_at TEXT)"""
+               created_at TEXT NOT NULL, last_used_at TEXT, expires_at TEXT, revoked_at TEXT, oauth_role TEXT)"""
         )
         connection.commit()
     monkeypatch.setattr(remote_mcp_tokens, "_connect", connect)
@@ -172,20 +172,16 @@ def test_token_create_validates_request(tokens_app, payload):
     assert tokens_app.client.post(MANAGEMENT, headers=BROWSER_HEADERS, json=payload).status_code == 422
 
 
-def test_management_requires_a_session_and_the_spa_header(tokens_app):
+def test_management_requires_a_session_and_full_same_origin(tokens_app):
     client = tokens_app.client
     created = create(client)
     path = f"{MANAGEMENT}/{created['item']['id']}"
     calls = [("GET", MANAGEMENT), ("POST", MANAGEMENT), ("DELETE", path)]
     for method, url in calls:
         options = {"json": {"name": "client"}} if method == "POST" else {}
-        assert client.request(method, url, **options).status_code == 403
-        cross_origin = {**BROWSER_HEADERS, "Origin": OTHER_ORIGIN}
-        assert client.request(method, url, headers=cross_origin, **options).status_code == 403
-        same_site = {**BROWSER_HEADERS, "Sec-Fetch-Site": "same-site"}
-        assert client.request(method, url, headers=same_site, **options).status_code == 403
-    proxied_headers = {**BROWSER_HEADERS, "Host": "agent.example"}
-    assert client.post(MANAGEMENT, headers=proxied_headers, json={"name": "proxied"}).status_code == 201
+        assert client.request(method, url, **options).status_code == (200 if method == "GET" else 403)
+        for origin in (OTHER_ORIGIN, "http://agent.example:8444", "https://agent.example:8443", "null"):
+            assert client.request(method, url, headers={"Origin": origin}, **options).status_code == 403
     tokens_app.login(None)
     for method, url in calls:
         options = {"json": {"name": "client"}} if method == "POST" else {}
@@ -270,19 +266,47 @@ def test_mcp_rejects_a_local_admin_removed_from_settings(tokens_app):
     assert mcp_call(tokens_app.client, token).status_code == 401
 
 
-def test_mcp_resolves_current_role_and_throttles_last_used(tokens_app):
+def test_mcp_respects_web_role_and_current_configured_admins(tokens_app):
+    tokens_app.settings.admin_users.append(IDENTITY.user_id)
+    tokens_app.login(auth.AuthIdentity(IDENTITY.user_id, "Alice", "user", "example", oauth_role="user"))
+    limited = create(tokens_app.client)["token"]
+    assert not remote_mcp_policy.verify_identity(f"Bearer {limited}").is_admin
+
+    tokens_app.login(auth.AuthIdentity(IDENTITY.user_id, "Alice", "admin", "example"))
+    configured = create(tokens_app.client)["token"]
+    assert remote_mcp_policy.verify_identity(f"Bearer {configured}").is_admin
+    tokens_app.settings.admin_users.clear()
+    assert not remote_mcp_policy.verify_identity(f"Bearer {configured}").is_admin
+
+    tokens_app.login(auth.AuthIdentity(IDENTITY.user_id, "Alice", "admin", "example", oauth_role="admin"))
+    mapped = create(tokens_app.client)["token"]
+    assert remote_mcp_policy.verify_identity(f"Bearer {mapped}").is_admin
+
+
+def test_mcp_throttles_last_used(tokens_app):
     client = tokens_app.client
     token = create(client)["token"]
     assert remote_mcp_policy.verify_identity(f"Bearer {token}") == IDENTITY
-    tokens_app.settings.admin_users.append(IDENTITY.user_id)
     tokens_app.db.clock.now += timedelta(seconds=59)
-    assert remote_mcp_policy.verify_identity(f"Bearer {token}").is_admin
+    assert not remote_mcp_policy.verify_identity(f"Bearer {token}").is_admin
     assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"][0]["last_used_at"] == "2026-11-22T12:00:00Z"
     updates = [statement for statement in tokens_app.db.statements if "SET last_used_at" in statement]
     assert len(updates) == 1
     tokens_app.db.clock.now += timedelta(seconds=1)
     assert mcp_call(client, token).status_code == 200
     assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"][0]["last_used_at"] == "2026-11-22T12:01:00Z"
+
+
+def test_readable_assistant_exposes_only_its_enabled_mcp_path(tokens_app, monkeypatch):
+    profile = {"agent_id": "a1", "name": "Assistant", "remote_mcp_enabled": True}
+    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda _: profile)
+    url = "/api/v1/dataagent/agents/a1/profile"
+    assert tokens_app.client.get(url).json()["remote_mcp_path"] == MCP
+    profile["remote_mcp_enabled"] = False
+    assert tokens_app.client.get(url).json()["remote_mcp_path"] == ""
+    profile["visibility"] = {"mode": "selected", "allowed_users": ["example:another"]}
+    assert tokens_app.client.get(url).status_code == 404
+    assert tokens_app.client.put("/api/v1/dataagent/agents/a1/remote-mcp", json={"enabled": True}).status_code == 403
 
 
 def test_remote_tools_have_direct_structured_output():

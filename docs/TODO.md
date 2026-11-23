@@ -21,8 +21,7 @@
 - **要做**：用 ZCode 实测内网 HTTP + 固定 Bearer 令牌、客户端重启后复用、带令牌下载及撤销后返回 401。用真实模型和 OpenDataWorks 只读服务账号验证「最近 30 天工作流发布次数趋势」和业务数据范围。来源为 2026-11-19 单助手 MCP 实施验收和 2026-11-22 令牌替换计划。
 - **要做**（2026-11-22 后端交接）：运行 MySQL 临时库的迁移升级、降级、再升级，并用网页申请令牌后通过 MCP Python SDK 调用 `ask`、`get_run`，撤销后确认 401。后端交接环境无法连接 `127.0.0.1:3326`，且按任务范围未启动服务。
 - **要做**（2026-11-22 后端交接）：在已安装 Pi 依赖的环境补跑后端全量测试。此次定向用例通过，全量测试在 `test_agent_record_compat.py` 尝试构建 Pi 时因缺少 `tsc` 停止。见下方实施计划。
-- **要做**（2026-11-22 授权服务器审查）：核对 Vite 开发代理是否需转发 `/api/v1/remote-agents` 以便本地使用页面生成的地址，并核对 Compose 发布 8900 的设置与可信代理边界。审查记录位于 `~/.agents/handoffs/2026-11-22-codex-mcp-as-review/`。
-- **要做**（2026-11-22 后端交接）：让 SPA 代理保留浏览器使用的完整来源，以便令牌管理接口的 Origin 校验也能区分同一主机上的不同端口。代理目前可能丢失端口，客户端未提供 Fetch Metadata 时只能校验请求头标记和主机名。见下方替换设计和实施计划。
+- **要做**（2026-11-22 授权服务器审查）：核对 Compose 发布 8900 的设置与可信代理边界。审查记录位于 `~/.agents/handoffs/2026-11-22-codex-mcp-as-review/`。
 - [设计](design/2026-11-19-remote-assistant-design.md) · [实施计划](plans/2026-11-19-remote-assistant-plan.md)
 
 ### Docker 沙箱结果挂载偶发空读
@@ -192,7 +191,9 @@
 
 ## 已完成
 
-- **单助手 MCP OAuth 审查遗留与客户端授权管理**（2026-11-22）：个人访问令牌替换整个 OAuth 授权服务器，原动态注册、回调端口、授权页账号绑定、授权错误回跳、资源 URL 主机比较、发现代理及刷新令牌重放事项作废。原在 OAuth 令牌中沿用网页登录角色的提议也作废，现按设计实时计算 MCP 角色。查看和撤销客户端授权、退出联动撤销由个人令牌列表与主动撤销替代。[替换设计](design/2026-11-19-remote-assistant-design.md#4-授权个人访问令牌) · [实施计划](plans/2026-11-19-remote-assistant-plan.md#个人访问令牌替换-oauth2026-11-22)
+- **访问令牌管理同源校验与普通用户接入**（2026-11-22，PR #57 审查）：代理保留完整来源，管理接口核对 Origin，普通用户可从可见助手复制配置。SSO 令牌遵循签发时的显式角色，配置授权按当前配置检查。本地用普通用户在网页签发令牌，经 MCP Python SDK 1.30.0 通过 HTTP 完成初始化、列工具、调用 `list_threads` 和撤销后返回 401。[设计](design/2026-11-19-remote-assistant-design.md#4-授权个人访问令牌) · [计划](plans/2026-11-19-remote-assistant-plan.md#pr-57-审查修正2026-11-22)
+
+- **单助手 MCP OAuth 审查遗留与客户端授权管理**（2026-11-22）：个人访问令牌替换整个 OAuth 授权服务器，原动态注册、回调端口、授权页账号绑定、授权错误回跳、资源 URL 主机比较、发现代理及刷新令牌重放事项作废。查看和撤销客户端授权、退出联动撤销由个人令牌列表与主动撤销替代。[替换设计](design/2026-11-19-remote-assistant-design.md#4-授权个人访问令牌) · [实施计划](plans/2026-11-19-remote-assistant-plan.md#个人访问令牌替换-oauth2026-11-22)
 
 - **OntoFoundry 嵌入的 SDK 显示重试提示（2026-11-19）**：OntoFoundry 改用本仓库构建的 `agent-conversation` `0.3.2-ontofoundry.1`（含模型重试提示 `run.retrying` 与运行中消息队列），见 [ontofoundry#103](https://github.com/opendata-lab/ontofoundry/pull/103)。来源：[模型重试设计](design/2026-11-19-model-retry-and-friendly-errors-design.md)。
 
