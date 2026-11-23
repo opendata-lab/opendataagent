@@ -26,36 +26,52 @@
             >
           </div>
         </div>
-        <section v-if="!loading && !loadError && (canManage || draft.remote_mcp_path)" class="mcp-access" aria-label="MCP 访问">
-          <label v-if="canManage" class="mcp-access-label" for="remote-mcp-switch">MCP 访问</label>
-          <button
-            v-if="canManage"
-            id="remote-mcp-switch"
-            type="button"
-            role="switch"
-            class="mcp-access-switch"
-            aria-label="MCP 访问"
-            :aria-checked="draft.remote_mcp_enabled"
-            :disabled="busy || switchingMcp || !draft.published_version || (!draft.remote_mcp_available && !draft.remote_mcp_enabled)"
-            :title="!draft.published_version ? '发布后可开启' : draft.remote_mcp_available ? '开关立即生效' : '需要管理员开启平台登录'"
-            @click="toggleRemoteMcp"
-          />
-          <button
-            class="button secondary mcp-config-copy"
-            type="button"
-            :disabled="!draft.remote_mcp_path"
-            @click="copyMcpConfig"
-          ><Icon name="copy" class="small" />复制配置</button>
-          <a
-            class="mcp-token-link"
-            :href="mcpTokensHref"
-            @click.prevent="router.push('/settings/mcp-tokens')"
-          >申请令牌</a>
-          <span class="mcp-config-hint">{{ draft.remote_mcp_path ? '粘贴到客户端配置并填入访问令牌' : '开启后可复制配置' }}</span>
-        </section>
         <div class="head-actions">
+          <el-popover
+            v-if="!loading && !loadError && (canManage || canConfigureMcp)"
+            v-model:visible="mcpMenuOpen"
+            role="dialog"
+            title="更多操作"
+            popper-class="agent-actions-popover"
+            placement="bottom-end"
+            trigger="click"
+            :teleported="false"
+            :width="210"
+          >
+            <template #reference>
+              <button
+                type="button"
+                class="icon-button mcp-popover-trigger"
+                aria-label="智能体更多操作"
+                title="更多操作"
+              >
+                <MoreFilled aria-hidden="true" />
+              </button>
+            </template>
+            <div class="mcp-popover">
+              <div v-if="canManage" class="mcp-access-control">
+                <label for="remote-mcp-switch">MCP 访问</label>
+                <button
+                  id="remote-mcp-switch"
+                  type="button"
+                  role="switch"
+                  class="mcp-access-switch"
+                  aria-label="MCP 访问"
+                  :aria-checked="draft.remote_mcp_enabled"
+                  :disabled="busy || !draft.published_version || (!draft.remote_mcp_available && !draft.remote_mcp_enabled)"
+                  :aria-disabled="switchingMcp || undefined"
+                  :title="!draft.published_version ? '发布后可开启' : draft.remote_mcp_available ? '开关立即生效' : '需要管理员开启平台登录'"
+                  @click="toggleRemoteMcp"
+                />
+              </div>
+              <el-button v-if="canConfigureMcp" text class="mcp-config-action" @click="openMcpConfig">
+                MCP 配置
+              </el-button>
+            </div>
+          </el-popover>
           <template v-if="canManage">
             <button
+              v-if="dirty"
               class="button secondary"
               :disabled="busy || loading || !!loadError"
               @click="handleSave()"
@@ -82,6 +98,11 @@
           </button>
         </div>
       </header>
+      <ChatMcpConfigDialog
+        v-if="mcpConfigOpen"
+        v-model="mcpConfigOpen"
+        :agent-id="agentId"
+      />
       <div v-if="loading" class="load-state" role="status">正在加载智能体…</div>
       <div v-else-if="loadError" class="load-state" role="alert">
         <p>{{ loadError }}</p>
@@ -570,13 +591,14 @@ import {
   useRouter,
 } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { MoreFilled } from "@element-plus/icons-vue";
 import { dataagentApi } from "@/api/dataagent";
-import { copyText } from "@/utils/clipboard";
 import { createNl2SqlApiClient, DATAAGENT_CLIENT_HEADERS } from "@/api/nl2sql";
 import { useAuthStore } from "@/stores/auth";
 import { withAgentContext } from "@/router/agentContext";
 import { createNl2SqlTransport } from "./nl2sqlTransport";
 import Icon from "./AgentWorkbenchIcon.vue";
+import ChatMcpConfigDialog from "./ChatMcpConfigDialog.vue";
 import AgentExperienceCards from "@/components/experience/AgentExperienceCards.vue";
 import { buildCommands } from "@opendataagent/agent-conversation";
 
@@ -584,7 +606,6 @@ const route = useRoute(),
   router = useRouter(),
   authStore = useAuthStore();
 const canManage = computed(() => authStore.isAdmin);
-const mcpTokensHref = computed(() => router.resolve?.('/settings/mcp-tokens')?.href || '/settings/mcp-tokens');
 const api = createNl2SqlApiClient({
   defaultHeaders: DATAAGENT_CLIENT_HEADERS,
   onUnauthorized: () =>
@@ -623,6 +644,9 @@ const draft = reactive({
   remote_mcp_path: "",
 });
 const switchingMcp = ref(false);
+const mcpMenuOpen = ref(false);
+const mcpConfigOpen = ref(false);
+const canConfigureMcp = computed(() => Boolean(draft.remote_mcp_path));
 const builtinPrompt = ref(""),
   envVarsText = ref("{}"),
   baseline = ref("");
@@ -839,9 +863,12 @@ function buildPayload() {
 // MCP access is not part of the draft: the switch acts on the published assistant at once.
 async function toggleRemoteMcp() {
   if (switchingMcp.value) return;
+  const generation = loadGeneration;
   switchingMcp.value = true;
   try {
-    syncDraft(await dataagentApi.setAgentRemoteMcp(agentId.value, !draft.remote_mcp_enabled));
+    const updated = await dataagentApi.setAgentRemoteMcp(agentId.value, !draft.remote_mcp_enabled);
+    if (generation !== loadGeneration) return;
+    syncDraft(updated);
     ElMessage.success(draft.remote_mcp_enabled ? "已开启 MCP 访问" : "已关闭 MCP 访问");
   } catch (error) {
     notifyError(error, "切换 MCP 访问失败");
@@ -849,21 +876,9 @@ async function toggleRemoteMcp() {
     switchingMcp.value = false;
   }
 }
-async function copyMcpConfig() {
-  if (!draft.remote_mcp_path) return;
-  const config = { mcpServers: { [`dataagent-${form.name}`]: {
-    type: "http",
-    url: `${window.location.protocol}//${window.location.host}${draft.remote_mcp_path}`,
-    headers: { Authorization: "Bearer <你的访问令牌>" },
-  } } };
-  try {
-    // copyText falls back to execCommand: deployments reached over plain HTTP
-    // (LAN IP) are not a secure context and have no navigator.clipboard.
-    await copyText(JSON.stringify(config, null, 2));
-    ElMessage.success("已复制 MCP 配置");
-  } catch {
-    ElMessage.error("无法访问剪贴板，请检查浏览器权限后重试");
-  }
+function openMcpConfig() {
+  mcpMenuOpen.value = false;
+  mcpConfigOpen.value = true;
 }
 
 async function handleSave(silent = false) {
@@ -1176,6 +1191,8 @@ onBeforeRouteUpdate(async (to) => {
   return true;
 });
 watch(agentId, () => {
+  mcpMenuOpen.value = false;
+  mcpConfigOpen.value = false;
   detachPreview();
   baseline.value = "";
   loadDetail();
@@ -1205,24 +1222,35 @@ onBeforeUnmount(() => { loadGeneration++; window.removeEventListener("beforeunlo
 .agent-workbench {
   min-height: 100%;
 }
-.workspace-head:has(.mcp-access) {
+.mcp-popover-trigger {
+  flex: none;
+  width: 36px;
+  height: 36px;
+}
+.mcp-popover-trigger svg { width: 17px; height: 17px; }
+.mcp-popover-trigger[aria-expanded="true"] {
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+}
+/* Element Plus also uses the title as the popover's accessible name. */
+.head-actions :deep(.agent-actions-popover .el-popover__title) {
+  display: none;
+}
+.mcp-popover {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 16px;
+  gap: 4px;
 }
-.mcp-access {
+.mcp-access-control {
   display: flex;
-  gap: 7px;
   align-items: center;
-  min-width: 0;
-  max-width: 610px;
-  border-left: 1px solid var(--border);
-  padding-left: 16px;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 8px;
 }
-.mcp-access-label {
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
+.mcp-config-action {
+  justify-content: flex-start;
+  padding-inline: 8px;
 }
 .mcp-access-switch {
   width: 34px;
@@ -1244,26 +1272,15 @@ onBeforeUnmount(() => { loadGeneration++; window.removeEventListener("beforeunlo
   border-radius: 50%;
   background: white;
 }
-.mcp-access-switch[aria-checked="true"] { background: var(--primary-dark); }
+.mcp-access-switch[aria-checked="true"] { background: #2563eb; }
 .mcp-access-switch[aria-checked="true"]::after { transform: translateX(15px); }
-.mcp-config-copy { flex: 0 0 auto; white-space: nowrap; }
-.mcp-token-link {
-  flex: 0 0 auto;
-  font-size: 12px;
-  color: var(--primary-dark);
-  text-decoration: none;
-  white-space: nowrap;
+.mcp-access-switch[aria-disabled="true"] {
+  cursor: wait;
+  opacity: 0.65;
 }
-.mcp-token-link:hover { text-decoration: underline; }
-.mcp-config-hint { font-size: 12px; }
-@media (max-width: 1160px) {
-  .workspace-head:has(.mcp-access) { grid-template-columns: minmax(0, 1fr) auto; }
-  .mcp-access { grid-row: 2; grid-column: 1 / -1; padding-left: 0; border-left: 0; }
-  .workspace-head:has(.mcp-access) .head-actions { grid-column: 2; grid-row: 1; }
-}
-@media (max-width: 600px) {
-  .workspace-head:has(.mcp-access) { grid-template-columns: minmax(0, 1fr); }
-  .workspace-head:has(.mcp-access) .head-actions { grid-column: 1; grid-row: 3; margin-left: 0; }
+.mcp-access-switch:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
 }
 .config-scroll {
   border: 0;

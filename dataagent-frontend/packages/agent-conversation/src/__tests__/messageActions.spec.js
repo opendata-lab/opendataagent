@@ -136,6 +136,8 @@ describe('message actions', () => {
 
     expect(submitFeedback).toHaveBeenCalledWith({ messageId: 'a-1', feedback: 'like' })
     expect(el.shadowRoot.querySelector('[data-action="like"]').getAttribute('aria-pressed')).toBe('true')
+    expect(el.shadowRoot.querySelector('[data-action="like"] svg.dac-thumb')).not.toBeNull()
+    expect(el.shadowRoot.querySelector('[data-action="like"]').classList.contains('is-on')).toBe(true)
     el.remove()
   })
 

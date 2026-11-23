@@ -172,18 +172,37 @@
       <div class="v2-main-top-bar">
         <h2 class="v2-agent-title">{{ currentAgentName }}</h2>
         <span v-if="isReadonlyTopic" class="v2-readonly-label" :title="topicOwnerLabel(currentTopic)">{{ topicOwnerLabel(currentTopic) }} 的会话 · 只读</span>
-        <button
-          v-if="activeTopicId"
-          type="button"
-          class="v2-artifacts-toggle"
-          :class="{ active: artifactsPanelOpen }"
-          :aria-expanded="artifactsPanelOpen"
-          title="会话文件 / 产物"
-          @click="toggleArtifactsPanel"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M4 5h6l2 2h8v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5z" /></svg>
-          <span>文件</span>
-        </button>
+        <div class="v2-main-actions">
+          <el-dropdown trigger="click" placement="bottom-end" @command="handleChatAction">
+            <button
+              type="button"
+              class="v2-more-actions"
+              aria-label="更多操作"
+              title="更多操作"
+              :disabled="agentTransitioning"
+            >
+              <MoreFilled aria-hidden="true" />
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="copy-link">复制链接</el-dropdown-item>
+                <el-dropdown-item command="mcp-config">MCP 配置</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <button
+            v-if="activeTopicId"
+            type="button"
+            class="v2-artifacts-toggle"
+            :class="{ active: artifactsPanelOpen }"
+            :aria-expanded="artifactsPanelOpen"
+            title="会话文件 / 产物"
+            @click="toggleArtifactsPanel"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M4 5h6l2 2h8v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5z" /></svg>
+            <span>文件</span>
+          </button>
+        </div>
       </div>
 
       <!-- `.prop` writes the key verbatim, so these must be camelCase: the
@@ -218,6 +237,11 @@
         </div>
       </dataagent-conversation>
     </main>
+    <ChatMcpConfigDialog
+      v-if="mcpConfigOpen"
+      v-model="mcpConfigOpen"
+      :agent-id="agentSelectValue"
+    />
 
     <!-- Right-side conversation artifact panel -->
     <aside v-if="artifactsPanelOpen && activeTopicId" class="v2-artifacts-panel" aria-label="会话文件">
@@ -337,14 +361,18 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { MoreFilled } from '@element-plus/icons-vue'
 import { createNl2SqlApiClient, DATAAGENT_CLIENT_HEADERS } from '@/api/nl2sql'
 import { dataagentApi } from '@/api/dataagent'
 import { useAuthStore } from '@/stores/auth'
+import { conversationLocation } from '@/router/agentContext'
+import { copyText } from '@/utils/clipboard'
 import { topicStatusKind } from './topicStatus'
 import { normalizeTopic } from './chatMessage'
 import { TOPIC_SOURCE_LABELS } from './topicHelpers.js'
 import { createNl2SqlAuditTransport, createNl2SqlTransport } from './nl2sqlTransport'
 import AgentSelector from './AgentSelector.vue'
+import ChatMcpConfigDialog from './ChatMcpConfigDialog.vue'
 import { buildCommands } from '@opendataagent/agent-conversation'
 
 const route = useRoute()
@@ -387,6 +415,7 @@ const PERMISSION_MODE_OPTIONS = [
 const searchKeyword = ref('')
 const topics = ref([])
 const activeTopicId = ref('')
+const mcpConfigOpen = ref(false)
 const activeTaskId = ref('')
 const isStreaming = computed(() => Boolean(activeTaskId.value))
 const conversationRef = ref(null)
@@ -585,6 +614,26 @@ function replaceRouteTopic(topicId, messageId = '') {
   })
   if (navigation?.catch) {
     navigation.catch(() => {})
+  }
+}
+
+async function handleChatAction(command) {
+  if (command === 'mcp-config') {
+    mcpConfigOpen.value = true
+    return
+  }
+  if (command !== 'copy-link') return
+
+  const location = conversationLocation({
+    agent_id: agentSelectValue.value,
+    topic_id: activeTopicId.value || undefined,
+  })
+  try {
+    const { href } = router.resolve(location)
+    await copyText(new URL(href, window.location.origin).href)
+    ElMessage.success('链接已复制')
+  } catch {
+    ElMessage.error('无法访问剪贴板，请检查浏览器权限后重试')
   }
 }
 
@@ -1202,6 +1251,8 @@ onMounted(async () => {
   if (agentSelectValue.value) await initializeWorkspace(agentSelectValue.value)
 })
 
+watch(agentSelectValue, () => { mcpConfigOpen.value = false })
+
 watch(() => route.query.agent_id, async (rawAgentId) => {
   if (agentLoading.value) return
   const nextAgentId = normalizeQueryValue(rawAgentId)
@@ -1490,13 +1541,26 @@ watch(
 .v2-attach-btn:hover:not(:disabled) { background: #EEF1F5; color: #4a5568; }
 .v2-attach-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ── Artifacts toggle (top bar) ──────────────────────────────────────────── */
-.v2-artifacts-toggle {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 10px; border: 1px solid #E5EAF1; border-radius: 8px;
+/* ── Chat toolbar actions ─────────────────────────────────────────────────── */
+.v2-main-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+}
+
+.v2-artifacts-toggle,
+.v2-more-actions {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 32px; padding: 0 10px; border: 1px solid #E5EAF1; border-radius: 8px;
   background: #fff; color: #4B5563; font-size: 12px; cursor: pointer;
 }
-.v2-artifacts-toggle:hover { background: #F4F6F9; }
+.v2-more-actions { width: 32px; padding: 0; }
+.v2-more-actions svg { width: 16px; height: 16px; }
+.v2-more-actions:disabled { opacity: 0.5; cursor: default; }
+.v2-artifacts-toggle:hover,
+.v2-more-actions:hover:not(:disabled) { background: #F4F6F9; }
+.v2-more-actions:focus-visible { outline: 2px solid #4338CA; outline-offset: 2px; }
 .v2-artifacts-toggle.active { border-color: #C7D2FE; background: #EEF2FF; color: #4338CA; }
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
