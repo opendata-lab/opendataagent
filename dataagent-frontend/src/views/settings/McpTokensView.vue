@@ -20,8 +20,9 @@
         <el-button
           type="primary"
           :icon="Plus"
+          tag="router-link"
+          :to="{ name: 'McpTokenCreate' }"
           data-testid="open-create-token"
-          @click="openCreateDialog"
         >
           新建令牌
         </el-button>
@@ -84,110 +85,16 @@
         </template>
       </el-table-column>
     </el-table>
-
-    <el-dialog
-      v-model="createDialogVisible"
-      title="新建访问令牌"
-      width="min(480px, calc(100vw - 32px))"
-      :close-on-click-modal="false"
-    >
-      <el-form label-position="top" @submit.prevent="submitCreate">
-        <el-form-item label="令牌名称" required :error="nameError">
-          <el-input
-            v-model="createForm.name"
-            maxlength="64"
-            show-word-limit
-            placeholder="例如：ZCode 开发机"
-            data-testid="token-name-input"
-            @input="nameError = ''"
-          />
-        </el-form-item>
-        <el-form-item label="有效期">
-          <el-select
-            v-model="createForm.expiry"
-            style="width: 100%"
-            data-testid="token-expiry-select"
-          >
-            <el-option
-              v-for="option in EXPIRY_OPTIONS"
-              :key="String(option.value)"
-              :value="option.value"
-              :label="option.label"
-            />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button :disabled="creating" @click="createDialogVisible = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="creating"
-          data-testid="submit-create-token"
-          @click="submitCreate"
-        >
-          创建
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="tokenDialogVisible"
-      title="令牌已创建"
-      width="min(520px, calc(100vw - 32px))"
-      :close-on-click-modal="false"
-      :close-on-press-escape="false"
-      @closed="clearCreatedToken"
-    >
-      <el-alert
-        type="warning"
-        :closable="false"
-        show-icon
-        title="请立即复制并保存此令牌，关闭弹窗后将无法再次查看完整令牌。"
-      />
-      <div class="created-token-box">
-        <el-input
-          :model-value="createdToken"
-          readonly
-          class="created-token-input"
-          data-testid="created-token-value"
-        />
-        <el-button
-          type="primary"
-          :icon="CopyDocument"
-          data-testid="copy-created-token"
-          @click="copyCreatedToken"
-        >
-          复制令牌
-        </el-button>
-      </div>
-      <template #footer>
-        <el-button
-          type="primary"
-          data-testid="close-created-token"
-          @click="closeTokenDialog"
-        >
-          我已保存，关闭
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Plus, Refresh } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
 import { useAuthStore } from '@/stores/auth'
-import { copyText } from '@/utils/clipboard'
-
-const EXPIRY_OPTIONS = [
-  { value: 30, label: '30 天' },
-  { value: 90, label: '90 天' },
-  { value: 180, label: '180 天' },
-  { value: 'never', label: '永不过期' }
-]
 
 const STATUS_META = {
   active: { label: '有效', type: 'success' },
@@ -201,15 +108,7 @@ const isAdmin = computed(() => authStore.isAdmin)
 const scope = ref('mine')
 const tokens = ref([])
 const loading = ref(false)
-const creating = ref(false)
 const revokingId = ref(null)
-
-const createDialogVisible = ref(false)
-const createForm = reactive({ name: '', expiry: 90 })
-const nameError = ref('')
-
-const tokenDialogVisible = ref(false)
-const createdToken = ref('')
 
 const formatTime = (value) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '—')
 
@@ -240,67 +139,6 @@ async function loadTokens() {
     }
   } finally {
     if (seq === loadSeq) loading.value = false
-  }
-}
-
-function openCreateDialog() {
-  createForm.name = ''
-  createForm.expiry = 90
-  nameError.value = ''
-  createDialogVisible.value = true
-}
-
-async function submitCreate() {
-  if (creating.value) return
-  const trimmed = String(createForm.name || '').trim()
-  if (!trimmed) {
-    nameError.value = '请输入令牌名称'
-    return
-  }
-  if (trimmed.length > 64) {
-    nameError.value = '令牌名称不能超过 64 个字符'
-    return
-  }
-  creating.value = true
-  try {
-    const expiresInDays = createForm.expiry === 'never' ? null : createForm.expiry
-    const result = await dataagentApi.createMcpToken({
-      name: trimmed,
-      expires_in_days: expiresInDays
-    })
-    createDialogVisible.value = false
-    createdToken.value = String(result?.token || '')
-    tokenDialogVisible.value = true
-    if (result?.item) {
-      tokens.value = [result.item, ...tokens.value]
-    } else {
-      await loadTokens()
-    }
-  } catch (error) {
-    if (!error?.__odwNotified) {
-      ElMessage.error(error?.response?.data?.detail || error?.message || '创建令牌失败')
-    }
-  } finally {
-    creating.value = false
-  }
-}
-
-function clearCreatedToken() {
-  createdToken.value = ''
-}
-
-function closeTokenDialog() {
-  tokenDialogVisible.value = false
-  clearCreatedToken()
-}
-
-async function copyCreatedToken() {
-  if (!createdToken.value) return
-  try {
-    await copyText(createdToken.value)
-    ElMessage.success('已复制令牌')
-  } catch {
-    ElMessage.error('无法访问剪贴板，请手动复制')
   }
 }
 
@@ -402,17 +240,5 @@ onMounted(loadTokens)
 
 .action-muted {
   color: #94a3b8;
-}
-
-.created-token-box {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.created-token-input :deep(input) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
 }
 </style>
