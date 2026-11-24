@@ -1,9 +1,9 @@
 """A published assistant as a Streamable HTTP MCP server.
 
 Each tool is a thin shell over the same store and submission path the web chat
-uses: the caller's token maps to their platform identity, conversations are
-their ordinary conversations, and a question becomes an ordinary task that
-simply cannot ask anything back (interactive=False).
+uses: the caller's token maps to their platform account via ``core.accounts``,
+conversations are their ordinary conversations, and a question becomes an
+ordinary task that simply cannot ask anything back (interactive=False).
 """
 from __future__ import annotations
 
@@ -27,20 +27,26 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import JSONResponse
 from starlette.routing import Route, Router
 
-from api.routes import _require_agent_profile
 from api.topic_file_response import topic_file_response
 from core import remote_mcp_policy as policy
 from core import remote_mcp_tokens as tokens
+from core.accounts import (
+    AccountContext,
+    AgentAccessDeniedError,
+    User,
+    authenticate_mcp_request,
+    require_agent_access,
+    require_permission,
+)
 from core.agent_profile_service import build_agent_snapshot
-from core.auth import AuthIdentity, require_identity, resolve_identity
 from core.task_status import ACTIVE_TASK_STATUSES
 from core.task_submission_service import submit_message_task
 from core.topic_task_store import get_topic_task_store
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-# (agent ID, request context, the public origin the caller used)
-_caller: ContextVar[tuple[str, dict[str, str], str]] = ContextVar("published_mcp_caller")
+# (agent ID, store context dict, the public origin the caller used)
+_caller: ContextVar[tuple[str, dict[str, Any], str]] = ContextVar("published_mcp_caller")
 Identifier = Annotated[str, Field(min_length=1, max_length=64)]
 RequestKey = Annotated[str, Field(min_length=8, max_length=128)]
 Question = Annotated[str, Field(min_length=1, max_length=16384)]
@@ -88,14 +94,6 @@ def _with_tool_errors(tool):
             return _error("service_error", "暂时无法完成请求。", "请稍后重试。如仍失败，请联系管理员。")
 
     return call
-
-
-def _context(identity: AuthIdentity) -> dict[str, str]:
-    # The same shape the web request context has, with source 'remote' so a
-    # conversation started here is labelled MCP.
-    return {"source": "remote", "website_id": "", "external_user_id": "", "visitor_id": "",
-            "auth_user_id": identity.user_id, "auth_display_name": identity.display_name,
-            "auth_role": identity.role}
 
 
 def _thread(thread_id: str) -> dict[str, Any]:
@@ -186,8 +184,6 @@ async def _wait_for_run(run_id: str, ctx: Context) -> dict[str, Any]:
         await asyncio.sleep(min(WAIT_POLL_SECONDS, remaining))
         task = await asyncio.to_thread(_run_task, run_id)
 
-    # The HTTP response is already an SSE stream, so late authorization failures
-    # are tool errors rather than a change to the HTTP response status.
     try:
         await _authenticate(ctx.request_context.request, _caller.get()[0])
     except HTTPException as exc:
@@ -211,19 +207,18 @@ async def ask(
     Use get_run to retrieve an unfinished run returned by this tool.
     """
     agent_id, context, _ = _caller.get()
+    user_id = int(context["user_id"])
     store = get_topic_task_store()
     question = question.strip()
     if not question:
         return _error("invalid_question", "问题内容为空。", "请输入要查询的问题后重试。")
-    # Keys are scoped to the caller and assistant so reconnecting can find the same task.
-    key = hashlib.sha256(f"{agent_id}\n{context['auth_user_id']}\n{request_key}".encode()).hexdigest()
+    key = hashlib.sha256(f"{agent_id}\n{user_id}\n{request_key}".encode()).hexdigest()
     try:
         previous = await asyncio.to_thread(store.find_task_by_request_key, key)
         topic = None
         if previous is None and thread_id:
             topic = await asyncio.to_thread(_thread, thread_id)
             if topic.get("current_task_status") in ACTIVE_TASK_STATUSES:
-                # A same-key submission may have started since the initial lookup.
                 previous = await asyncio.to_thread(store.find_task_by_request_key, key)
                 if previous is None:
                     return _error(
@@ -233,13 +228,24 @@ async def ask(
         if previous is None:
             created = topic is None
             if created:
-                profile = await asyncio.to_thread(_require_agent_profile, agent_id, context=context)
-                topic = await asyncio.to_thread(store.create_topic, title=question[:60],
-                                                agent_snapshot=build_agent_snapshot(profile), context=context)
+                profile = await asyncio.to_thread(require_agent_access, user_id, agent_id)
+                topic = await asyncio.to_thread(
+                    store.create_topic,
+                    title=question[:60],
+                    agent_snapshot=build_agent_snapshot(profile),
+                    context=context,
+                )
+            else:
+                await asyncio.to_thread(require_agent_access, user_id, agent_id)
             try:
-                submitted = await submit_message_task(topic_id=topic["topic_id"], message_type="text",
-                                                      message_content=question, agent_id=agent_id,
-                                                      interactive=False, request_key=key)
+                submitted = await submit_message_task(
+                    topic_id=topic["topic_id"],
+                    message_type="text",
+                    message_content=question,
+                    agent_id=agent_id,
+                    interactive=False,
+                    request_key=key,
+                )
                 run_id = submitted["task_id"]
             except pymysql.err.IntegrityError:
                 previous = await asyncio.to_thread(store.find_task_by_request_key, key)
@@ -259,7 +265,7 @@ async def ask(
 
         result = await asyncio.to_thread(_run, run_id) if background else await _wait_for_run(run_id, ctx)
         return _result(result, is_error=result["status"] == "failed")
-    except HTTPException:
+    except (HTTPException, AgentAccessDeniedError):
         return _error("not_found", "找不到可访问的助手。", "请重新复制助手配置，或联系管理员确认访问权限。")
     except policy.RemoteMcpError as exc:
         return _expected_error(exc)
@@ -313,7 +319,6 @@ async def feedback(thread_id: Identifier, message_id: Identifier, rating: Litera
 
 
 def create_server() -> FastMCP:
-    # Origin is checked against the address the caller used, in _authenticate.
     server = FastMCP("DataAgent assistant", stateless_http=True, json_response=False,
                      transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
     server.add_tool(_with_tool_errors(ask), annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True))
@@ -326,45 +331,48 @@ def create_server() -> FastMCP:
 
 
 def _origin(request: StarletteRequest) -> str:
-    # The address the caller used; the proxy keeps Host and X-Forwarded-Proto.
     return f"{request.url.scheme}://{request.url.netloc}"
 
 
-def _published(agent_id: str, identity: AuthIdentity) -> dict[str, str]:
-    """The caller's request context, if this assistant is published over MCP and visible to them."""
-    context = _context(identity)
+def _published(agent_id: str, ctx: AccountContext) -> dict[str, Any]:
+    if ctx.user is None:
+        raise policy.RemoteMcpError("unauthorized", "访问令牌无效或已过期")
     try:
-        profile = _require_agent_profile(agent_id, context=context)
-    except HTTPException as exc:
+        profile = require_agent_access(ctx.user.id, agent_id)
+    except AgentAccessDeniedError as exc:
         raise policy.RemoteMcpError("not_found", "找不到可访问的 MCP 助手") from exc
     if not profile.get("remote_mcp_enabled"):
         raise policy.RemoteMcpError("not_found", "找不到可访问的 MCP 助手")
-    return context
+    return ctx.to_store_context()
 
 
 async def _authenticate(
     request: StarletteRequest, agent_id: str, *, allow_web_session: bool = False,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     if not policy.enabled():
         raise HTTPException(404)
     origin = _origin(request)
     if request.headers.get("origin", origin) != origin:
         raise HTTPException(403)
     try:
-        authorization = request.headers.get("authorization")
-        if allow_web_session and authorization is None:
-            identity = resolve_identity(request)
-            if identity is None:
-                raise policy.RemoteMcpError("unauthorized", "请登录 DataAgent 后下载文件")
-        else:
-            identity = await asyncio.to_thread(policy.verify_identity, authorization or "")
+        ctx = await asyncio.to_thread(authenticate_mcp_request, request, allow_web_session=allow_web_session)
         policy.endpoint(origin, agent_id)
-        return await asyncio.to_thread(_published, agent_id, identity)
+        return await asyncio.to_thread(_published, agent_id, ctx)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            raise HTTPException(
+                401,
+                str(exc.detail),
+                headers={"WWW-Authenticate": 'Bearer realm="DataAgent MCP"'},
+            ) from exc
+        raise
     except policy.RemoteMcpError as exc:
         if exc.code == "unauthorized":
-            raise HTTPException(401, str(exc), headers={
-                "WWW-Authenticate": 'Bearer realm="DataAgent MCP"',
-            }) from exc
+            raise HTTPException(
+                401,
+                str(exc),
+                headers={"WWW-Authenticate": 'Bearer realm="DataAgent MCP"'},
+            ) from exc
         raise HTTPException(404, str(exc)) from exc
 
 
@@ -410,28 +418,28 @@ def _require_mcp_enabled() -> None:
 def _token_user(
     request: Request,
     _: Annotated[None, Depends(_require_mcp_enabled)],
-    identity: Annotated[AuthIdentity, Depends(require_identity)],
-) -> AuthIdentity:
+    user: Annotated[User, Depends(require_permission("menu:mcp_tokens"))],
+) -> User:
     origin = request.headers.get("Origin")
     if (request.method != "GET" or origin is not None) and origin != _origin(request):
         raise HTTPException(403, "请求必须来自 DataAgent 网页")
-    return identity
+    return user
 
 
-TokenUser = Annotated[AuthIdentity, Depends(_token_user)]
+TokenUser = Annotated[User, Depends(_token_user)]
 
 
 @router.get(_TOKEN_MANAGEMENT_PATH)
-def list_mcp_tokens(identity: TokenUser, scope: Literal["mine", "all"] = "mine"):
-    if scope == "all" and not identity.is_admin:
-        raise HTTPException(403, "Admin role required")
-    return {"items": tokens.list_tokens(None if scope == "all" else identity.user_id)}
+def list_mcp_tokens(user: TokenUser, scope: Literal["mine", "all"] = "mine"):
+    if scope == "all" and not user.has_permission("mcp_tokens:manage_all"):
+        raise HTTPException(403, "Permission required: mcp_tokens:manage_all")
+    return {"items": tokens.list_tokens(None if scope == "all" else user.id)}
 
 
 @router.post(_TOKEN_MANAGEMENT_PATH, status_code=201)
-def create_mcp_token(payload: CreateMcpTokenRequest, response: Response, identity: TokenUser):
+def create_mcp_token(payload: CreateMcpTokenRequest, response: Response, user: TokenUser):
     try:
-        item, token = tokens.create_token(identity, payload.name, payload.expires_in_days)
+        item, token = tokens.create_token(user.id, payload.name, payload.expires_in_days)
     except tokens.TokenLimitReached as exc:
         raise HTTPException(409, "每个用户最多可有 10 个有效的访问令牌") from exc
     except TimeoutError as exc:
@@ -441,8 +449,12 @@ def create_mcp_token(payload: CreateMcpTokenRequest, response: Response, identit
 
 
 @router.delete(_TOKEN_MANAGEMENT_PATH + "/{token_id}")
-def revoke_mcp_token(token_id: int, identity: TokenUser):
-    item = tokens.revoke_token(token_id, identity)
+def revoke_mcp_token(token_id: int, user: TokenUser):
+    item = tokens.revoke_token(
+        token_id,
+        user_id=user.id,
+        can_manage_all=user.has_permission("mcp_tokens:manage_all"),
+    )
     if item is None:
         raise HTTPException(404, "找不到访问令牌")
     return {"item": item}

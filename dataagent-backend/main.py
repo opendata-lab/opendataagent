@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.account_routes import router as account_router
 from api.admin_routes import router as admin_router
 from api.auth_routes import oauth_callback_router, router as auth_router
 from api.eval_routes import router as eval_router
@@ -14,7 +15,7 @@ from api.routes import router
 from api import remote_mcp
 from config import get_settings, update_settings
 from core.logging_config import RequestContextMiddleware, configure_logging
-from core.auth import init_auth
+from core.accounts import init_auth
 from core.agent_profile_service import bootstrap_default_agent_profile
 from core.skill_admin_service import bootstrap_admin_settings, reindex_documents_from_disk
 from core.skill_admin_store import get_skill_admin_store
@@ -58,6 +59,7 @@ app.add_middleware(RequestContextMiddleware, logger=request_logger, skip_path_su
 app.include_router(auth_router)
 app.include_router(oauth_callback_router)
 app.include_router(router)
+app.include_router(account_router)
 app.include_router(admin_router)
 app.include_router(eval_router)
 app.include_router(remote_mcp.router)

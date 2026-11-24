@@ -241,6 +241,7 @@ class AgentDraftStore:
                 if any(topic.get("current_task_status") in {"waiting", "running", "waiting_input", "waiting_permission"} for topic in previews):
                     raise DraftConflict("请先停止正在运行的调试，再删除智能体")
                 cur.execute("DELETE FROM da_agent_topic WHERE agent_id = %s AND is_agent_preview = 1", (agent_id,))
+                cur.execute("DELETE FROM da_agent_grant WHERE agent_id = %s", (agent_id,))
                 cur.execute("DELETE FROM da_agent_profile WHERE agent_id = %s", (agent_id,))
                 cur.execute("DELETE FROM da_agent_draft WHERE agent_id = %s", (agent_id,))
             conn.commit()

@@ -197,7 +197,7 @@ def test_normalize_agent_profile_payload_defaults_visibility_to_all():
         available_mcp_server_ids=set(),
     )
 
-    assert payload["visibility"] == {"mode": "all", "allowed_users": [], "allowed_groups": []}
+    assert payload["visibility"] == {"mode": "all"}
 
 
 def test_normalize_agent_profile_payload_accepts_visibility_scope():
@@ -206,18 +206,14 @@ def test_normalize_agent_profile_payload_accepts_visibility_scope():
             "name": "受限智能体",
             "visibility": {
                 "mode": "selected",
-                "allowed_users": ["SSO:42", "SSO:42", " local:alice "],
+                "allowed_users": ["SSO:42", " local:alice "],
             },
         },
         available_skill_folders=set(),
         available_mcp_server_ids=set(),
     )
 
-    assert payload["visibility"] == {
-        "mode": "selected",
-        "allowed_users": ["SSO:42", "local:alice"],
-        "allowed_groups": [],
-    }
+    assert payload["visibility"] == {"mode": "selected"}
 
 
 def test_normalize_agent_profile_payload_preserves_existing_visibility_on_partial_update():

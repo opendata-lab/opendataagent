@@ -325,7 +325,7 @@ class RuntimeConfigResponse(BaseModel):
 
 
 class WidgetServerSide(BaseModel):
-    """Server-side access state as the admin UI sees it.
+    """Server-side trusted access state as the admin UI sees it.
 
     Deliberately carries no digest. The read DTO is echoed back on save, so
     exposing the hash here would let a settings round-trip overwrite — or a
@@ -334,6 +334,9 @@ class WidgetServerSide(BaseModel):
 
     enabled: bool = False
     key_configured: bool = False
+    account_mode: Literal["personal", "shared"] = "personal"
+    trusted_username_namespace: bool = False
+    provider_mappings: Dict[str, str] = Field(default_factory=dict)
 
 
 class WidgetAllowedSite(BaseModel):
@@ -341,7 +344,6 @@ class WidgetAllowedSite(BaseModel):
     allowed_origins: List[str] = Field(default_factory=list)
     project_name: str = ""
     project_color: str = ""
-    allow_anonymous: bool = False
     server_side: WidgetServerSide = Field(default_factory=WidgetServerSide)
 
 
@@ -540,7 +542,7 @@ class AgentProfile(BaseModel):
     plan_timeout_action: str = "park"
     env_vars: Dict[str, str] = Field(default_factory=dict)
     visibility: Dict[str, Any] = Field(
-        default_factory=lambda: {"mode": "all", "allowed_users": [], "allowed_groups": []}
+        default_factory=lambda: {"mode": "all"}
     )
     preset_questions: List[str] = Field(default_factory=list)
     is_default: bool = False
@@ -629,6 +631,9 @@ class TopicSummary(BaseModel):
     chat_conversation_id: str
     agent_id: str = ""
     source: str = "web"
+    user_id: Optional[int] = None
+    username: str = ""
+    display_name: str = ""
     agent: Optional[AgentSummary] = None
     permission_mode: str = "default"
     current_task_id: Optional[str] = None
@@ -646,6 +651,9 @@ class TopicDetail(BaseModel):
     chat_conversation_id: str
     agent_id: str = ""
     source: str = "web"
+    user_id: Optional[int] = None
+    username: str = ""
+    display_name: str = ""
     agent: Optional[AgentSummary] = None
     permission_mode: str = "default"
     current_task_id: Optional[str] = None
@@ -696,7 +704,8 @@ class AdminFeedbackItem(BaseModel):
     topic_title: str = ""
     source: str = "web"          # 'web' links to /chat; 'widget' is shown inline only
     website_id: Optional[str] = None
-    user_id: Optional[str] = None
+    user_id: Optional[int] = None
+    legacy_user_id: Optional[str] = None
     user_display_name: Optional[str] = None
 
 
@@ -731,6 +740,7 @@ class Experience(BaseModel):
     sources: List[ExperienceSource] = Field(default_factory=list)
     digest_topic_id: Optional[str] = None
     status: Literal["pending", "active", "disabled"]
+    user_id: Optional[int] = None
     updated_by: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -780,13 +790,13 @@ class AdminWidgetUserList(BaseModel):
 
 
 class AdminAuthUser(BaseModel):
-    """A distinct authenticated user (namespaced stable id from topic
-    ownership) for the agent visibility allow-list picker."""
+    """A platform user from da_user for pickers and admin filters."""
 
-    user_id: str = ""
+    id: int = 0
+    user_id: int = 0
+    username: str = ""
     display_name: str = ""
-    topic_count: int = 0
-    last_active_at: str = ""
+    is_active: bool = True
 
 
 class AdminAuthUserList(BaseModel):
@@ -959,6 +969,7 @@ class EvalDatasetSummary(BaseModel):
     case_count: int = 0
     dataset_hash: str = ""
     status: str = "active"
+    user_id: Optional[int] = None
     created_by: str = ""
     created_at: Any = None
     updated_at: Any = None

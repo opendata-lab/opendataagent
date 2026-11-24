@@ -558,7 +558,7 @@ class AccountStore:
         raw_email = str(prof.get("email") or "").strip()[:255] or None
         email_verified = bool(prof.get("email_verified")) and bool(raw_email)
 
-        for attempt in range(2):
+        for attempt in range(4):
             conn = self._connect()
             try:
                 with conn.cursor() as cur:
@@ -598,10 +598,12 @@ class AccountStore:
                         conn.commit()
                         return refreshed
 
-                    # 2. Unbound external identity: validate candidate username
+                    # 2. Unbound external identity: validate candidate username.
+                    # Plain SELECT avoids InnoDB gap-lock deadlocks under concurrent first logins;
+                    # UNIQUE indexes on da_user.username and da_user_identity(source, subject) enforce atomicity.
                     candidate_username = validate_username(raw_username)
                     cur.execute(
-                        "SELECT * FROM da_user WHERE username = %s FOR UPDATE",
+                        "SELECT * FROM da_user WHERE username = %s LIMIT 1",
                         (candidate_username,),
                     )
                     existing_row = cur.fetchone()
@@ -672,16 +674,21 @@ class AccountStore:
                     created = self._hydrate_users(cur, [cur.fetchone()])[0]
                 conn.commit()
                 return created
+            except pymysql.err.OperationalError as exc:
+                conn.rollback()
+                errno = exc.args[0] if exc.args else None
+                if errno in (1213, 1205) and attempt < 3:
+                    continue
+                raise
             except pymysql.err.IntegrityError:
                 conn.rollback()
-                if attempt == 0:
-                    # Concurrent first login for the same (source, subject) won the race; retry lookup.
-                    existing = self.get_user_by_identity(clean_source, clean_subject)
-                    if existing is not None:
-                        if not existing.is_active:
-                            raise AccountDisabledError("账号已停用")
-                        self.touch_last_login(existing.id)
-                        return existing
+                existing = self.get_user_by_identity(clean_source, clean_subject)
+                if existing is not None:
+                    if not existing.is_active:
+                        raise AccountDisabledError("账号已停用")
+                    self.touch_last_login(existing.id)
+                    return existing
+                if attempt < 3:
                     continue
                 raise IdentityConflictError(f"用户名 {raw_username!r} 注册冲突，请重试或联系管理员")
             except Exception:

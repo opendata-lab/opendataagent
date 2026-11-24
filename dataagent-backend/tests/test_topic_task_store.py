@@ -78,13 +78,13 @@ def test_get_message_applies_topic_context_predicate(monkeypatch):
     monkeypatch.setattr(store, "_ensure_ready", lambda: None)
     monkeypatch.setattr(store, "_connect", lambda database: conn)
 
-    message = store.get_message("msg_1", context={"source": "web"})
+    message = store.get_message("msg_1", context={"source": "web", "user_id": 42})
 
     assert message["message_id"] == "msg_1"
     sql, params = conn.executed[0]
     assert "JOIN da_agent_topic t ON t.topic_id = m.topic_id" in sql
-    assert "COALESCE(t.source, 'web') = %s" in sql
-    assert params == ["msg_1", "web"]
+    assert "t.user_id = %s" in sql
+    assert params == ["msg_1", "web", "widget", "remote", 42]
 
 
 def test_normalize_message_row_only_attaches_history_to_assistant():
@@ -194,7 +194,7 @@ def _make_store_with_fake_db(inserted_rows):
 def test_record_widget_events_persists_valid_events():
     rows = []
     store = _make_store_with_fake_db(rows)
-    context = {"source": "widget", "website_id": "site1", "external_user_id": "u1", "visitor_id": ""}
+    context = {"source": "widget", "website_id": "site1", "user_id": 7, "shared_session_key": ""}
 
     accepted = store.record_widget_events(
         [
@@ -206,19 +206,19 @@ def test_record_widget_events_persists_valid_events():
 
     assert accepted == 2
     assert len(rows) == 2
-    # Row tuple: (event_type, source, website_id, external_user_id, visitor_id, agent_id, topic_id, task_id, message_id, payload_json, client_ts)
+    # Row tuple: (event_type, source, website_id, user_id, external_user_id, visitor_id, agent_id, topic_id, task_id, message_id, payload_json, client_ts)
     assert rows[0][0] == "widget_open"
     assert rows[0][1] == "widget"
     assert rows[0][2] == "site1"
-    assert rows[0][3] == "u1"
+    assert rows[0][3] == 7
     assert rows[1][0] == "message_send"
-    assert rows[1][9] is not None  # payload_json
+    assert rows[1][10] is not None  # payload_json
 
 
 def test_record_widget_events_rejects_unknown_event_types():
     rows = []
     store = _make_store_with_fake_db(rows)
-    context = {"source": "widget", "website_id": "site1", "external_user_id": "u1", "visitor_id": ""}
+    context = {"source": "widget", "website_id": "site1", "user_id": 7}
 
     accepted = store.record_widget_events(
         [
@@ -235,7 +235,7 @@ def test_record_widget_events_rejects_unknown_event_types():
 def test_record_widget_events_ignores_oversized_payload():
     rows = []
     store = _make_store_with_fake_db(rows)
-    context = {"source": "widget", "website_id": "site1", "external_user_id": "u1", "visitor_id": ""}
+    context = {"source": "widget", "website_id": "site1", "user_id": 7}
     big_payload = {"data": "x" * 5000}
 
     accepted = store.record_widget_events(
@@ -244,13 +244,13 @@ def test_record_widget_events_ignores_oversized_payload():
     )
 
     assert accepted == 1
-    assert rows[0][9] is None  # payload_json dropped
+    assert rows[0][10] is None  # payload_json dropped
 
 
 def test_record_widget_events_enforces_batch_limit():
     rows = []
     store = _make_store_with_fake_db(rows)
-    context = {"source": "widget", "website_id": "site1", "external_user_id": "u1", "visitor_id": ""}
+    context = {"source": "widget", "website_id": "site1", "user_id": 7}
     events = [{"event_type": "widget_open"}] * (MAX_WIDGET_EVENTS_PER_BATCH + 10)
 
     accepted = store.record_widget_events(events, context)
@@ -262,15 +262,16 @@ def test_record_widget_events_uses_only_header_identity():
     rows = []
     store = _make_store_with_fake_db(rows)
     # Identity from context only — body fields should be ignored
-    context = {"source": "widget", "website_id": "real_site", "external_user_id": "real_user", "visitor_id": ""}
+    context = {"source": "widget", "website_id": "real_site", "user_id": 9, "shared_session_key": "sess_1"}
 
     store.record_widget_events(
-        [{"event_type": "widget_open", "website_id": "injected_site", "external_user_id": "injected_user"}],
+        [{"event_type": "widget_open", "website_id": "injected_site", "user_id": 999, "external_user_id": "injected_user"}],
         context,
     )
 
     assert rows[0][2] == "real_site"
-    assert rows[0][3] == "real_user"
+    assert rows[0][3] == 9
+    assert rows[0][4] == "sess_1"
 
 
 def test_record_widget_events_returns_zero_for_empty_list():
@@ -430,48 +431,57 @@ def test_admin_list_widget_users_groups_users_and_forwards_filters(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 可见性谓词矩阵（docs/design/2026-07-01-dataagent-auth-design.md 3.5）
+# 统一用户可见性谓词矩阵
 # ---------------------------------------------------------------------------
 
-def test_predicate_auth_disabled_is_legacy_byte_identical(monkeypatch):
-    monkeypatch.setattr("core.topic_task_store.is_auth_enabled", lambda: False)
+def test_predicate_fail_closed_without_user_id():
     store = TopicTaskStore()
-
     sql, params = store._topic_context_predicate({"source": "web"}, alias="t")  # noqa: SLF001
-    assert sql == "COALESCE(t.source, 'web') = %s"
-    assert params == ["web"]
+    assert sql == "1 = 0"
+    assert params == []
 
-    # 即使 context 意外携带 owner 键，关闭态也不加 owner 过滤。
     sql, params = store._topic_context_predicate(  # noqa: SLF001
-        {"source": "web", "auth_user_id": "SSO:42"}, alias="t"
+        {"source": "widget", "website_id": "demo"}, alias="t"
     )
-    assert sql == "COALESCE(t.source, 'web') = %s"
-    assert params == ["web"]
+    assert sql == "1 = 0"
+    assert params == []
 
 
-def test_predicate_auth_enabled_matrix(monkeypatch):
-    monkeypatch.setattr("core.topic_task_store.is_auth_enabled", lambda: True)
+def test_predicate_unified_account_matrix():
     store = TopicTaskStore()
+    not_shared = "(t.source <> 'widget' OR t.external_user_id = '')"
 
-    # 匿名/无标记客户端：等值比较，匿名池不泄漏用户会话。
-    sql, params = store._topic_context_predicate({"source": "web"}, alias="t")  # noqa: SLF001
-    assert sql == "t.source = %s AND t.auth_user_id = '' AND t.is_agent_preview = 0"
-    assert params == ["web"]
-
-    # 登录普通用户：只看自己。
+    # 普通用户 web：看自己跨 web / 个人 widget / remote 话题，不含共享池。
     sql, params = store._topic_context_predicate(  # noqa: SLF001
-        {"source": "web", "auth_user_id": "SSO:42", "auth_role": "user"}, alias="t"
+        {"source": "web", "user_id": 42, "is_admin": False}, alias="t"
     )
-    owner = "t.auth_user_id = %s AND CAST(t.auth_user_id AS BINARY) = CAST(%s AS BINARY)"
-    assert sql == f"t.source IN (%s, %s, %s) AND {owner} AND t.is_agent_preview = 0"
-    assert params == ["web", "widget", "remote", "SSO:42", "SSO:42"]
+    assert sql == f"t.source IN (%s, %s, %s) AND {not_shared} AND t.user_id = %s AND t.is_agent_preview = 0"
+    assert params == ["web", "widget", "remote", 42]
 
-    # 管理员运行接口同样按自己归属过滤，自己的 Web 调试话题可访问。
+    # 管理员 web：看自己全部跨入口话题 + 自己的 web 调试话题。
     sql, params = store._topic_context_predicate(  # noqa: SLF001
-        {"source": "web", "auth_user_id": "local:admin", "auth_role": "admin"}, alias="t"
+        {"source": "web", "user_id": 1, "is_admin": True}, alias="t"
     )
-    assert sql == f"t.source IN (%s, %s, %s) AND {owner} AND (t.is_agent_preview = 0 OR t.source = %s)"
-    assert params == ["web", "widget", "remote", "local:admin", "local:admin", "web"]
+    assert sql == f"t.source IN (%s, %s, %s) AND {not_shared} AND t.user_id = %s AND (t.is_agent_preview = 0 OR t.source = %s)"
+    assert params == ["web", "widget", "remote", 1, "web"]
+
+    # 个人模式 widget：看自己 web + remote + 该站点的个人 widget 话题。
+    sql, params = store._topic_context_predicate(  # noqa: SLF001
+        {"source": "widget", "website_id": "demo", "user_id": 42}, alias="t"
+    )
+    assert sql == (
+        "(t.source IN (%s, %s) OR (t.source = %s AND t.website_id = %s AND t.external_user_id = '')) "
+        "AND t.user_id = %s AND t.is_agent_preview = 0"
+    )
+    assert params == ["web", "remote", "widget", "demo", 42]
+
+    # 共享会话 widget（OntoFoundry）：按站点 + shared_session_key 隔离，不混入个人话题。
+    sql, params = store._topic_context_predicate(  # noqa: SLF001
+        {"source": "widget", "website_id": "onto", "shared_session_key": "sess_1", "user_id": 42},
+        alias="t",
+    )
+    assert sql == "t.source = %s AND t.website_id = %s AND t.external_user_id = %s AND t.is_agent_preview = 0"
+    assert params == ["widget", "onto", "sess_1"]
 
     # context=None（管理端点）不过滤。
     sql, params = store._topic_context_predicate(None, alias="t")  # noqa: SLF001
@@ -479,28 +489,7 @@ def test_predicate_auth_enabled_matrix(monkeypatch):
     assert params == []
 
 
-def test_predicate_widget_branch_unchanged_regardless_of_auth(monkeypatch):
-    widget_context = {"source": "widget", "website_id": "demo", "external_user_id": "u1"}
-    expected_sql = "t.source = %s AND t.website_id = %s AND t.auth_user_id = '' AND t.external_user_id = %s"
-    store = TopicTaskStore()
-
-    for enabled in (True, False):
-        monkeypatch.setattr("core.topic_task_store.is_auth_enabled", lambda enabled=enabled: enabled)
-        sql, params = store._topic_context_predicate(widget_context, alias="t")  # noqa: SLF001
-        assert sql == expected_sql
-        assert params == ["widget", "demo", "u1"]
-
-
-def test_predicate_widget_with_platform_login_sees_the_accounts_own_conversations():
-    # Platform, MCP and this site's Widget conversations of the signed-in account.
-    context = {"source": "widget", "website_id": "demo", "auth_user_id": "SSO:42", "auth_role": "user"}
-    sql, params = TopicTaskStore()._topic_context_predicate(context, alias="t")  # noqa: SLF001
-    owner = "t.auth_user_id = %s AND CAST(t.auth_user_id AS BINARY) = CAST(%s AS BINARY)"
-    assert sql == f"(t.source IN (%s, %s) OR (t.source = %s AND t.website_id = %s)) AND {owner} AND t.is_agent_preview = 0"
-    assert params == ["web", "remote", "widget", "demo", "SSO:42", "SSO:42"]
-
-
-def test_create_topic_writes_auth_owner(monkeypatch):
+def test_create_topic_writes_user_id_and_shared_session_key(monkeypatch):
     class FakeCursor:
         def __init__(self, conn):
             self.conn = conn
@@ -527,7 +516,6 @@ def test_create_topic_writes_auth_owner(monkeypatch):
         def close(self):
             return None
 
-    monkeypatch.setattr("core.topic_task_store.is_auth_enabled", lambda: True)
     store = TopicTaskStore()
     conn = FakeConnection()
     monkeypatch.setattr(store, "_ensure_ready", lambda: None)
@@ -536,75 +524,21 @@ def test_create_topic_writes_auth_owner(monkeypatch):
 
     store.create_topic(
         title="趋势分析",
-        context={
-            "source": "web",
-            "auth_user_id": "SSO:42",
-            "auth_display_name": "alice",
-            "auth_role": "user",
-        },
+        context={"source": "web", "user_id": 42, "is_admin": False},
     )
 
     sql, params = conn.executed[0]
-    assert "auth_user_id, auth_username" in sql
-    assert params[-2] == "alice"
-    assert params[-3:] == ["SSO:42", "alice", 0]
+    assert "user_id, external_user_id" in sql
+    assert params[-3:] == [42, "", 0]
 
-    # 匿名 web 创建：owner 为空串。
+    # 共享会话 widget：同时写入 user_id（创建人）与 external_user_id（shared_session_key）。
     conn.executed.clear()
-    store.create_topic(title="匿名会话", context={"source": "web"})
+    store.create_topic(
+        title="共享研究",
+        context={"source": "widget", "website_id": "onto", "user_id": 42, "shared_session_key": "sess_9"},
+    )
     _, params = conn.executed[0]
-    assert params[-3:] == ["", "", 0]
-
-
-def test_admin_list_auth_users_groups_by_stable_id_and_forwards_keyword(monkeypatch):
-    class FakeCursor:
-        def __init__(self, conn):
-            self.conn = conn
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def execute(self, sql, params):
-            self.conn.executed.append((sql, list(params)))
-
-        def fetchall(self):
-            return [
-                {"user_id": "SSO:42", "display_name": "alice", "topic_count": 3, "last_active_at": None},
-                {"user_id": "", "display_name": "", "topic_count": 1, "last_active_at": None},
-            ]
-
-    class FakeConnection:
-        def __init__(self):
-            self.executed = []
-
-        def cursor(self):
-            return FakeCursor(self)
-
-        def close(self):
-            return None
-
-    store = TopicTaskStore()
-    conn = FakeConnection()
-    monkeypatch.setattr(store, "_ensure_ready", lambda: None)
-    monkeypatch.setattr(store, "_connect", lambda database: conn)
-
-    users = store.admin_list_auth_users(keyword="ali", limit=50)
-
-    # 无 user_id 的行被丢弃；计数强制为 int；时间转 ISO 字符串。
-    assert users == [
-        {"user_id": "SSO:42", "display_name": "alice", "topic_count": 3, "last_active_at": ""}
-    ]
-
-    sql, params = conn.executed[0]
-    assert "GROUP BY t.auth_user_id" in sql
-    assert "NULLIF(t.auth_user_id, '') IS NOT NULL" in sql
-    # keyword 同时匹配稳定 ID 与展示名（LIKE 两次）+ limit。
-    assert params == ["%ali%", "%ali%", 50]
-    # 管理侧查询不得复用按用户隔离谓词。
-    assert "COALESCE(t.source" not in sql
+    assert params[-3:] == [42, "sess_9", 0]
 
 
 # ---------------------------------------------------------------------------

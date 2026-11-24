@@ -122,17 +122,39 @@ def _string_list(values: Any) -> list[str]:
 
 
 def _normalize_server_side(raw: Any) -> dict[str, Any]:
-    """Server-side access config for one site.
+    """Server-side trusted access config for one widget site.
 
-    A site that never opts in behaves exactly as before, which is what keeps
-    every existing deployment untouched. `access_key_hash` is a sha256 digest;
-    the plaintext is returned once at generation and never stored.
+    ``access_key_hash`` is a sha256 digest; plaintext is returned once at
+    generation and never stored. ``account_mode`` is ``personal`` (default,
+    e.g. OpenDataWorks) or ``shared`` (e.g. OntoFoundry shared modeling
+    sessions keyed by ``X-DataAgent-Session-Key``).
     """
+    default = {
+        "enabled": False,
+        "access_key_hash": "",
+        "account_mode": "personal",
+        "trusted_username_namespace": False,
+        "provider_mappings": {},
+    }
     if not isinstance(raw, dict):
-        return {"enabled": False, "access_key_hash": ""}
+        return default
+    account_mode = str(raw.get("account_mode") or "personal").strip().lower()
+    if account_mode not in {"personal", "shared"}:
+        account_mode = "personal"
+    raw_mappings = raw.get("provider_mappings")
+    provider_mappings: dict[str, str] = {}
+    if isinstance(raw_mappings, dict):
+        for k, v in raw_mappings.items():
+            src = str(k or "").strip()[:64]
+            dst = str(v or "").strip()[:64]
+            if src and dst:
+                provider_mappings[src] = dst
     return {
         "enabled": raw.get("enabled") is True,
         "access_key_hash": str(raw.get("access_key_hash") or "").strip()[:64],
+        "account_mode": account_mode,
+        "trusted_username_namespace": raw.get("trusted_username_namespace") is True,
+        "provider_mappings": provider_mappings,
     }
 
 
@@ -161,7 +183,6 @@ def _normalize_widget_allowed_sites(raw: Any) -> list[dict[str, Any]]:
             "allowed_origins": origin_list,
             "project_name": str(item.get("project_name") or "").strip()[:128],
             "project_color": str(item.get("project_color") or "").strip()[:32],
-            "allow_anonymous": item.get("allow_anonymous") is True,
             "server_side": _normalize_server_side(item.get("server_side")),
         })
     return normalized

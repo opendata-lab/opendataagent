@@ -52,31 +52,44 @@ def test_concurrent_revision_rejected():
 
 
 def test_management_save_requires_revision_and_reports_conflict(monkeypatch):
+    from tests.account_test_helpers import bearer_headers, install_fake_accounts
+
+    _, admin, _ = install_fake_accounts()
+    headers = bearer_headers(admin.id)
     client = TestClient(app)
-    response = client.put('/api/v1/dataagent/agents/a', json={'name': 'new'})
+    response = client.put('/api/v1/dataagent/agents/a', json={'name': 'new'}, headers=headers)
     assert response.status_code == 422
     monkeypatch.setattr(admin_routes, 'list_documents', lambda: [])
     monkeypatch.setattr(admin_routes, 'skill_folders_from_documents', lambda _: [])
     def conflict(*args):
         raise DraftConflict('草稿已更新')
     monkeypatch.setattr(admin_routes.agent_drafts, 'save', conflict)
-    response = client.put('/api/v1/dataagent/agents/a', json={'name': 'new', 'expected_revision': 3})
+    response = client.put('/api/v1/dataagent/agents/a', json={'name': 'new', 'expected_revision': 3}, headers=headers)
     assert response.status_code == 409
 
 
 def test_static_workbench_route_does_not_match_public_agent_route(monkeypatch):
+    from tests.account_test_helpers import bearer_headers, install_fake_accounts
+
+    _, admin, _ = install_fake_accounts()
     monkeypatch.setattr(admin_routes.agent_drafts, 'list', lambda: [{'agent_id': 'draft-only', 'published_version': 0}])
-    response = TestClient(app).get('/api/v1/dataagent/agents/workbench')
+    response = TestClient(app).get('/api/v1/dataagent/agents/workbench', headers=bearer_headers(admin.id))
     assert response.status_code == 200
     assert response.json()[0]['published_version'] == 0
 
 
 def test_preview_submission_cannot_target_a_formal_chat(monkeypatch):
+    from tests.account_test_helpers import bearer_headers, install_fake_accounts
+
+    _, admin, _ = install_fake_accounts()
     monkeypatch.setattr(admin_routes.agent_drafts, 'get', lambda _: {'revision': 1})
     class Store:
         def get_topic(self, _, context=None):
             return {'agent_id': 'a', 'is_agent_preview': False}
     monkeypatch.setattr(admin_routes, 'get_topic_task_store', lambda: Store())
-    response = TestClient(app).post('/api/v1/dataagent/agents/a/preview-tasks', json={
-        'expected_revision': 1, 'topic_id': 'formal', 'message_content': 'test'})
+    response = TestClient(app).post(
+        '/api/v1/dataagent/agents/a/preview-tasks',
+        json={'expected_revision': 1, 'topic_id': 'formal', 'message_content': 'test'},
+        headers=bearer_headers(admin.id),
+    )
     assert response.status_code == 404

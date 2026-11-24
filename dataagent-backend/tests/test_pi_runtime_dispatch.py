@@ -37,7 +37,7 @@ def setup(monkeypatch,tmp_path):
     monkeypatch.setattr(executor,'build_sandbox_config',lambda cfg,**kw:({'runId':kw['run_id']},tmp_path/'results'))
     params=TaskExecutionInput(task_id='task-test',topic_id='topic-test',question='hello',history=[{'role':'user','content':'old'}],
         provider_id='local-test',model='stub',database_hint=None,
-        agent_snapshot={'agent_id':'agent_default','name':'Test','skill_folders':[],'mcp_server_ids':[]},auth_user_id='local:tester')
+        agent_snapshot={'agent_id':'agent_default','name':'Test','skill_folders':[],'mcp_server_ids':[]},user_id=7)
     return calls,store,params
 
 
@@ -57,7 +57,7 @@ async def test_outcomes_and_checkpoint_transaction(setup,monkeypatch,outcome,exp
     ctx=calls['ctx']; assert ctx.history==params.history
     assert ctx.to_init_payload()['sandbox']['runId']==ctx.run_id
     assert 'control-only-token' not in str(ctx.to_init_payload())
-    assert calls['identity']=={'X-Agent-User-Id':'local:tester','X-Agent-Id':'agent_default'}
+    assert calls['identity']=={'X-Agent-User-Id':'7','X-Agent-Id':'agent_default'}
     assert ctx.runtime_env['DATAAGENT_PYTHON_BIN']=='/usr/local/bin/python'
     assert ctx.runtime_env['SKILLS_ROOT_DIR']=='/opt/skills'
     assert 'MYSQL_PASSWORD' not in ctx.runtime_env
