@@ -44,7 +44,7 @@
         show-overflow-tooltip
       >
         <template #default="{ row }">
-          {{ row.display_name || row.user_id || '—' }}
+          {{ row.display_name || row.username || (row.user_id != null ? `#${row.user_id}` : '—') }}
         </template>
       </el-table-column>
       <el-table-column label="令牌前缀" width="150">
@@ -103,7 +103,7 @@ const STATUS_META = {
 }
 
 const authStore = useAuthStore()
-const isAdmin = computed(() => authStore.isAdmin)
+const isAdmin = computed(() => authStore.hasPermission('mcp_tokens:manage_all'))
 
 const scope = ref('mine')
 const tokens = ref([])

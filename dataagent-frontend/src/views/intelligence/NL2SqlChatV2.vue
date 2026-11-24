@@ -386,7 +386,6 @@ const api = createNl2SqlApiClient({
   timeout: 300000,
   defaultHeaders: DATAAGENT_CLIENT_HEADERS,
   onUnauthorized: () => {
-    if (!authStore.enabled) return
     authStore.currentUser = null
     if (route.name !== 'Login') {
       router.push({ path: '/login', query: { redirect: route.fullPath } })
@@ -421,8 +420,7 @@ const isStreaming = computed(() => Boolean(activeTaskId.value))
 const conversationRef = ref(null)
 const pendingMessageId = ref('')
 
-// With login off everyone shares one pool through the ordinary listing.
-const usesAdminList = computed(() => authStore.enabled && authStore.isAdmin)
+const usesAdminList = computed(() => authStore.hasPermission('topics:audit'))
 // Sources are metadata. Administrators list everyone's conversations; each row's
 // can_continue decides whether it opens as a chat or read-only, so there is no
 // separate review mode to switch into.
@@ -807,8 +805,10 @@ async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true }
 }
 
 function topicOwnerLabel(topic) {
-  return topic?.auth_display_name || topic?.auth_user_id || topic?.external_user_id
-    || (topic?.visitor_id ? `访客 ${String(topic.visitor_id).slice(0, 8)}` : '匿名用户')
+  return topic?.user_display_name || topic?.username || topic?.auth_display_name
+    || (topic?.user_id != null ? `#${topic.user_id}` : '')
+    || topic?.auth_user_id || topic?.external_user_id
+    || (topic?.visitor_id ? `访客 ${String(topic.visitor_id).slice(0, 8)}` : '未知用户')
 }
 
 async function ensureTopicListed(topicId) {

@@ -2,7 +2,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const routerPush = vi.hoisted(() => vi.fn())
-const authState = vi.hoisted(() => ({ isAdmin: true }))
+const authState = vi.hoisted(() => ({ isAdmin: true, hasPermission(k) { return this.isAdmin || k.startsWith('menu:') } }))
 const dataagentApi = vi.hoisted(() =>
   Object.fromEntries(
     [
@@ -10,7 +10,10 @@ const dataagentApi = vi.hoisted(() =>
       'getAgentDraft',
       'getAgentBuiltinPrompt',
       'getAgentCapabilities',
-      'listAuthUsers',
+      'getAgentGrants',
+      'setAgentGrants',
+      'listUsers',
+      'listRoles',
       'updateAgent',
       'publishAgent',
       'setAgentRemoteMcp',
@@ -54,8 +57,6 @@ const profile = {
 
   visibility: {
     mode: 'selected',
-    allowed_users: ['local:alice'],
-    allowed_groups: [],
   },
   is_default: false,
   is_builtin: false,
@@ -105,7 +106,16 @@ beforeEach(() => {
     skills: [{ folder: 'marketing-insights', enabled: true }],
     mcp_servers: [{ id: 'web', name: 'Example MCP', tool_names: [] }],
   })
-  dataagentApi.listAuthUsers.mockResolvedValue({ items: [] })
+  dataagentApi.getAgentGrants.mockResolvedValue({
+    users: [{ id: 2, username: 'alice', display_name: 'Alice' }],
+    roles: [{ id: 3, role_key: 'analyst', name: '分析师' }],
+  })
+  dataagentApi.setAgentGrants.mockResolvedValue({
+    users: [{ id: 2, username: 'alice', display_name: 'Alice' }],
+    roles: [{ id: 3, role_key: 'analyst', name: '分析师' }],
+  })
+  dataagentApi.listUsers.mockResolvedValue({ items: [{ id: 2, username: 'alice', display_name: 'Alice' }] })
+  dataagentApi.listRoles.mockResolvedValue({ items: [{ id: 3, role_key: 'analyst', name: '分析师' }] })
   dataagentApi.updateAgent.mockResolvedValue({
     ...profile,
     revision: 4,
@@ -355,4 +365,19 @@ it('limits knowledge and memory cards to admin agent editors', async () => {
   await flushPromises()
   expect(readonly.findComponent({ name: 'AgentExperienceCards' }).exists()).toBe(false)
   readonly.unmount()
+})
+
+it('saves draft with mode-only visibility and saves grants independently via setAgentGrants', async () => {
+  const wrapper = mount()
+  await flushPromises()
+  await wrapper.vm.handleSave()
+  expect(dataagentApi.updateAgent).toHaveBeenCalled()
+  const sentPayload = dataagentApi.updateAgent.mock.calls[0][1]
+  expect(sentPayload.visibility).toEqual({ mode: 'selected' })
+  await wrapper.vm.saveGrants()
+  expect(dataagentApi.setAgentGrants).toHaveBeenCalledWith('agent_1', {
+    user_ids: [2],
+    role_ids: [3],
+  })
+  wrapper.unmount()
 })

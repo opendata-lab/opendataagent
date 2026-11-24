@@ -1,10 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// 守卫经动态 import 读取 auth store；用可控的假 store 替换。
+const USER_PERMS = ['menu:chat', 'menu:agents', 'menu:skills', 'menu:mcp', 'menu:mcp_tokens', 'menu:profile']
+const ADMIN_PERMS = [
+  ...USER_PERMS,
+  'agents:manage', 'skills:manage', 'mcp:manage', 'models:manage',
+  'widget:manage', 'feedback:view', 'experience:manage', 'topics:audit',
+  'evals:manage', 'mcp_tokens:manage_all', 'users:manage', 'roles:manage'
+]
+
 const authState = vi.hoisted(() => ({
-  enabled: false,
+  enabled: true,
   currentUser: null,
   isAdmin: false,
+  permissions: [],
+  hasPermission(key) {
+    if (!key) return Boolean(this.currentUser)
+    return Boolean(this.currentUser) && this.permissions.includes(key)
+  },
   bootstrap: vi.fn(async () => {})
 }))
 
@@ -17,9 +29,11 @@ vi.mock('@/stores/auth', () => ({
   }
 }))
 
-// 路由组件本身与守卫无关，替换为轻量桩，避免加载重型视图。
 vi.mock('@/views/LoginView.vue', () => ({ default: { template: '<div>login</div>' } }))
 vi.mock('@/views/settings/McpTokensView.vue', () => ({ default: { template: '<div>mcp-tokens</div>' } }))
+vi.mock('@/views/settings/ProfileView.vue', () => ({ default: { template: '<div>profile</div>' } }))
+vi.mock('@/views/settings/UsersView.vue', () => ({ default: { template: '<div>users</div>' } }))
+vi.mock('@/views/settings/RolesView.vue', () => ({ default: { template: '<div>roles</div>' } }))
 vi.mock('@/views/intelligence/IntelligentQueryView.vue', () => ({ default: { template: '<div><router-view /></div>' } }))
 vi.mock('@/views/intelligence/NL2SqlChatV2.vue', () => ({ default: { template: '<div>chat</div>' } }))
 vi.mock('@/views/settings/SettingsLayout.vue', () => ({ default: { template: '<div><router-view /></div>' } }))
@@ -32,8 +46,6 @@ vi.mock('@/views/settings/WidgetAccessConfig.vue', () => ({ default: { template:
 
 import router from '../index'
 
-// 同一 location 的重复 push 会被 vue-router 判定为冗余导航而不重跑守卫；
-// 每次导航附带唯一 query 保证守卫真正执行。
 let navSeq = 0
 const navigate = async (location) => {
   const separator = String(location).includes('?') ? '&' : '?'
@@ -42,31 +54,37 @@ const navigate = async (location) => {
   return router.currentRoute.value
 }
 
+const signInAsUser = () => {
+  authState.currentUser = { id: 2, username: 'alice', display_name: 'alice' }
+  authState.isAdmin = false
+  authState.permissions = [...USER_PERMS]
+}
+
+const signInAsAdmin = () => {
+  authState.currentUser = { id: 1, username: 'admin', display_name: 'admin' }
+  authState.isAdmin = true
+  authState.permissions = [...ADMIN_PERMS]
+}
+
 describe('auth router guard', () => {
   beforeEach(() => {
-    authState.enabled = false
+    authState.enabled = true
     authState.currentUser = null
     authState.isAdmin = false
+    authState.permissions = []
     authState.bootstrap.mockClear()
   })
 
-  it('is transparent when auth is disabled', async () => {
-    const route = await navigate('/chat')
-    expect(route.path).toBe('/chat')
-  })
-
   it('redirects unauthenticated users from /settings/mcp-tokens to /login and returns afterward', async () => {
-    authState.enabled = true
     const login = await navigate('/settings/mcp-tokens')
     expect(login.path).toBe('/login')
     expect(login.query.redirect).toContain('/settings/mcp-tokens')
-    authState.currentUser = { role: 'user' }
+    signInAsUser()
     await router.push(login.query.redirect)
     expect(router.currentRoute.value.name).toBe('McpTokens')
   })
 
   it('redirects unauthenticated users to /login with redirect', async () => {
-    authState.enabled = true
     const route = await navigate('/chat?agent_id=agent_sales')
     expect(route.path).toBe('/login')
     expect(route.query.redirect).toContain('/chat')
@@ -74,73 +92,62 @@ describe('auth router guard', () => {
   })
 
   it('lets authenticated users through', async () => {
-    authState.enabled = true
-    authState.currentUser = { display_name: 'alice', role: 'user' }
+    signInAsUser()
     const route = await navigate('/chat')
     expect(route.path).toBe('/chat')
   })
 
-  it('blocks non-admin users from admin-only routes', async () => {
-    authState.enabled = true
-    authState.currentUser = { display_name: 'alice', role: 'user' }
-    authState.isAdmin = false
-    const route = await navigate('/settings/models')
-    expect(route.path).toBe('/chat')
-  })
-
-  it.each(['/feedback', '/knowledge', '/memories'])('blocks regular users from %s', async path => {
-    authState.enabled = true
-    authState.currentUser = { display_name: 'alice', role: 'user' }
-    authState.isAdmin = false
-    expect((await navigate(path)).path).toBe('/chat')
-  })
+  it.each(['/settings/models', '/settings/users', '/settings/roles', '/feedback', '/knowledge', '/memories'])(
+    'blocks regular users from privileged route %s',
+    async (path) => {
+      signInAsUser()
+      expect((await navigate(path)).path).toBe('/chat')
+    }
+  )
 
   it('keeps agent_id when a non-admin user falls back from an admin page', async () => {
-    authState.enabled = true
-    authState.currentUser = { display_name: 'alice', role: 'user' }
-    authState.isAdmin = false
+    signInAsUser()
     const route = await navigate('/settings/models?agent_id=agent_sales')
     expect(route.path).toBe('/chat')
     expect(route.query.agent_id).toBe('agent_sales')
   })
 
-  it.each(['/settings/skills', '/settings/skills/demo', '/settings/mcp-tokens', '/agents', '/agents/agent_1'])(
-    'lets non-admin users access readable route %s',
+  it.each([
+    '/settings/skills',
+    '/settings/skills/demo',
+    '/settings/mcp-tokens',
+    '/settings/profile',
+    '/agents',
+    '/agents/agent_1'
+  ])('lets regular users access permitted route %s', async (path) => {
+    signInAsUser()
+    const route = await navigate(path)
+    expect(route.path).toBe(path)
+  })
+
+  it('applies permission guard after a legacy route redirect', async () => {
+    signInAsUser()
+    const route = await navigate('/intelligent-query/models')
+    expect(route.path).toBe('/chat')
+  })
+
+  it.each(['/settings/models', '/settings/users', '/settings/roles'])(
+    'lets admins into admin route %s',
     async (path) => {
-      authState.enabled = true
-      authState.currentUser = { display_name: 'alice', role: 'user' }
-      authState.isAdmin = false
+      signInAsAdmin()
       const route = await navigate(path)
       expect(route.path).toBe(path)
     }
   )
 
-  it('applies the canonical admin guard after a legacy route redirect', async () => {
-    authState.enabled = true
-    authState.currentUser = { display_name: 'alice', role: 'user' }
-    authState.isAdmin = false
-    const route = await navigate('/intelligent-query/models')
-    expect(route.path).toBe('/chat')
-  })
-
-  it('lets admins into admin-only routes', async () => {
-    authState.enabled = true
-    authState.currentUser = { display_name: 'admin', role: 'admin' }
-    authState.isAdmin = true
-    const route = await navigate('/settings/models')
-    expect(route.path).toBe('/settings/models')
-  })
-
   it('bounces a logged-in user away from /login', async () => {
-    authState.enabled = true
-    authState.currentUser = { display_name: 'alice', role: 'user' }
+    signInAsUser()
     const route = await navigate('/login')
     expect(route.path).toBe('/chat')
   })
 
   it('returns a logged-in user to the full redirect including agent_id', async () => {
-    authState.enabled = true
-    authState.currentUser = { display_name: 'alice', role: 'user' }
+    signInAsUser()
     const route = await navigate('/login?redirect=%2Fsettings%2Fskills%3Fagent_id%3Dagent_sales')
     expect(route.path).toBe('/settings/skills')
     expect(route.query.agent_id).toBe('agent_sales')

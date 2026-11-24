@@ -19,25 +19,25 @@
       <div class="settings-footer">
         <div class="settings-user">
           <el-dropdown
-            v-if="authStore.enabled && authStore.currentUser"
+            v-if="authStore.currentUser"
             trigger="click"
             @command="handleUserCommand"
           >
             <span class="settings-user__trigger">
               <el-icon><User /></el-icon>
-              <span class="settings-user__name">{{ authStore.currentUser.display_name }}</span>
+              <span class="settings-user__name">{{ authStore.currentUser.display_name || authStore.currentUser.username }}</span>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item command="profile">个人资料</el-dropdown-item>
                 <el-dropdown-item command="mcp-tokens">访问令牌</el-dropdown-item>
                 <el-dropdown-item command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
 
-          <!-- 登录已开启但没有会话：可点，去登录页。 -->
           <button
-            v-else-if="authStore.enabled"
+            v-else
             type="button"
             class="settings-user__trigger"
             @click="goToLogin"
@@ -45,12 +45,6 @@
             <el-icon><User /></el-icon>
             <span class="settings-user__name">未登录</span>
           </button>
-
-          <!-- 登录整体未启用：这里不存在「未登录」这回事，说清楚而不是留空。 -->
-          <span v-else class="settings-user__trigger is-static">
-            <el-icon><User /></el-icon>
-            <span class="settings-user__name">未启用登录</span>
-          </span>
         </div>
       </div>
     </aside>
@@ -64,42 +58,48 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Collection, Connection, Cpu, Key, Monitor, User } from '@element-plus/icons-vue'
+import { ArrowLeft, Avatar, Collection, Connection, Cpu, Key, Lock, Monitor, User } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 
-// Grouped the way an operator thinks about them: what the agent can do, how it
-// is reached, and what is measured. A flat list of six made every entry look
-// equally routine.
 const GROUPS = [
   {
     title: 'Agent 能力',
-    adminOnly: false,
     items: [
-      { index: 'skills', label: 'Skills', icon: Collection, path: '/settings/skills' },
-      { index: 'mcp', label: 'MCP 服务', icon: Connection, path: '/settings/mcp' },
-      { index: 'models', label: '模型管理', icon: Cpu, path: '/settings/models', adminOnly: true }
+      { index: 'skills', label: 'Skills', icon: Collection, path: '/settings/skills', permission: 'menu:skills' },
+      { index: 'mcp', label: 'MCP 服务', icon: Connection, path: '/settings/mcp', permission: 'menu:mcp' },
+      { index: 'models', label: '模型管理', icon: Cpu, path: '/settings/models', permission: 'models:manage' }
     ]
   },
   {
     title: '接入',
-    adminOnly: true,
-    items: [{ index: 'widget', label: 'Widget 接入', icon: Monitor, path: '/settings/widget-access' }]
+    items: [
+      { index: 'widget', label: 'Widget 接入', icon: Monitor, path: '/settings/widget-access', permission: 'widget:manage' }
+    ]
+  },
+  {
+    title: '账号与权限',
+    items: [
+      { index: 'users', label: '用户管理', icon: Avatar, path: '/settings/users', permission: 'users:manage' },
+      { index: 'roles', label: '角色管理', icon: Lock, path: '/settings/roles', permission: 'roles:manage' }
+    ]
   },
   {
     title: '个人',
-    adminOnly: false,
-    items: [{ index: 'mcp-tokens', label: '访问令牌', icon: Key, path: '/settings/mcp-tokens' }]
+    items: [
+      { index: 'profile', label: '个人资料', icon: User, path: '/settings/profile', permission: 'menu:profile' },
+      { index: 'mcp-tokens', label: '访问令牌', icon: Key, path: '/settings/mcp-tokens', permission: 'menu:mcp_tokens' }
+    ]
   }
 ]
 
 const visibleGroups = computed(() =>
   GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => authStore.isAdmin || !(item.adminOnly || group.adminOnly))
+    items: group.items.filter((item) => authStore.hasPermission(item.permission))
   })).filter((group) => group.items.length > 0)
 )
 
@@ -121,6 +121,10 @@ const goToLogin = () => {
 }
 
 const handleUserCommand = async (command) => {
+  if (command === 'profile') {
+    router.push('/settings/profile')
+    return
+  }
   if (command === 'mcp-tokens') {
     router.push('/settings/mcp-tokens')
     return

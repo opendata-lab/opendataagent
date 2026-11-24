@@ -28,7 +28,8 @@ export function normalizeTopic(topic) {
     // Admin listing only: whether this user may continue the conversation, and
     // whose it is when they may not.
     ...(typeof topic?.can_continue === 'boolean' ? { can_continue: topic.can_continue } : {}),
-    ...Object.fromEntries(['auth_user_id', 'auth_display_name', 'external_user_id', 'visitor_id']
+    ...(topic?.user_id !== undefined && topic?.user_id !== null ? { user_id: Number(topic.user_id) } : {}),
+    ...Object.fromEntries(['user_display_name', 'username', 'auth_user_id', 'auth_display_name', 'external_user_id', 'visitor_id']
       .filter((key) => topic?.[key]).map((key) => [key, String(topic[key])])),
   }
 }

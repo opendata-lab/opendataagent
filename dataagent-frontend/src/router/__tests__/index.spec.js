@@ -67,15 +67,23 @@ describe('DataAgent page routing', () => {
     expect(route.name).toBe(name)
   })
 
-  it('puts admin libraries under the main layout and removes the old experience page', () => {
+  it('puts admin libraries under the main layout with explicit permission metadata', () => {
     const router = buildRouter()
-    for (const path of ['/feedback', '/knowledge', '/memories']) {
+    const expected = {
+      '/feedback': 'feedback:view',
+      '/knowledge': 'experience:manage',
+      '/memories': 'experience:manage'
+    }
+    for (const [path, perm] of Object.entries(expected)) {
       const matched = router.resolve(path).matched
       expect(matched[0].path).toBe('/')
-      expect(matched.at(-1).meta.adminOnly).toBe(true)
+      expect(matched.at(-1).meta.permission).toBe(perm)
     }
     expect(router.resolve('/settings/experiences').matched).toHaveLength(0)
-    expect(router.resolve('/settings/evaluations').matched.at(-1).meta.adminOnly).toBe(true)
+    expect(router.resolve('/settings/evaluations').matched.at(-1).meta.permission).toBe('evals:manage')
+    expect(router.resolve('/settings/users').matched.at(-1).meta.permission).toBe('users:manage')
+    expect(router.resolve('/settings/roles').matched.at(-1).meta.permission).toBe('roles:manage')
+    expect(router.resolve('/settings/profile').matched.at(-1).meta.permission).toBe('menu:profile')
   })
 
   it('keeps canonical business paths independent from the deployment base', () => {

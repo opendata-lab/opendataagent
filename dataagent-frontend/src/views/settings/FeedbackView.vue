@@ -35,7 +35,7 @@
         <template #default="{ row }">{{ formatTime(row.feedback_at) }}</template>
       </el-table-column>
       <el-table-column label="用户" width="150" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.user_display_name || row.user_id || '匿名用户' }}</template>
+        <template #default="{ row }">{{ row.user_display_name || row.username || (row.user_id != null ? `#${row.user_id}` : '未知用户') }}</template>
       </el-table-column>
       <el-table-column label="助手" width="140" show-overflow-tooltip>
         <template #default="{ row }">{{ agentName(row.agent_id) }}</template>

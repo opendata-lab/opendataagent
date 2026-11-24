@@ -124,17 +124,17 @@ const demoProviderSettings = {
   widget_allowed_sites: [
     {
       website_id: 'mall-web',
-      allow_anonymous: false,
       project_name: '商城官网',
       project_color: '#4A90A4',
-      allowed_origins: ['https://mall.demo.example.com']
+      allowed_origins: ['https://mall.demo.example.com'],
+      server_side: { enabled: false, access_key_set: false, account_mode: 'personal', trusted_username_namespace: false, provider_mappings: {} }
     },
     {
       website_id: 'ops-console',
-      allow_anonymous: false,
       project_name: '运营后台',
       project_color: '#7C5CFC',
-      allowed_origins: ['https://ops.demo.example.com']
+      allowed_origins: ['https://ops.demo.example.com'],
+      server_side: { enabled: false, access_key_set: false, account_mode: 'personal', trusted_username_namespace: false, provider_mappings: {} }
     }
   ]
 }
@@ -739,15 +739,75 @@ export const demoAdapter = async (config) => {
     return createResponse(config, { status: 'ok', mode: 'demo' })
   }
 
-  // 演示模式不启用认证：SPA 路由守卫与登录页保持关闭。
+  // 演示模式提供内置管理员登录态，覆盖统一账号、角色与权限菜单。
+  const demoAdminPermissions = [
+    'menu:chat', 'menu:agents', 'menu:skills', 'menu:mcp', 'menu:mcp_tokens', 'menu:profile',
+    'agents:manage', 'skills:manage', 'mcp:manage', 'models:manage', 'widget:manage',
+    'feedback:view', 'experience:manage', 'topics:audit', 'evals:manage',
+    'mcp_tokens:manage_all', 'users:manage', 'roles:manage'
+  ]
+  const demoAdminMenus = ['menu:chat', 'menu:agents', 'menu:skills', 'menu:mcp', 'menu:mcp_tokens', 'menu:profile']
+  const demoAdminUser = {
+    id: 1,
+    username: 'demo_admin',
+    display_name: '演示管理员',
+    email: 'demo@example.com',
+    email_verified: true,
+    is_active: true,
+    roles: [
+      { id: 1, role_key: 'admin', name: '管理员', is_builtin: true },
+      { id: 2, role_key: 'user', name: '普通用户', is_builtin: true }
+    ],
+    identities: [],
+    permissions: demoAdminPermissions,
+    menus: demoAdminMenus,
+    role: 'admin'
+  }
+
   if (method === 'get' && pathname === '/v1/nl2sql/auth/config') {
     return createResponse(config, {
-      enabled: false,
+      enabled: true,
       provider_name: '',
       provider_icon: '',
-      local_login_enabled: false,
+      local_login_enabled: true,
       oauth_login_enabled: false
     })
+  }
+
+  if (method === 'get' && pathname === '/v1/nl2sql/auth/me') {
+    return createResponse(config, demoAdminUser)
+  }
+
+  if (method === 'get' && pathname === '/v1/dataagent/profile') {
+    return createResponse(config, {
+      ...demoAdminUser,
+      accessible_agents: demoAgents.map((a) => ({ agent_id: a.agent_id, name: a.name, description: a.description || '' }))
+    })
+  }
+
+  if (method === 'get' && pathname === '/v1/dataagent/users') {
+    return createResponse(config, { items: [demoAdminUser], total: 1, page: 1, page_size: 20 })
+  }
+
+  if (method === 'get' && pathname === '/v1/dataagent/roles') {
+    return createResponse(config, {
+      items: [
+        { id: 1, role_key: 'admin', name: '管理员', description: '系统管理员', is_builtin: true, member_count: 1, agent_ids: [], permissions: demoAdminPermissions, menus: demoAdminMenus },
+        { id: 2, role_key: 'user', name: '普通用户', description: '默认用户角色', is_builtin: true, member_count: 1, agent_ids: [], permissions: demoAdminMenus, menus: demoAdminMenus }
+      ]
+    })
+  }
+
+  if (method === 'get' && pathname === '/v1/dataagent/roles/permissions') {
+    return createResponse(config, { items: demoAdminPermissions.map((key) => ({ key, label: key, kind: key.startsWith('menu:') ? 'menu' : 'admin' })) })
+  }
+
+  if (method === 'get' && /^\/v1\/dataagent\/agents\/[^/]+\/grants$/.test(pathname)) {
+    return createResponse(config, { users: [], roles: [] })
+  }
+
+  if (method === 'put' && /^\/v1\/dataagent\/agents\/[^/]+\/grants$/.test(pathname)) {
+    return createResponse(config, { users: [], roles: [] })
   }
 
   if (method === 'get' && pathname === '/v1/nl2sql-admin/topics') {

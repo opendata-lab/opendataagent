@@ -4,7 +4,7 @@
       <div class="page-header-main">
         <h2 class="page-title">Widget 接入白名单</h2>
         <p class="page-desc">
-          管理允许嵌入智能问数 Widget 的站点。只有列入白名单的 <code>website_id</code> 且来源域名匹配的请求才会被后端接受。
+          管理允许嵌入智能问数 Widget 的站点。所有接入均要求已登录身份：浏览器同源嵌入使用平台会话，第三方系统通过服务端受信任代理携带访问密钥接入。
         </p>
       </div>
       <div class="page-header-actions">
@@ -20,6 +20,23 @@
         </el-button>
       </div>
     </header>
+
+    <el-alert
+      v-if="revealedKey"
+      type="warning"
+      show-icon
+      :closable="true"
+      class="key-alert"
+      @close="revealedKey = null"
+    >
+      <template #title>
+        站点「{{ revealedKey.website_id }}」的访问密钥已生成（仅展示一次，请立即复制到接入方服务端配置）
+      </template>
+      <div class="key-reveal-row">
+        <code class="key-code" data-testid="revealed-access-key">{{ revealedKey.access_key }}</code>
+        <el-button size="small" @click="copyKey(revealedKey.access_key)">复制</el-button>
+      </div>
+    </el-alert>
 
     <div v-if="!sites.length" class="empty-block">
       <div class="empty-title">暂无接入站点</div>
@@ -70,21 +87,6 @@
           <el-form-item>
             <template #label>
               <span class="field-label">
-                匿名访问
-                <el-tooltip content="关闭后，接入方必须提供用户身份；未登录用户只能看到登录提示。" placement="top">
-                  <el-icon><QuestionFilled /></el-icon>
-                </el-tooltip>
-              </span>
-            </template>
-            <div class="anonymous-row">
-              <el-switch v-model="site.allow_anonymous" />
-              <span class="anonymous-state">{{ site.allow_anonymous ? '允许匿名访客使用' : '必须登录后使用' }}</span>
-            </div>
-          </el-form-item>
-
-          <el-form-item>
-            <template #label>
-              <span class="field-label">
                 允许来源（Origin）
                 <el-tooltip placement="top">
                   <template #content>
@@ -110,6 +112,74 @@
               </div>
             </div>
           </el-form-item>
+
+          <div class="server-side-box">
+            <div class="server-side-head">
+              <div>
+                <div class="server-side-title">服务端受信任代理（OpenDataWorks / OntoFoundry 等）</div>
+                <div class="server-side-desc">
+                  启用后，该站点只能通过后端携带 <code>X-DataAgent-Access-Key</code> 与用户标识头接入。
+                </div>
+              </div>
+              <div class="server-side-key-actions">
+                <el-tag :type="site.server_side.access_key_set ? 'success' : 'info'" size="small">
+                  {{ site.server_side.access_key_set ? '已配置密钥' : '未配置密钥' }}
+                </el-tag>
+                <el-button
+                  size="small"
+                  :disabled="!site._persistedId || keyWorkingId === site._persistedId"
+                  :data-testid="`generate-key-${site.website_id || index}`"
+                  @click="generateOrRotateKey(site)"
+                >
+                  {{ site.server_side.access_key_set ? '轮换密钥' : '生成密钥' }}
+                </el-button>
+                <el-button
+                  v-if="site.server_side.access_key_set"
+                  size="small"
+                  type="danger"
+                  plain
+                  :disabled="keyWorkingId === site._persistedId"
+                  @click="revokeKey(site)"
+                >
+                  吊销密钥
+                </el-button>
+              </div>
+            </div>
+            <div v-if="!site._persistedId" class="origin-hint">请先保存该站点后再生成服务端访问密钥。</div>
+
+            <el-row :gutter="16" class="server-side-fields">
+              <el-col :xs="24" :md="12">
+                <el-form-item label="账号与会话模式">
+                  <el-radio-group v-model="site.server_side.account_mode" :data-testid="`account-mode-${site.website_id || index}`">
+                    <el-radio-button value="personal">个人账号（personal）</el-radio-button>
+                    <el-radio-button value="shared">共享会话（shared）</el-radio-button>
+                  </el-radio-group>
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :md="12">
+                <el-form-item label="信任同命名空间用户名">
+                  <div class="switch-row">
+                    <el-switch v-model="site.server_side.trusted_username_namespace" />
+                    <span class="switch-label">
+                      {{ site.server_side.trusted_username_namespace ? '裸用户名可自动归并同名平台账号' : '仅按外部身份绑定，不按裸用户名归并' }}
+                    </span>
+                  </div>
+                </el-form-item>
+              </el-col>
+            </el-row>
+
+            <el-form-item label="宿主 OAuth Provider 映射（registration_id → DataAgent provider）">
+              <div class="mapping-list">
+                <div v-for="(entry, mi) in site.server_side.provider_mapping_rows" :key="mi" class="mapping-row">
+                  <el-input v-model="entry.key" placeholder="宿主 registration_id，如 github" />
+                  <span class="mapping-arrow">→</span>
+                  <el-input v-model="entry.value" placeholder="DataAgent provider 名称，如 CorpSSO" />
+                  <el-button text :icon="Close" class="origin-remove" @click="removeMapping(site, mi)" />
+                </div>
+                <el-button size="small" :icon="Plus" class="origin-add" @click="addMapping(site)">添加映射</el-button>
+              </div>
+            </el-form-item>
+          </div>
         </el-form>
       </section>
     </div>
@@ -121,32 +191,66 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Close, Delete, Plus, QuestionFilled } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
+import { copyText } from '@/utils/clipboard'
 
 const loading = ref(false)
 const saving = ref(false)
 const sites = ref([])
 const savedSnapshot = ref('[]')
+const revealedKey = ref(null)
+const keyWorkingId = ref('')
 
 let keySeq = 0
 const nextKey = () => `site_${++keySeq}`
 
-const normalizeSite = (raw = {}) => ({
+const normalizeServerSide = (raw = {}) => {
+  const ss = raw && typeof raw === 'object' ? raw : {}
+  const mappings = ss.provider_mappings && typeof ss.provider_mappings === 'object' ? ss.provider_mappings : {}
+  return {
+    enabled: Boolean(ss.enabled),
+    access_key_set: Boolean(ss.access_key_set || ss.enabled),
+    account_mode: ss.account_mode === 'shared' ? 'shared' : 'personal',
+    trusted_username_namespace: Boolean(ss.trusted_username_namespace),
+    provider_mapping_rows: Object.entries(mappings).map(([key, value]) => ({
+      key: String(key || ''),
+      value: String(value || '')
+    }))
+  }
+}
+
+const toPayloadServerSide = (ss = {}) => {
+  const mappings = {}
+  for (const row of ss.provider_mapping_rows || []) {
+    const k = String(row?.key || '').trim()
+    const v = String(row?.value || '').trim()
+    if (k && v) mappings[k] = v
+  }
+  return {
+    enabled: Boolean(ss.enabled),
+    account_mode: ss.account_mode === 'shared' ? 'shared' : 'personal',
+    trusted_username_namespace: Boolean(ss.trusted_username_namespace),
+    provider_mappings: mappings
+  }
+}
+
+const normalizeSite = (raw = {}, persisted = false) => ({
   _key: nextKey(),
+  _persistedId: persisted ? String(raw.website_id || '').trim() : '',
   website_id: String(raw.website_id || ''),
   project_name: String(raw.project_name || ''),
   project_color: String(raw.project_color || ''),
-  allow_anonymous: raw.allow_anonymous === true,
-  allowed_origins: Array.isArray(raw.allowed_origins) ? raw.allowed_origins.map((item) => String(item || '')) : []
+  allowed_origins: Array.isArray(raw.allowed_origins) ? raw.allowed_origins.map((item) => String(item || '')) : [],
+  server_side: normalizeServerSide(raw.server_side)
 })
 
 const toPayloadSite = (site) => ({
   website_id: String(site.website_id || '').trim(),
   project_name: String(site.project_name || '').trim(),
   project_color: String(site.project_color || '').trim(),
-  allow_anonymous: site.allow_anonymous === true,
   allowed_origins: (site.allowed_origins || [])
     .map((item) => String(item || '').trim())
-    .filter((item, index, arr) => item && arr.indexOf(item) === index)
+    .filter((item, index, arr) => item && arr.indexOf(item) === index),
+  server_side: toPayloadServerSide(site.server_side)
 })
 
 const payloadSites = computed(() => sites.value.map(toPayloadSite).filter((site) => site.website_id))
@@ -156,7 +260,7 @@ const isDirty = computed(() => snapshotOf(payloadSites.value) !== savedSnapshot.
 
 const applySettings = (payload) => {
   const list = Array.isArray(payload?.widget_allowed_sites) ? payload.widget_allowed_sites : []
-  sites.value = list.map(normalizeSite)
+  sites.value = list.map((item) => normalizeSite(item, true))
   savedSnapshot.value = snapshotOf(sites.value.map(toPayloadSite).filter((site) => site.website_id))
 }
 
@@ -171,7 +275,7 @@ const loadSettings = async () => {
 }
 
 const addSite = () => {
-  sites.value.push(normalizeSite({ allowed_origins: [''] }))
+  sites.value.push(normalizeSite({ allowed_origins: [''] }, false))
 }
 
 const removeSite = async (index) => {
@@ -195,6 +299,79 @@ const addOrigin = (site) => {
 
 const removeOrigin = (site, index) => {
   site.allowed_origins.splice(index, 1)
+}
+
+const addMapping = (site) => {
+  site.server_side.provider_mapping_rows.push({ key: '', value: '' })
+}
+
+const removeMapping = (site, index) => {
+  site.server_side.provider_mapping_rows.splice(index, 1)
+}
+
+const generateOrRotateKey = async (site) => {
+  const wid = site._persistedId
+  if (!wid) return
+  if (site.server_side.access_key_set) {
+    try {
+      await ElMessageBox.confirm(
+        `确认轮换站点「${wid}」的服务端访问密钥吗？旧密钥将立即失效。`,
+        '轮换访问密钥',
+        { confirmButtonText: '轮换', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+  }
+  keyWorkingId.value = wid
+  try {
+    const res = await dataagentApi.createWidgetAccessKey(wid)
+    revealedKey.value = res
+    site.server_side.enabled = true
+    site.server_side.access_key_set = true
+    savedSnapshot.value = snapshotOf(payloadSites.value)
+    ElMessage.success('访问密钥已生成')
+  } catch (error) {
+    if (!error?.__odwNotified) ElMessage.error(error?.message || '生成密钥失败')
+  } finally {
+    keyWorkingId.value = ''
+  }
+}
+
+const revokeKey = async (site) => {
+  const wid = site._persistedId
+  if (!wid) return
+  try {
+    await ElMessageBox.confirm(`确认吊销站点「${wid}」的服务端访问密钥吗？`, '吊销访问密钥', {
+      confirmButtonText: '吊销',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+  } catch {
+    return
+  }
+  keyWorkingId.value = wid
+  try {
+    await dataagentApi.deleteWidgetAccessKey(wid)
+    site.server_side.enabled = false
+    site.server_side.access_key_set = false
+    if (revealedKey.value?.website_id === wid) revealedKey.value = null
+    savedSnapshot.value = snapshotOf(payloadSites.value)
+    ElMessage.success('访问密钥已吊销')
+  } catch (error) {
+    if (!error?.__odwNotified) ElMessage.error(error?.message || '吊销密钥失败')
+  } finally {
+    keyWorkingId.value = ''
+  }
+}
+
+const copyKey = async (value) => {
+  try {
+    await copyText(value)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败，请手动复制')
+  }
 }
 
 const validate = () => {
@@ -272,7 +449,8 @@ onMounted(loadSettings)
 }
 
 .page-desc code,
-.field-label code {
+.field-label code,
+.server-side-desc code {
   padding: 1px 5px;
   border-radius: 4px;
   background: #eef3f9;
@@ -293,6 +471,29 @@ onMounted(loadSettings)
   --el-button-hover-border-color: #2c74b8;
   --el-button-active-bg-color: #184d7d;
   --el-button-active-border-color: #184d7d;
+}
+
+.key-alert {
+  border-radius: 8px;
+}
+
+.key-reveal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.key-code {
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: #92400e;
+  word-break: break-all;
 }
 
 .empty-block {
@@ -381,28 +582,24 @@ onMounted(loadSettings)
   width: 160px;
 }
 
-.anonymous-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.anonymous-state {
-  font-size: 13px;
-  color: #53677e;
-}
-
-.origin-list {
+.origin-list,
+.mapping-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
   width: 100%;
 }
 
-.origin-row {
+.origin-row,
+.mapping-row {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.mapping-arrow {
+  color: #64748b;
+  flex: none;
 }
 
 .origin-remove {
@@ -421,6 +618,56 @@ onMounted(loadSettings)
 .origin-hint {
   font-size: 12px;
   color: #8090a3;
+}
+
+.server-side-box {
+  margin-top: 8px;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.server-side-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.server-side-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.server-side-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.server-side-key-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.server-side-fields {
+  margin-top: 14px;
+}
+
+.switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.switch-label {
+  font-size: 12px;
+  color: #53677e;
 }
 
 @media (max-width: 768px) {

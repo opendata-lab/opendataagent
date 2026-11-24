@@ -5,7 +5,11 @@ import ElementPlus from 'element-plus'
 const authState = vi.hoisted(() => ({
   enabled: true,
   isAdmin: false,
-  currentUser: { user_id: 'local:alice', display_name: 'Alice', role: 'user' }
+  currentUser: { id: 2, username: 'alice', display_name: 'Alice', role: 'user' },
+  hasPermission(key) {
+    if (key === 'mcp_tokens:manage_all') return this.isAdmin
+    return true
+  }
 }))
 
 const apiMocks = vi.hoisted(() => ({

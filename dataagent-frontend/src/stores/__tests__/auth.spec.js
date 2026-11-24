@@ -40,19 +40,7 @@ describe('useAuthStore', () => {
     vi.clearAllMocks()
   })
 
-  it('stays fully open when auth is disabled', async () => {
-    authApiMock.getAuthConfig.mockResolvedValue({ enabled: false })
-    const store = useAuthStore()
-    await store.bootstrap()
-
-    expect(store.enabled).toBe(false)
-    expect(store.isAuthenticated).toBe(true)
-    // 关闭态 isAdmin 为 true：既有管理 UI 保持可用（与后端 no-op 放行一致）。
-    expect(store.isAdmin).toBe(true)
-    expect(authApiMock.me).not.toHaveBeenCalled()
-  })
-
-  it('loads current user when auth is enabled', async () => {
+  it('loads current user, roles, permissions and menus on bootstrap', async () => {
     authApiMock.getAuthConfig.mockResolvedValue({
       enabled: true,
       provider_name: 'SSO',
@@ -60,16 +48,42 @@ describe('useAuthStore', () => {
       local_login_enabled: true,
       oauth_login_enabled: true
     })
-    authApiMock.me.mockResolvedValue({ user_id: 'SSO:42', display_name: 'alice', role: 'user' })
+    authApiMock.me.mockResolvedValue({
+      id: 2,
+      username: 'alice',
+      display_name: 'alice',
+      roles: [{ id: 2, role_key: 'user', name: '普通用户', is_builtin: true }],
+      permissions: ['menu:chat', 'menu:agents', 'menu:profile'],
+      menus: ['menu:chat', 'menu:agents', 'menu:profile']
+    })
     const store = useAuthStore()
     await store.bootstrap()
 
     expect(store.enabled).toBe(true)
     expect(store.isAuthenticated).toBe(true)
     expect(store.isAdmin).toBe(false)
+    expect(store.hasPermission('menu:chat')).toBe(true)
+    expect(store.hasPermission('users:manage')).toBe(false)
     expect(store.currentUser.display_name).toBe('alice')
     expect(store.providerName).toBe('SSO')
     expect(store.providerIcon).toBe('fa-github')
+  })
+
+  it('identifies admin role and admin permissions', async () => {
+    authApiMock.getAuthConfig.mockResolvedValue({ enabled: true, local_login_enabled: true })
+    authApiMock.me.mockResolvedValue({
+      id: 1,
+      username: 'admin',
+      display_name: '管理员',
+      roles: [{ id: 1, role_key: 'admin', name: '管理员', is_builtin: true }],
+      permissions: ['menu:chat', 'users:manage', 'roles:manage'],
+      menus: ['menu:chat']
+    })
+    const store = useAuthStore()
+    await store.bootstrap()
+
+    expect(store.isAdmin).toBe(true)
+    expect(store.hasPermission('users:manage')).toBe(true)
   })
 
   it('swallows the me() 401 and reports unauthenticated', async () => {
@@ -80,15 +94,17 @@ describe('useAuthStore', () => {
 
     expect(store.isAuthenticated).toBe(false)
     expect(store.isAdmin).toBe(false)
+    expect(store.hasPermission('menu:chat')).toBe(false)
   })
 
-  it('treats a config fetch failure as disabled', async () => {
+  it('fails closed when config fetch fails', async () => {
     authApiMock.getAuthConfig.mockRejectedValue(new Error('network'))
     const store = useAuthStore()
     await store.bootstrap()
 
-    expect(store.enabled).toBe(false)
-    expect(store.isAuthenticated).toBe(true)
+    expect(store.enabled).toBe(true)
+    expect(store.isAuthenticated).toBe(false)
+    expect(store.isAdmin).toBe(false)
   })
 
   it('sanitizes the oauth redirect before building the authorize url', () => {

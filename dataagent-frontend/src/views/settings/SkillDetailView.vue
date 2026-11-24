@@ -236,7 +236,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const canManage = computed(() => authStore.isAdmin)
+const canManage = computed(() => authStore.hasPermission('skills:manage'))
 
 const listLoading = ref(false)
 const detailLoading = ref(false)

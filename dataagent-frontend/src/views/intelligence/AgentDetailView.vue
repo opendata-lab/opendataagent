@@ -290,29 +290,53 @@
                   ><select id="visibility" v-model="form.visibility.mode">
                     <option value="all">全部用户</option>
                     <option value="authenticated">仅登录用户</option>
-                    <option value="selected">指定用户</option>
+                    <option value="selected">指定用户或角色</option>
                   </select>
-                  <template v-if="form.visibility.mode === 'selected'"
-                    ><label class="field-label" for="visible-users"
-                      >允许访问的用户</label
+                  <template v-if="form.visibility.mode === 'selected'">
+                    <label class="field-label" for="visible-users"
+                      >授权用户</label
                     ><el-select
                       id="visible-users"
-                      v-model="form.visibility.allowed_users"
+                      v-model="grantUserIds"
                       multiple
                       filterable
                       remote
-                      allow-create
-                      default-first-option
-                      :remote-method="searchAuthUsers"
-                      :loading="authUserLoading"
-                      placeholder="搜索或输入用户 ID"
+                      :remote-method="searchGrantUsers"
+                      :loading="grantUserLoading"
+                      placeholder="从平台用户库搜索并选择"
                       style="width: 100%"
                       ><el-option
-                        v-for="user in authUserOptions"
-                        :key="user.user_id"
-                        :value="user.user_id"
-                        :label="authUserLabel(user)" /></el-select
-                  ></template>
+                        v-for="user in grantUserOptions"
+                        :key="user.id"
+                        :value="user.id"
+                        :label="grantUserLabel(user)" /></el-select>
+                    <label class="field-label" for="visible-roles"
+                      >授权角色</label
+                    ><el-select
+                      id="visible-roles"
+                      v-model="grantRoleIds"
+                      multiple
+                      filterable
+                      placeholder="选择授权角色"
+                      style="width: 100%"
+                      ><el-option
+                        v-for="role in grantRoleOptions"
+                        :key="role.id"
+                        :value="role.id"
+                        :label="`${role.name} (${role.role_key})`" /></el-select>
+                    <div class="grant-actions">
+                      <el-button
+                        size="small"
+                        type="primary"
+                        :loading="savingGrants"
+                        data-testid="save-agent-grants"
+                        @click="saveGrants"
+                      >
+                        保存授权
+                      </el-button>
+                      <span class="grant-hint">独立于草稿保存与发布，保存后立即生效。</span>
+                    </div>
+                  </template>
               </details>
               <details class="config-section advanced-details">
                 <summary>
@@ -605,7 +629,7 @@ import { buildCommands } from "@opendataagent/agent-conversation";
 const route = useRoute(),
   router = useRouter(),
   authStore = useAuthStore();
-const canManage = computed(() => authStore.isAdmin);
+const canManage = computed(() => authStore.hasPermission("agents:manage"));
 const api = createNl2SqlApiClient({
   defaultHeaders: DATAAGENT_CLIENT_HEADERS,
   onUnauthorized: () =>
@@ -629,7 +653,7 @@ const form = reactive({
   max_turns: 0,
   plan_timeout_action: "park",
   env_vars: {},
-  visibility: { mode: "all", allowed_users: [], allowed_groups: [] },
+  visibility: { mode: "all" },
   preset_questions: ["", "", ""],
   is_default: false,
 });
@@ -652,8 +676,12 @@ const builtinPrompt = ref(""),
   baseline = ref("");
 const capabilities = reactive({ skills: [], mcp_servers: [] });
 const activeResourcePicker = ref("");
-const authUserOptions = ref([]),
-  authUserLoading = ref(false);
+const grantUserOptions = ref([]),
+  grantUserLoading = ref(false),
+  grantRoleOptions = ref([]),
+  grantUserIds = ref([]),
+  grantRoleIds = ref([]),
+  savingGrants = ref(false);
 const previewComposerHeight = ref(130);
 const previewTopicId = ref(""),
   conversationKey = ref(0),
@@ -785,10 +813,7 @@ function applyAgent(agent) {
   Object.assign(form, {
     ...agent,
     visibility: {
-      mode: "all",
-      allowed_users: [],
-      allowed_groups: [],
-      ...(agent.visibility || {}),
+      mode: agent.visibility?.mode || "all",
     },
     env_vars: agent.env_vars || {},
     plan_timeout_action: agent.plan_timeout_action || "park",
@@ -849,10 +874,7 @@ function buildPayload() {
     plan_timeout_action: form.plan_timeout_action || "park",
     env_vars: env,
     visibility: {
-      ...form.visibility,
-      allowed_users: form.visibility.allowed_users
-        .map((id) => id.trim())
-        .filter(Boolean),
+      mode: form.visibility.mode || "all",
     },
     preset_questions: form.preset_questions
       .map((q) => q.trim())
@@ -937,7 +959,7 @@ async function loadDetail() {
       previewTopicId.value = agent.preview_topic_id;
       activeTaskId.value = agent.preview_task_id || "";
     }
-    if (canManage.value) searchAuthUsers();
+    if (canManage.value) loadGrantsAndPickers();
   } catch (error) {
     if (generation !== loadGeneration) return;
     loadError.value =
@@ -946,29 +968,64 @@ async function loadDetail() {
     if (generation === loadGeneration) loading.value = false;
   }
 }
-async function searchAuthUsers(keyword = "") {
+async function loadGrantsAndPickers() {
   if (!canManage.value) return;
-  authUserLoading.value = true;
   try {
-    const result = await dataagentApi.listAuthUsers({ keyword, limit: 50 });
-    const fetched = result.items || [];
-    const known = new Set(fetched.map((u) => u.user_id));
-    authUserOptions.value = [
-      ...fetched,
-      ...form.visibility.allowed_users
-        .filter((id) => !known.has(id))
-        .map((user_id) => ({ user_id })),
-    ];
+    const [grantsRes, rolesRes] = await Promise.all([
+      dataagentApi.getAgentGrants(agentId.value).catch(() => ({ users: [], roles: [] })),
+      dataagentApi.listRoles().catch(() => ({ items: [] })),
+    ]);
+    const grantedUsers = Array.isArray(grantsRes?.users) ? grantsRes.users : [];
+    const grantedRoles = Array.isArray(grantsRes?.roles) ? grantsRes.roles : [];
+    grantUserIds.value = grantedUsers.map((u) => u.id);
+    grantRoleIds.value = grantedRoles.map((r) => r.id);
+    grantUserOptions.value = grantedUsers;
+    const allRoles = Array.isArray(rolesRes?.items) ? rolesRes.items : (Array.isArray(rolesRes) ? rolesRes : []);
+    grantRoleOptions.value = allRoles.filter((r) => r.role_key !== "admin");
+    await searchGrantUsers("");
   } catch {
-    authUserOptions.value = form.visibility.allowed_users.map((user_id) => ({
-      user_id,
-    }));
-  } finally {
-    authUserLoading.value = false;
+    // non-fatal
   }
 }
-const authUserLabel = (user) =>
-  user.display_name ? `${user.display_name}（${user.user_id}）` : user.user_id;
+async function searchGrantUsers(keyword = "") {
+  if (!canManage.value) return;
+  grantUserLoading.value = true;
+  try {
+    const result = await dataagentApi.listUsers({ keyword, page: 1, page_size: 50 });
+    const fetched = Array.isArray(result?.items) ? result.items : [];
+    const byId = new Map();
+    for (const u of grantUserOptions.value) {
+      if (grantUserIds.value.includes(u.id)) byId.set(u.id, u);
+    }
+    for (const u of fetched) byId.set(u.id, u);
+    grantUserOptions.value = Array.from(byId.values());
+  } catch {
+    // keep current options
+  } finally {
+    grantUserLoading.value = false;
+  }
+}
+async function saveGrants() {
+  if (!canManage.value || savingGrants.value) return;
+  savingGrants.value = true;
+  try {
+    const updated = await dataagentApi.setAgentGrants(form.agent_id || agentId.value, {
+      user_ids: grantUserIds.value,
+      role_ids: grantRoleIds.value,
+    });
+    const grantedUsers = Array.isArray(updated?.users) ? updated.users : [];
+    const grantedRoles = Array.isArray(updated?.roles) ? updated.roles : [];
+    grantUserIds.value = grantedUsers.map((u) => u.id);
+    grantRoleIds.value = grantedRoles.map((r) => r.id);
+    ElMessage.success("授权名单已保存");
+  } catch (error) {
+    notifyError(error, "保存授权失败");
+  } finally {
+    savingGrants.value = false;
+  }
+}
+const grantUserLabel = (user) =>
+  user.display_name ? `${user.display_name}（${user.username || `#${user.id}`}）` : (user.username || `#${user.id}`);
 const optionsFor = (kind) =>
   kind === "skills"
     ? capabilities.skills.map((s) => ({
@@ -1389,5 +1446,16 @@ onBeforeUnmount(() => { loadGeneration++; window.removeEventListener("beforeunlo
 .config-scroll :deep(.el-select__wrapper) {
   box-shadow: 0 0 0 1px var(--border) inset;
   min-height: 36px;
+}
+.grant-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.grant-hint {
+  font-size: 12px;
+  color: #64748b;
 }
 </style>

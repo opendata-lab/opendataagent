@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiMocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
-  updateSettings: vi.fn()
+  updateSettings: vi.fn(),
+  createWidgetAccessKey: vi.fn(),
+  deleteWidgetAccessKey: vi.fn()
 }))
 
 const messageMocks = vi.hoisted(() => ({
@@ -95,10 +97,16 @@ describe('WidgetAccessConfig', () => {
     expect(wrapper.find('.empty-block').exists()).toBe(true)
   })
 
-  it('adds a site and saves the normalized payload', async () => {
+  it('adds a site and saves the normalized payload with trusted server_side config', async () => {
     apiMocks.getSettings.mockResolvedValue({ widget_allowed_sites: [] })
     apiMocks.updateSettings.mockResolvedValue({
-      widget_allowed_sites: [{ website_id: 'new-site', allowed_origins: ['https://b.com'], project_name: '', project_color: '', allow_anonymous: true }]
+      widget_allowed_sites: [{
+        website_id: 'new-site',
+        allowed_origins: ['https://b.com'],
+        project_name: '',
+        project_color: '',
+        server_side: { enabled: false, account_mode: 'shared', trusted_username_namespace: true, provider_mappings: { github: 'CorpSSO' } }
+      }]
     })
     const wrapper = mountConfig()
     await flushPromises()
@@ -106,15 +114,28 @@ describe('WidgetAccessConfig', () => {
     wrapper.vm.addSite()
     await flushPromises()
     wrapper.vm.sites[0].website_id = 'new-site'
-    wrapper.vm.sites[0].allow_anonymous = true
     wrapper.vm.sites[0].allowed_origins = ['https://b.com', 'https://b.com', '']
+    wrapper.vm.sites[0].server_side.account_mode = 'shared'
+    wrapper.vm.sites[0].server_side.trusted_username_namespace = true
+    wrapper.vm.sites[0].server_side.provider_mapping_rows = [{ key: 'github', value: 'CorpSSO' }]
     await flushPromises()
 
     await wrapper.vm.save()
     await flushPromises()
 
     expect(apiMocks.updateSettings).toHaveBeenCalledWith({
-      widget_allowed_sites: [{ website_id: 'new-site', project_name: '', project_color: '', allow_anonymous: true, allowed_origins: ['https://b.com'] }]
+      widget_allowed_sites: [{
+        website_id: 'new-site',
+        project_name: '',
+        project_color: '',
+        allowed_origins: ['https://b.com'],
+        server_side: {
+          enabled: false,
+          account_mode: 'shared',
+          trusted_username_namespace: true,
+          provider_mappings: { github: 'CorpSSO' }
+        }
+      }]
     })
     expect(messageMocks.success).toHaveBeenCalled()
   })

@@ -347,5 +347,109 @@ export const dataagentApi = {
 
   getEvalTrends(params = {}) {
     return dataagentRequest.get('/v1/nl2sql-eval/trends', { params })
+  },
+
+  // ---- Profile ----
+
+  getProfile() {
+    return dataagentRequest.get('/v1/dataagent/profile')
+  },
+
+  updateProfile(data) {
+    return dataagentRequest.put('/v1/dataagent/profile', data)
+  },
+
+  changePassword(data) {
+    return dataagentRequest.put('/v1/dataagent/profile/password', data)
+  },
+
+  // ---- Users ----
+
+  listUsers(params = {}) {
+    return dataagentRequest.get('/v1/dataagent/users', { params })
+  },
+
+  createUser(data) {
+    return dataagentRequest.post('/v1/dataagent/users', data)
+  },
+
+  getUser(userId) {
+    return dataagentRequest.get(`/v1/dataagent/users/${encodeURIComponent(userId)}`)
+  },
+
+  updateUser(userId, data) {
+    return dataagentRequest.put(`/v1/dataagent/users/${encodeURIComponent(userId)}`, data)
+  },
+
+  resetUserPassword(userId) {
+    return dataagentRequest.post(`/v1/dataagent/users/${encodeURIComponent(userId)}/reset-password`)
+  },
+
+  addUserIdentity(userId, data) {
+    return dataagentRequest.post(`/v1/dataagent/users/${encodeURIComponent(userId)}/identities`, data)
+  },
+
+  deleteUserIdentity(userId, identityId) {
+    return dataagentRequest.delete(
+      `/v1/dataagent/users/${encodeURIComponent(userId)}/identities/${encodeURIComponent(identityId)}`
+    )
+  },
+
+  // ---- Roles ----
+
+  listRolePermissions() {
+    return dataagentRequest.get('/v1/dataagent/roles/permissions')
+  },
+
+  listRoles() {
+    return dataagentRequest.get('/v1/dataagent/roles')
+  },
+
+  createRole(data) {
+    return dataagentRequest.post('/v1/dataagent/roles', data)
+  },
+
+  updateRole(roleId, data) {
+    return dataagentRequest.put(`/v1/dataagent/roles/${encodeURIComponent(roleId)}`, data)
+  },
+
+  deleteRole(roleId) {
+    return dataagentRequest.delete(`/v1/dataagent/roles/${encodeURIComponent(roleId)}`)
+  },
+
+  listRoleUsers(roleId) {
+    return dataagentRequest.get(`/v1/dataagent/roles/${encodeURIComponent(roleId)}/users`)
+  },
+
+  setRoleUsers(roleId, userIds) {
+    return dataagentRequest.put(`/v1/dataagent/roles/${encodeURIComponent(roleId)}/users`, {
+      user_ids: userIds
+    })
+  },
+
+  setRoleAgents(roleId, agentIds) {
+    return dataagentRequest.put(`/v1/dataagent/roles/${encodeURIComponent(roleId)}/agents`, {
+      agent_ids: agentIds
+    })
+  },
+
+  // ---- Agent grants ----
+
+  getAgentGrants(agentId) {
+    return dataagentRequest.get(`/v1/dataagent/agents/${encodeURIComponent(agentId)}/grants`)
+  },
+
+  setAgentGrants(agentId, data) {
+    return dataagentRequest.put(`/v1/dataagent/agents/${encodeURIComponent(agentId)}/grants`, data)
+  },
+
+  // ---- Widget server-side access key ----
+
+  createWidgetAccessKey(websiteId) {
+    return dataagentRequest.post(`/v1/nl2sql-admin/widget-sites/${encodeURIComponent(websiteId)}/access-key`)
+  },
+
+  deleteWidgetAccessKey(websiteId) {
+    return dataagentRequest.delete(`/v1/nl2sql-admin/widget-sites/${encodeURIComponent(websiteId)}/access-key`)
   }
 }

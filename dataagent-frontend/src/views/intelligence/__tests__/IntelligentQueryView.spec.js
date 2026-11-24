@@ -42,6 +42,9 @@ const stubs = {
   'el-dropdown-item': { template: '<div><slot /></div>' }
 }
 
+const USER_PERMS = ['menu:chat', 'menu:agents', 'menu:skills', 'menu:mcp', 'menu:mcp_tokens', 'menu:profile']
+const ADMIN_PERMS = [...USER_PERMS, 'feedback:view', 'experience:manage', 'users:manage', 'roles:manage']
+
 const mountView = (route = {}, currentUser = null) => {
   routeState.path = route.path || '/chat'
   routeState.name = route.name || 'IntelligentQueryChat'
@@ -50,9 +53,11 @@ const mountView = (route = {}, currentUser = null) => {
   routeState.meta = route.meta || { tab: 'chat-v2' }
   const pinia = createPinia()
   const authStore = useAuthStore(pinia)
-  if (currentUser) {
-    authStore.enabled = true
-    authStore.currentUser = currentUser
+  const resolvedUser = currentUser || { display_name: 'Admin', role: 'admin', permissions: ADMIN_PERMS }
+  authStore.enabled = true
+  authStore.currentUser = {
+    ...resolvedUser,
+    permissions: resolvedUser.permissions || (resolvedUser.role === 'admin' ? ADMIN_PERMS : USER_PERMS)
   }
   return mount(IntelligentQueryView, {
     global: { stubs, plugins: [pinia] }

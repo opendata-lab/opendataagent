@@ -2,7 +2,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const routerPush = vi.hoisted(() => vi.fn())
-const authState = vi.hoisted(() => ({ isAdmin: true }))
+const authState = vi.hoisted(() => ({ isAdmin: true, hasPermission(k) { return this.isAdmin || k.startsWith('menu:') } }))
 const dataagentApi = vi.hoisted(() => ({
   listAgentProfiles: vi.fn(),
   listAgentWorkbench: vi.fn(),

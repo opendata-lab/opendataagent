@@ -52,10 +52,10 @@ describe('FeedbackView', () => {
     wrapper.unmount()
   })
 
-  it('shows the display name, user ID, or anonymous label in the user column', async () => {
+  it('shows the display name, username/id, or unknown label in the user column', async () => {
     apiMocks.listFeedback.mockResolvedValue(page([
-      { ...webRow, user_display_name: '预览用户', user_id: 'local:reviewer' },
-      { ...widgetRow, user_id: 'widget-user-42' },
+      { ...webRow, user_display_name: '预览用户', user_id: 2 },
+      { ...widgetRow, user_id: 42 },
       { ...webRow, message_id: 'msg-3' },
     ]))
     const wrapper = await mountView()
@@ -63,7 +63,7 @@ describe('FeedbackView', () => {
     const userColumn = columns.findIndex(column => column.text() === '用户')
     expect(userColumn).toBeGreaterThanOrEqual(0)
     expect(wrapper.findAll('tbody tr').map(row => row.findAll('td')[userColumn].text()))
-      .toEqual(['预览用户', 'widget-user-42', '匿名用户'])
+      .toEqual(['预览用户', '#42', '未知用户'])
     wrapper.unmount()
   })
 

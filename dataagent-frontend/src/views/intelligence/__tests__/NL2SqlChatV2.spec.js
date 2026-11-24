@@ -171,7 +171,14 @@ const mountChat = ({ withAgent = true, admin = false } = {}) => {
     setActivePinia(pinia)
     const auth = useAuthStore()
     auth.enabled = true
-    auth.currentUser = { user_id: 'local:admin', display_name: 'Admin', role: 'admin' }
+    auth.currentUser = {
+      id: 1,
+      username: 'admin',
+      display_name: 'Admin',
+      role: 'admin',
+      roles: [{ id: 1, role_key: 'admin', name: '管理员', is_builtin: true }],
+      permissions: ['menu:chat', 'topics:audit']
+    }
   }
   const wrapper = mount(NL2SqlChatV2, {
   // A registered custom element starts its Vue app from connectedCallback.
