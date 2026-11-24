@@ -37,16 +37,18 @@ Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入�
 | `data-project-name` | 否 | `智能问数` | 面板标题栏显示名称 |
 | `data-project-color` | 否 | `#4A90A4` | 主题色（十六进制） |
 | `data-container-id` | 否 | — | 内嵌模式下容器元素 ID（内嵌模式必填） |
-| `data-user-id` | 否 | — | 宿主上报的当前用户，用于关联会话和历史记录，并作为 `X-Agent-User-Id` 上报给 MCP（OpenDataWorks 只记审计，不据此授权）；宿主需保证格式为 `local:<用户名>` 或 `<来源>:<sub>` |
-| `data-login-url` | 否 | — | 未提供用户身份时的登录跳转地址 |
-| `data-allow-anonymous` | 否 | `false` | 客户端匿名开关，还需在管理端为该站点开启匿名访问 |
+| `data-user-id` | 否 | — | 仅服务端受信任代理模式由宿主后端通过 `X-DataAgent-User-Id` 转发（支持裸用户名、`local:<用户名>` 或 `<registration_id>:<sub>`），浏览器直传不受信任 |
+| `data-login-url` | 否 | — | 未登录时的登录跳转地址 |
 | `data-fullscreen-url` | 否 | — | 全屏按钮打开的完整页面地址，支持宿主相对路由和 HTTP(S) 地址 |
 
 ## 与平台继续同一条会话
 
-如果 Widget 和 DataAgent 平台通过同一浏览器来源访问同一个 DataAgent 后端，并启用了平台登录，可配置 `data-use-platform-session="true"`（JavaScript API 使用 `usePlatformSession: true`）。API 使用平台登录会话，不需要传 `data-user-id`；没有有效登录时提示登录。配置现有的 Widget 站点白名单，并把 `data-api-base-url` 指向同源 API。独立登录的第三方站点继续使用原接入方式。
+DataAgent 始终要求已验证的用户账号，不再支持匿名访客或浏览器自报用户 ID：
 
-平台和 Widget 历史会显示当前账号有权继续的会话。悬浮 Widget 默认可以全屏打开平台 Chat，并带上当前助手和会话；自定义 `onFullscreen` 仍可覆盖该动作。现有匿名历史和原先仅靠宿主用户 ID 的历史继续按原方式访问，它们不会自动合并到平台账户。
+1. **同源平台会话**：Widget 与 DataAgent 平台同源访问时，配置 `data-use-platform-session="true"`（JavaScript API 使用 `usePlatformSession: true`），携带 `X-DataAgent-Widget-Identity: platform` 与平台 `da_session` Cookie；未登录时返回 `401 WIDGET_LOGIN_REQUIRED` 提示登录。
+2. **服务端受信任代理**（OpenDataWorks / OntoFoundry 等独立登录系统）：在管理后台「设置 → Widget 接入」为站点生成服务端访问密钥，由宿主后端转发请求并附带 `X-DataAgent-Access-Key` 与 `X-DataAgent-User-Id`（共享会话模式 `account_mode=shared` 还需携带 `X-DataAgent-Session-Key`）。
+
+在个人账号模式（同源平台会话或 `account_mode=personal`）下，平台网页、Widget 与单助手 MCP 共享同一整数 `da_user.id`，历史会话可跨入口连续查看与续聊；悬浮 Widget 默认可全屏打开平台 Chat 并带上当前助手与会话。共享会话模式（`account_mode=shared`）按站点与 `X-DataAgent-Session-Key` 隔离协作会话，不混入个人历史，历史无 `user_id` 的旧共享话题保持只读。
 
 ## 显示模式
 
@@ -312,12 +314,14 @@ Widget 请求会携带以下特殊请求头：
 
 - `X-DataAgent-Client: widget`
 - `X-DataAgent-Website-Id: <website-id>`
-- `X-DataAgent-User-Id: <user-id>` 或 `X-DataAgent-Visitor-Id: <visitor-id>`
+- 同源平台会话模式：`X-DataAgent-Widget-Identity: platform` + 平台 `da_session` Cookie
+- 服务端受信任代理模式：`X-DataAgent-Access-Key: <access-key>` + `X-DataAgent-User-Id: <user-id>`（`account_mode=shared` 时还需 `X-DataAgent-Session-Key: <session-key>`，后台只读轮询可省略 `X-DataAgent-User-Id`）
 
-允许接入的站点白名单在管理后台「智能问数 → Widget 接入」设置页配置，确保只有受信任的站点可以接入：
+允许接入的站点白名单在管理后台「设置 → Widget 接入」配置，确保只有受信任的站点可以接入：
 
 - **Website ID**：与嵌入脚本的 `data-website-id` 完全一致
-- **允许来源（Origin）**：嵌入页面的来源，例如 `https://app.example.com`；填 `*` 放行所有来源（仅建议测试环境）
+- **允许来源（Origin）**：浏览器同源嵌入页面的来源
+- **服务端受信任代理**：生成 / 轮换 / 吊销访问密钥、配置 `account_mode`（`personal` / `shared`）、`trusted_username_namespace` 与 `provider_mappings`
 - **项目名称 / 主题色**：展示在 Widget 上的标题与配色
 
 白名单持久化在 `da_agent_settings`，保存后即时生效、无需重启服务（不再使用环境变量配置）。

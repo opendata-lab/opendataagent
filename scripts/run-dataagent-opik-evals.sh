@@ -70,6 +70,8 @@ exec "$CONTAINER_CMD" run --rm \
     -e NO_PROXY="host.containers.internal,127.0.0.1,localhost,${NO_PROXY:-}" \
     -e no_proxy="host.containers.internal,127.0.0.1,localhost,${no_proxy:-}" \
     -e DATAAGENT_EVAL_AUTH_TOKEN \
+    -e DATAAGENT_EVAL_USERNAME \
+    -e DATAAGENT_EVAL_PASSWORD \
     -e DATAAGENT_EVAL_JUDGE_BASE_URL="${DATAAGENT_EVAL_JUDGE_BASE_URL:-}" \
     -e DATAAGENT_EVAL_JUDGE_TOKEN \
     -e DATAAGENT_EVAL_JUDGE_MODEL="${DATAAGENT_EVAL_JUDGE_MODEL:-}" \

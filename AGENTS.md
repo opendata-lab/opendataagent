@@ -133,9 +133,12 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
     - `REDIS_PORT=6379`
     - `SKILLS_ROOT_DIR=<repo>/.claude/skills` — required; skill discovery raises without it
     - `DATAAGENT_HOST_ROOT=<repo>` — topic workspaces are created under this path as `topic_<id>/workspace`; they are gitignored, and can be deleted once the smoke is done
+    - `DATAAGENT_SECRET_KEY=<32+ char secret>` (or `DATAAGENT_CONFIG=<config.py>`) — required because authentication is always on; optionally set `DATAAGENT_DEFAULT_USER_PASSWORD`
   - run `alembic upgrade head` in `dataagent-backend`
+  - bootstrap a local admin account if none exists: `python -m core.accounts create-user --username admin --password '<pass>' --admin`
   - ensure `da_agent_settings` in `dataagent` contains a valid provider selection and runtime DB config before starting services
   - start `uvicorn main:app`
+  - before calling topic/task/event APIs, authenticate via `POST /api/v1/nl2sql/auth/login` and reuse the `da_session` cookie (or `Authorization: Bearer <jwt>`)
   - do not start a separate `worker_main.py`; the task coordinator is started inside `main.py`
   - drive the smoke through real HTTP requests, not mocked store calls
   - do not stop at `/api/v1/nl2sql/health`; also verify `POST /api/v1/nl2sql/topics` succeeds, because `health` can be green while topic/task-store MySQL access is still broken

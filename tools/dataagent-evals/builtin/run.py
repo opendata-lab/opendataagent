@@ -372,25 +372,69 @@ def http_json(
         raise EvalRunnerError(f"invalid JSON response from {url}: {exc}", exit_code=2) from exc
 
 
+def _login_for_session_token(base_url: str, username: str, password: str) -> str:
+    from http.cookies import SimpleCookie
+
+    payload = json.dumps({"username": username, "password": password}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url}/api/v1/nl2sql/auth/login",
+        data=payload,
+        headers={"Accept": "application/json", "Content-Type": "application/json", "X-DataAgent-Client": "dataagent"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            cookie = SimpleCookie()
+            for header in response.headers.get_all("Set-Cookie") or []:
+                cookie.load(header)
+            if "da_session" in cookie:
+                return str(cookie["da_session"].value).strip()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise InfrastructureAbort(f"dataagent_login_failed: HTTP {exc.code}: {body}") from exc
+    except Exception as exc:
+        raise InfrastructureAbort(f"dataagent_login_failed: {exc}") from exc
+    raise InfrastructureAbort("dataagent_login_failed: response did not include da_session cookie")
+
+
+def _identity_is_admin(identity: dict[str, Any]) -> bool:
+    if bool(identity.get("is_admin")) or str(identity.get("role") or "").lower() == "admin":
+        return True
+    perms = identity.get("permissions") if isinstance(identity.get("permissions"), list) else []
+    if "evals:manage" in perms:
+        return True
+    roles = identity.get("roles") if isinstance(identity.get("roles"), list) else []
+    for role in roles:
+        if isinstance(role, dict) and str(role.get("role_key") or "").lower() == "admin":
+            return True
+        if isinstance(role, str) and role.lower() == "admin":
+            return True
+    return False
+
+
 def preflight(base_url: str, auth_token: str = "") -> dict[str, Any]:
     global _DATAAGENT_AUTH_TOKEN
     _DATAAGENT_AUTH_TOKEN = str(auth_token or "").strip()
     auth_config = dataagent_http_json("GET", f"{base_url}/api/v1/nl2sql/auth/config", timeout=15)
     health = dataagent_http_json("GET", f"{base_url}/api/v1/nl2sql/health", timeout=15)
-    runtime_config = dataagent_http_json("GET", f"{base_url}/api/v1/nl2sql/runtime-config", timeout=15)
     auth_enabled = bool(auth_config.get("auth_enabled") or auth_config.get("enabled"))
     identity: dict[str, Any] | None = None
     if auth_enabled:
         if not _DATAAGENT_AUTH_TOKEN:
-            raise InfrastructureAbort("dataagent_auth_token_missing: DATAAGENT_EVAL_AUTH_TOKEN is required")
+            username = str(os.environ.get("DATAAGENT_EVAL_USERNAME") or "").strip()
+            password = str(os.environ.get("DATAAGENT_EVAL_PASSWORD") or "")
+            if username and password:
+                _DATAAGENT_AUTH_TOKEN = _login_for_session_token(base_url, username, password)
+        if not _DATAAGENT_AUTH_TOKEN:
+            raise InfrastructureAbort(
+                "dataagent_auth_token_missing: DATAAGENT_EVAL_AUTH_TOKEN or DATAAGENT_EVAL_USERNAME/PASSWORD is required"
+            )
         identity = dataagent_http_json("GET", f"{base_url}/api/v1/nl2sql/auth/me", timeout=15)
         if isinstance(identity.get("data"), dict):
             identity = identity["data"]
-        role = str(identity.get("role") or "").lower()
-        roles = identity.get("roles") if isinstance(identity.get("roles"), list) else []
-        is_admin = role == "admin" or bool(identity.get("is_admin")) or "admin" in {str(r).lower() for r in roles}
-        if not is_admin:
+        if not _identity_is_admin(identity):
             raise InfrastructureAbort("dataagent_auth_not_admin: evaluation requires an administrator session")
+    runtime_config = dataagent_http_json("GET", f"{base_url}/api/v1/nl2sql/runtime-config", timeout=15)
     return {"auth": {"auth_enabled": auth_enabled, "identity_role": "admin" if identity else None}, "health": health, "runtime_config": runtime_config}
 
 

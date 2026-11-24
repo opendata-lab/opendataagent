@@ -1,6 +1,22 @@
 # 会话 API
 
-Base URL：`http://<DataAgent 主机>:8900/api/v1/nl2sql`。启用认证后，请求需带登录会话（见部署指南的“登录配置”）。
+Base URL：`http://<DataAgent 主机>:8900/api/v1/nl2sql`。DataAgent 始终启用统一账号认证：业务接口需先调用 `POST /auth/login` 获取 `da_session` Cookie（或携带 `Authorization: Bearer <session_jwt>`）；仅 `/health`、`/auth/config`、`/auth/login`、`/auth/logout` 与 OAuth 入口可未登录访问。
+
+## 账号、角色、资料与助手授权（`/api/v1/dataagent`）
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| `GET` / `PUT` | `/profile` | `menu:profile` | 查看个人资料（含角色、外部身份、菜单、可用助手）/ 修改显示名与邮箱（手工修改标记未验证） |
+| `PUT` | `/profile/password` | `menu:profile` | 修改本人密码 |
+| `GET` / `POST` | `/users` | `users:manage` | 列出 / 新建用户（使用系统默认初始密码） |
+| `GET` / `PUT` | `/users/{user_id}` | `users:manage` | 查看 / 编辑用户、角色或启用停用（不提供物理删除） |
+| `POST` | `/users/{user_id}/reset-password` | `users:manage` | 重置用户密码为系统默认初始密码 |
+| `POST` / `DELETE` | `/users/{user_id}/identities[/{identity_id}]` | `users:manage` | 绑定 / 解绑外部身份 |
+| `GET` | `/roles/permissions` | `roles:manage` | 获取内置静态菜单与管理权限目录（只读） |
+| `GET` / `POST` / `PUT` / `DELETE` | `/roles[/{role_id}]` | `roles:manage` | 列出 / 管理自定义角色（内置 `admin` / `user` 不可删） |
+| `GET` / `PUT` | `/roles/{role_id}/users` | `roles:manage` | 查看 / 批量设置角色成员 |
+| `PUT` | `/roles/{role_id}/agents` | `roles:manage` | 批量设置该角色可访问的助手列表 |
+| `GET` / `PUT` | `/agents/{agent_id}/grants` | `agents:manage` | 读取 / 覆盖指定助手的授权用户与角色（独立于草稿保存与发布） |
 
 ## 健康检查
 

@@ -125,28 +125,30 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint pyth
 
 ## 登录配置
 
-`deploy/docker/dataagent/` 整体只读挂载进 backend（`/app/docker/dataagent`），并加入 `sys.path`。
+DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/` 整体只读挂载进 backend（`/app/docker/dataagent`），并加入 `sys.path`。用户、密码（Argon2id）、外部身份绑定、角色及助手授权全部存库管理（`da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant`）。
 
 | 文件 | 说明 |
 | --- | --- |
-| `dataagent_config.py` | 自带基础配置（默认 `AUTH_ENABLED=False`，不要直接改）；末尾加载同目录用户覆盖 |
+| `dataagent_config.py` | 自带基础配置（不要直接改）；末尾加载同目录用户覆盖 |
 | `dataagent_config_docker.py.example` | 用户覆盖示例（认证 + `DATAAGENT_SETTINGS`）；复制为 `dataagent_config_docker.py` 后填写 |
-| `custom_sso_user_info.py.example` | OAuth UserInfo 归一化钩子示例；复制为 `custom_sso_user_info.py` 并在覆盖配置里挂 `OAUTH_USER_INFO` |
+| `custom_sso_user_info.py.example` | OAuth UserInfo 归一化钩子示例（仅返回身份与资料字段，不下发角色） |
 
-启用步骤：
+部署步骤：
 
 1. `cd deploy/docker/dataagent && cp dataagent_config_docker.py.example dataagent_config_docker.py`
-2. 填写 `SECRET_KEY`（`secrets.token_urlsafe(32)`）、`LOCAL_ADMINS`（bcrypt 哈希）、单项 `OAUTH_PROVIDERS`
-   （Superset/FAB `remote_app` 形态）、`ADMIN_USERS`（`provider:sub`），置 `AUTH_ENABLED = True`。
-   OAuth 的 `redirect_uri` 注册为 `https://<dataagent-host>/oauth-authorized/<provider_name>`，
-   并从自定义模块导入 `OAUTH_USER_INFO(provider, token_response, oauth_remotes)`。
-3. 重启 `dataagent-backend`。
+2. 填写 `SECRET_KEY`（`secrets.token_urlsafe(32)`）、`DEFAULT_USER_PASSWORD`（用于后台建号、重置密码及外部可信登录首次自动注册），按需配置单项 `OAUTH_PROVIDERS`（`redirect_uri` 为 `https://<dataagent-host>/oauth-authorized/<provider_name>`）及 `OAUTH_USER_INFO`。
+3. 运行数据库迁移 `alembic upgrade head` 后，执行 CLI 创建初始管理员账号：
+   ```bash
+   python -m core.accounts create-user --username admin --password '<强密码>' --admin
+   ```
+   从旧版本升级时，迁移 `20261123_000042` 会一次性导入原配置中的 `LOCAL_ADMINS`（首次登录自动升级为 Argon2id）和 `ADMIN_USERS`，并清空旧个人 MCP 访问令牌（升级后需重新申请）。
+4. 重启 `dataagent-backend`。
 
-配置文件缺失、不可读、语法错误或启用却缺合法 `SECRET_KEY` 时服务启动失败，不会静默降级为无认证。
-认证关闭时匿名聊天没有已验证的用户身份，不能经 MCP 访问需要用户身份的数据。
+缺合法 `SECRET_KEY`、显式置 `AUTH_ENABLED = False`、文件不可读或语法错误时服务启动失败（fail-closed）。
 
-宿主内嵌 widget 时，会话不经 DataAgent 登录：DataAgent 采信宿主通过 `X-DataAgent-User-Id`（widget 的 `userId`）上报的用户，
-用它区分会话与历史记录，并作为 MCP 的 `X-Agent-User-Id` 上报（OpenDataWorks 只记审计，不据此授权）。这个值来自宿主页面，只在可信宿主、可信网络中使用，并保证 8900 端口不对外暴露。
+宿主系统内嵌 Widget 时不再接受浏览器端自报 `X-DataAgent-User-Id` 或匿名访客，支持两种可信接入：
+- **同源平台会话**：Widget 与 DataAgent 同源部署，携带 `X-DataAgent-Widget-Identity: platform` 与平台 `da_session` Cookie。
+- **服务端受信任代理**（OpenDataWorks / OntoFoundry）：在后台「设置 → Widget 接入」为站点生成 `X-DataAgent-Access-Key`，由宿主后端转发并设置 `account_mode`（`personal` 个人账号模式 / `shared` 共享会话模式，后者同时携带 `X-DataAgent-Session-Key`）与可选 `provider_mappings`。保证 8900 端口不对外暴露。
 
 ## 单助手 MCP 发布
 

@@ -12,8 +12,13 @@
 
 ### 独立登录 Widget 的统一账号与续聊
 
-- **现状**（2026-11-23，用户确认同账号复用，首次可信访问自动注册）：OpenDataWorks 门户上报本地 `local:<用户名>` 或 OAuth `<registration id>:<sub>`。OntoFoundry 经服务端上报共享建模会话 ID。本机只读盘点和两边定向测试已完成，生产请求及账号映射待核对。
-- **要做**：按目标部署核实账号身份和助手授权，实施整数用户外键、统一账号模块和助手授权表，按可信凭据接入 OpenDataWorks 与 OntoFoundry。切换时撤销旧 MCP 令牌，同步更新本地登录及评测流程。来源为 2026-11-23 的用户要求与 Claude、Argon 设计评审。[设计与用户引用盘点](design/2026-11-19-unified-conversation-history-design.md#独立登录-widget-的账号归属2026-11-23) · [实施计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)
+- **现状**（2026-11-24）：DataAgent 仓库侧（计划第 1、2、3、5 步）已在分支 `feat/user-accounts` 完成：新增 `da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant` 及整数 `user_id` 外键迁移 `20261123_000042`（含二进位精确回填、清空旧 MCP 令牌、已发布 `allowed_users` 迁移与 `LOCAL_ADMINS`/`ADMIN_USERS` 一次性导入），统一 `core/accounts` 模块（移除 `core/auth.py` 与关闭认证/匿名 Widget 旁路），上线用户管理（仅停用不物理删除）、角色管理、个人资料、助手独立授权及服务端受信任代理（`personal` / `shared`）配置页，并同步更新本地冒烟、评测脚本、部署配置与手册。
+- **上线约束（必读）**：**OntoFoundry 未就绪前 DataAgent 不能先上线部署**。因 DataAgent 已移除匿名和浏览器自报 `X-DataAgent-User-Id` 旁路，且 `shared` 共享会话写操作要求宿主携带 `X-DataAgent-Access-Key`、`X-DataAgent-Session-Key` 与登录用户的 `X-DataAgent-User-Id`，需待 OpenDataWorks 与 OntoFoundry 两端改造就绪并完成联调后再同步切换上线。
+- **要做**（跨仓库后续，计划第 4 步）：
+  - **OpenDataWorks 仓库**：代理层加挂 `X-DataAgent-Access-Key`，传递当前登录用户标识（`local:<username>` 或 `<registration_id>:<sub>`），按目标环境核对 OAuth `provider_mappings` 与同命名空间配置。
+  - **OntoFoundry 仓库**：代理层加挂 `X-DataAgent-Access-Key`、`X-DataAgent-Session-Key` 与写操作时的 `X-DataAgent-User-Id`，后台只读轮询可不传用户头，并验证历史只读共享会话与新建多人协作会话。
+  - **上线前实测**：在目标部署核对 `LOCAL_ADMINS`/`ADMIN_USERS` 与账号映射，跑通 OpenDataWorks 个人续聊、OntoFoundry 共享协作、单助手 MCP 重申令牌及本地完整冒烟链路。
+- **来源**：2026-11-23 用户要求与 Claude、Argon 设计评审。[设计与用户引用盘点](design/2026-11-19-unified-conversation-history-design.md#独立登录-widget-的账号归属2026-11-23) · [实施计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)
 
 ### 远端问数助手对外调用
 
