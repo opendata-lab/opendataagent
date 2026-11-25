@@ -14,7 +14,6 @@ from core.accounts import (
     current_account_context,
     current_user,
     get_account_store,
-    get_auth_settings,
     hash_default_password,
     hash_password,
     require_admin,
@@ -130,8 +129,6 @@ def change_own_password(
     stored_hash = store.get_user_password_hash(user.id)
     if not verify_password(payload.current_password, stored_hash):
         raise HTTPException(status_code=400, detail="当前密码不正确")
-    if user.is_admin and payload.new_password == get_auth_settings().default_user_password:
-        raise HTTPException(status_code=400, detail="管理员不能使用默认密码")
     try:
         store.update_password(user.id, hash_password(payload.new_password))
     except Exception as exc:

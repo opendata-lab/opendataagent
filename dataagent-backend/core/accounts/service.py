@@ -75,8 +75,7 @@ def authenticate_password(username: str, password: str) -> User | None:
     if not user.is_active:
         logger.warning("Password login rejected: disabled user_id=%s username=%r", user.id, user.username)
         return None
-    uses_admin_default = user.is_admin and password == get_auth_settings().default_user_password
-    if uses_admin_default or not verify_password(password, stored_hash):
+    if not verify_password(password, stored_hash):
         logger.warning("Password login failed: bad password user_id=%s username=%r", user.id, user.username)
         return None
     try:
@@ -94,8 +93,6 @@ def ensure_local_user(
     is_admin: bool = False,
 ) -> User:
     """Create or update a local user (for bootstrap CLI, local dev, and smoke tests)."""
-    if is_admin and password == get_auth_settings().default_user_password:
-        raise ValueError("管理员不能使用默认密码")
     store = get_account_store()
     pw_hash = hash_password(password)
     existing = store.get_user_with_password(username)

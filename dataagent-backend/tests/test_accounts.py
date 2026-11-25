@@ -481,14 +481,6 @@ def test_admin_role_cannot_be_granted_through_the_api():
     assert keep.status_code == 200
     assert client.post(f"/api/v1/dataagent/users/{admin.id}/reset-password", headers=headers).status_code == 400
     assert client.post(f"/api/v1/dataagent/users/{alice.id}/reset-password", headers=headers).status_code == 200
-    own_change = client.put(
-        "/api/v1/dataagent/profile/password",
-        headers=headers,
-        json={"current_password": "admin123", "new_password": TEST_DEFAULT_PASSWORD},
-    )
-    assert own_change.status_code == 400
-    assert own_change.json()["detail"] == "管理员不能使用默认密码"
-    assert authenticate_password(admin.username, TEST_DEFAULT_PASSWORD) is None
 
 
 def test_draft_preview_runs_for_an_agent_manager_without_a_published_profile(monkeypatch):
