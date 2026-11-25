@@ -14,7 +14,7 @@
 
 - **现状**（2026-11-24）：DataAgent 仓库侧（计划第 1、2、3、5 步）已在分支 `feat/user-accounts` 完成：新增 `da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant` 及整数 `user_id` 外键迁移 `20261123_000042`（Alembic 只建表并重建 MCP 令牌表；旧数据由手动执行的 `scripts/migrate-accounts.sh` 迁移；迁移只能向前，回退用 `scripts/backup-db.sh` / `scripts/restore-db.sh`），统一 `core/accounts` 模块（移除 `core/auth.py` 与关闭认证/匿名 Widget 旁路），上线用户管理（仅停用不物理删除）、角色管理、个人资料、助手独立授权及服务端受信任代理配置页，并同步更新本地冒烟、评测脚本、部署配置与手册。
 - **最终约定**（2026-11-24）：管理员与普通用户两级，自定义角色只用于助手授权。个人资料仅包含账号名、显示名、登录方式、角色和改密。Widget 由宿主后端转发同名账号，站点只配 ID 和密钥，历史按会话所有者隔离。MCP 令牌长期有效且无数量上限，用户只管理自己的令牌。
-- **上线约束（必读）**：**OntoFoundry 未就绪前 DataAgent 不能先上线部署**。因 DataAgent 已移除匿名和浏览器自报 `X-DataAgent-User-Id` 旁路，每个 Widget 请求都要求宿主携带 `X-DataAgent-Access-Key` 与登录用户的 `X-DataAgent-User-Id`，需待 OpenDataWorks 与 OntoFoundry 两端改造就绪并完成联调后再同步切换上线。
+- **上线约束（必读）**：**OpenDataWorks 与 OntoFoundry 都改造完成前，DataAgent 不能先上线部署**（OntoFoundry 见 opendata-lab/ontofoundry#108；OpenDataWorks 截至 2026-11-24 main `8e704f90` 仍由浏览器传 `agentUserId`、nginx 直接转发 `/api/v1/nl2sql/`，尚无人改造，升级后门户问数会 401/403）。因 DataAgent 已移除匿名和浏览器自报 `X-DataAgent-User-Id` 旁路，每个 Widget 请求都要求宿主携带 `X-DataAgent-Access-Key` 与登录用户的 `X-DataAgent-User-Id`，需待 OpenDataWorks 与 OntoFoundry 两端改造就绪并完成联调后再同步切换上线。
 - **要做**（跨仓库后续，计划第 4 步）：
   - **OpenDataWorks 仓库**：代理层加挂 `X-DataAgent-Access-Key`，在 `X-DataAgent-User-Id` 中传递当前登录的用户名（与 DataAgent 同名账号对应），不再传来源前缀。
   - **OntoFoundry 仓库**：代理使用站点密钥与会话 `created_by` 的用户名，只允许创建人发送、取消和回答，升级时清除旧共享绑定。2026-11-24 源码核对发现 Builder 的 `beforeSend` 已拦截其他编辑者发送，输入组件的 `disabled` 未包含创建人条件，需在宿主仓库补测。
