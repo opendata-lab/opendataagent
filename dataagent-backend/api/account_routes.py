@@ -12,16 +12,13 @@ from core.accounts import (
     IdentityConflictError,
     User,
     current_user,
-    filter_accessible_agents,
     get_account_store,
     hash_default_password,
     hash_password,
-    list_permission_catalog,
-    require_permission,
+    require_admin,
     verify_password,
 )
 from core.accounts.permissions import ROLE_ADMIN
-from core.agent_profile_service import list_agent_profiles
 
 router = APIRouter(prefix="/api/v1/dataagent", tags=["accounts"])
 
@@ -90,25 +87,14 @@ def _map_account_error(exc: Exception) -> HTTPException:
 # ---------------------------------------------------------------------------
 
 @router.get("/profile")
-def get_profile(user: User = Depends(require_permission("menu:profile"))):
-    accessible = filter_accessible_agents(user, list_agent_profiles())
-    return {
-        **user.to_public_dict(),
-        "accessible_agents": [
-            {
-                "agent_id": str(a.get("agent_id") or ""),
-                "name": str(a.get("name") or ""),
-                "description": str(a.get("description") or ""),
-            }
-            for a in accessible
-        ],
-    }
+def get_profile(user: User = Depends(current_user)):
+    return user.to_public_dict()
 
 
 @router.put("/profile")
 def update_profile(
     payload: ProfileUpdateRequest,
-    user: User = Depends(require_permission("menu:profile")),
+    user: User = Depends(current_user),
 ):
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
@@ -126,7 +112,7 @@ def update_profile(
 @router.put("/profile/password")
 def change_own_password(
     payload: PasswordChangeRequest,
-    user: User = Depends(require_permission("menu:profile")),
+    user: User = Depends(current_user),
 ):
     store = get_account_store()
     stored_hash = store.get_user_password_hash(user.id)
@@ -150,7 +136,7 @@ def list_users(
     role_id: Optional[int] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_permission("users:manage")),
+    _: User = Depends(require_admin),
 ):
     return get_account_store().list_users(
         keyword=keyword,
@@ -174,7 +160,7 @@ _NO_ADMIN_GRANT = "不支持把用户设为管理员；管理员只能通过命�
 @router.post("/users", status_code=201)
 def create_user(
     payload: UserCreateRequest,
-    _: User = Depends(require_permission("users:manage")),
+    _: User = Depends(require_admin),
 ):
     if _admin_role_id() in set(payload.role_ids or []):
         raise HTTPException(status_code=400, detail=_NO_ADMIN_GRANT)
@@ -194,7 +180,7 @@ def create_user(
 @router.get("/users/{user_id}")
 def get_user_detail(
     user_id: int,
-    _: User = Depends(require_permission("users:manage")),
+    _: User = Depends(require_admin),
 ):
     user = get_account_store().get_user(user_id)
     if user is None:
@@ -206,7 +192,7 @@ def get_user_detail(
 def update_user(
     user_id: int,
     payload: UserUpdateRequest,
-    actor: User = Depends(require_permission("users:manage")),
+    actor: User = Depends(require_admin),
 ):
     fields = payload.model_dump(exclude_unset=True)
     target = get_account_store().get_user(user_id)
@@ -230,7 +216,7 @@ def update_user(
 @router.post("/users/{user_id}/reset-password")
 def reset_user_password(
     user_id: int,
-    _: User = Depends(require_permission("users:manage")),
+    _: User = Depends(require_admin),
 ):
     target = get_account_store().get_user(user_id)
     if target is None:
@@ -249,16 +235,9 @@ def reset_user_password(
 # Role Management (roles:manage — menu/admin permissions are read-only static)
 # ---------------------------------------------------------------------------
 
-@router.get("/roles/permissions")
-def get_role_permission_catalog(
-    _: User = Depends(require_permission("roles:manage")),
-):
-    return {"items": list_permission_catalog()}
-
-
 @router.get("/roles")
 def list_roles(
-    _: User = Depends(require_permission("roles:manage")),
+    _: User = Depends(require_admin),
 ):
     return {"items": get_account_store().list_roles()}
 
@@ -266,7 +245,7 @@ def list_roles(
 @router.post("/roles", status_code=201)
 def create_role(
     payload: RoleCreateRequest,
-    _: User = Depends(require_permission("roles:manage")),
+    _: User = Depends(require_admin),
 ):
     try:
         return get_account_store().create_role(
@@ -282,7 +261,7 @@ def create_role(
 def update_role(
     role_id: int,
     payload: RoleUpdateRequest,
-    _: User = Depends(require_permission("roles:manage")),
+    _: User = Depends(require_admin),
 ):
     fields = payload.model_dump(exclude_unset=True)
     try:
@@ -298,7 +277,7 @@ def update_role(
 @router.delete("/roles/{role_id}")
 def delete_role(
     role_id: int,
-    _: User = Depends(require_permission("roles:manage")),
+    _: User = Depends(require_admin),
 ):
     try:
         get_account_store().delete_role(role_id)
@@ -310,7 +289,7 @@ def delete_role(
 @router.get("/roles/{role_id}/users")
 def list_role_users(
     role_id: int,
-    _: User = Depends(require_permission("roles:manage")),
+    _: User = Depends(require_admin),
 ):
     try:
         return {"items": get_account_store().list_role_users(role_id)}
@@ -322,7 +301,7 @@ def list_role_users(
 def set_role_users(
     role_id: int,
     payload: RoleUsersUpdateRequest,
-    _: User = Depends(require_permission("roles:manage")),
+    _: User = Depends(require_admin),
 ):
     if role_id == _admin_role_id():
         current = {int(item["id"]) for item in get_account_store().list_role_users(role_id)}
@@ -338,7 +317,7 @@ def set_role_users(
 def set_role_agents(
     role_id: int,
     payload: RoleAgentsUpdateRequest,
-    _: User = Depends(require_permission("roles:manage")),
+    _: User = Depends(require_admin),
 ):
     try:
         return get_account_store().set_role_agent_grants(role_id, payload.agent_ids)
@@ -353,7 +332,7 @@ def set_role_agents(
 @router.get("/agents/{agent_id}/grants")
 def get_agent_grants(
     agent_id: str,
-    _: User = Depends(require_permission("agents:manage")),
+    _: User = Depends(require_admin),
 ):
     try:
         return get_account_store().get_agent_grants(agent_id)
@@ -365,7 +344,7 @@ def get_agent_grants(
 def set_agent_grants(
     agent_id: str,
     payload: AgentGrantsUpdateRequest,
-    _: User = Depends(require_permission("agents:manage")),
+    _: User = Depends(require_admin),
 ):
     try:
         return get_account_store().set_agent_grants(

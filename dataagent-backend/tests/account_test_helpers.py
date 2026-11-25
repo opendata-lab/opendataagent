@@ -16,9 +16,6 @@ from core.accounts import (
     User,
     hash_password,
     issue_session_token,
-    menus_for_permissions,
-    permissions_for_roles,
-    role_permission_summary,
     set_account_store_for_tests,
     set_auth_settings_for_tests,
     validate_role_key,
@@ -93,7 +90,6 @@ class FakeAccountStore:
             for i in sorted(self.identities.values(), key=lambda x: x["id"])
             if i["user_id"] == uid
         )
-        perms = permissions_for_roles(r.role_key for r in roles)
         return User(
             id=uid,
             username=row["username"],
@@ -101,8 +97,6 @@ class FakeAccountStore:
             is_active=bool(row["is_active"]),
             roles=roles,
             identities=idents,
-            permissions=perms,
-            menus=menus_for_permissions(perms),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             last_login_at=row["last_login_at"],
@@ -290,7 +284,6 @@ class FakeAccountStore:
         profile: dict[str, Any] | None,
         *,
         default_password_hash_fn: Callable[[], str],
-        trusted_username_namespace: bool = False,
     ) -> User:
         prof = dict(profile or {})
         raw_username = str(prof.get("username") or prof.get("preferred_username") or subject).strip()
@@ -310,8 +303,6 @@ class FakeAccountStore:
         matched_row = next((r for r in self.users.values() if r["username"].lower() == candidate.lower()), None)
         if matched_row is not None:
             matched_user = self._hydrate(matched_row)
-            if not trusted_username_namespace:
-                raise IdentityConflictError(f"用户名 {candidate!r} 已存在且未绑定外部身份")
             if not matched_user.is_active:
                 raise AccountDisabledError("账号已停用")
             self.add_identity(matched_user.id, source, subject)
@@ -333,12 +324,10 @@ class FakeAccountStore:
         result = []
         for r in sorted(self.roles.values(), key=lambda x: (not x["is_builtin"], x["id"])):
             rid = r["id"]
-            summary = role_permission_summary(r["role_key"])
             result.append({
                 **r,
                 "user_count": sum(1 for (u, role_id) in self.user_roles if role_id == rid),
                 "agent_ids": sorted(a for (a, pt, pid) in self.agent_grants if pt == "role" and pid == rid),
-                **summary,
             })
         return result
 

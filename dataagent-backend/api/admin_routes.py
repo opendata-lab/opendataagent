@@ -21,8 +21,7 @@ from core.accounts import (
     filter_accessible_agents,
     get_account_store,
     require_agent_access,
-    require_any_permission,
-    require_permission,
+    require_admin,
 )
 from core.agent_draft_service import DraftConflict, agent_drafts, check_revision
 from core.agent_profile_service import (
@@ -64,8 +63,6 @@ from core.task_submission_service import submit_message_task
 from core.topic_files import list_files
 from core.topic_task_store import get_topic_task_store
 from models.schemas import (
-    AdminAuthUser,
-    AdminAuthUserList,
     AdminFeedbackPage,
     AdminSettingsResponse,
     AdminSettingsUpdateRequest,
@@ -173,7 +170,7 @@ def _update_widget_server_side(website_id: str, *, enabled: bool, access_key_has
 @settings_router.post(
     "/widget-sites/{website_id}/access-key",
     response_model=WidgetAccessKeyResponse,
-    dependencies=[Depends(require_permission("widget:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def api_create_widget_access_key(website_id: str):
     secret = secrets.token_urlsafe(32)
@@ -187,7 +184,7 @@ def api_create_widget_access_key(website_id: str):
 
 @settings_router.delete(
     "/widget-sites/{website_id}/access-key",
-    dependencies=[Depends(require_permission("widget:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def api_delete_widget_access_key(website_id: str):
     _update_widget_server_side(website_id, enabled=False, access_key_hash="")
@@ -197,7 +194,7 @@ def api_delete_widget_access_key(website_id: str):
 @settings_router.get(
     "/settings",
     response_model=AdminSettingsResponse,
-    dependencies=[Depends(require_any_permission("models:manage", "widget:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def get_admin_settings():
     return _build_admin_settings_response()
@@ -206,7 +203,7 @@ def get_admin_settings():
 @settings_router.put(
     "/settings",
     response_model=AdminSettingsResponse,
-    dependencies=[Depends(require_any_permission("models:manage", "widget:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def update_admin_settings(request: AdminSettingsUpdateRequest):
     try:
@@ -219,7 +216,7 @@ def update_admin_settings(request: AdminSettingsUpdateRequest):
 @settings_router.post(
     "/model-detections",
     response_model=ModelDetectionResponse,
-    dependencies=[Depends(require_permission("models:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 async def create_model_detection(request: ModelDetectionRequest):
     try:
@@ -232,7 +229,7 @@ async def create_model_detection(request: ModelDetectionRequest):
 @settings_router.get(
     "/providers",
     response_model=ProviderListResponse,
-    dependencies=[Depends(require_permission("models:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def get_providers():
     return ProviderListResponse(providers=_provider_catalog())
@@ -240,7 +237,7 @@ def get_providers():
 
 @settings_router.post(
     "/providers",
-    dependencies=[Depends(require_permission("models:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def create_provider(request: ProviderCreateRequest):
     try:
@@ -252,7 +249,7 @@ def create_provider(request: ProviderCreateRequest):
 
 @settings_router.put(
     "/providers/{provider_id}",
-    dependencies=[Depends(require_permission("models:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def update_provider(provider_id: str, request: ProviderUpdateRequest):
     try:
@@ -269,7 +266,7 @@ def update_provider(provider_id: str, request: ProviderUpdateRequest):
 
 @settings_router.delete(
     "/providers/{provider_id}",
-    dependencies=[Depends(require_permission("models:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def delete_provider(provider_id: str):
     try:
@@ -284,16 +281,16 @@ def delete_provider(provider_id: str):
 # ---- MCP Servers -----------------------------------------------------------
 
 @dataagent_router.get("/mcp/servers", response_model=McpServerListResponse)
-def get_mcp_servers(user: User = Depends(require_permission("menu:mcp"))):
+def get_mcp_servers(user: User = Depends(current_user)):
     listing = list_mcp_servers()
-    if not user.has_permission("mcp:manage"):
+    if not user.is_admin:
         return McpServerListResponse.model_validate(redact_mcp_servers(listing))
     return McpServerListResponse.model_validate(annotate_mcp_servers(listing))
 
 
 @dataagent_router.post(
     "/mcp/servers",
-    dependencies=[Depends(require_permission("mcp:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def create_mcp_server_endpoint(request: McpServerCreateRequest):
     try:
@@ -305,7 +302,7 @@ def create_mcp_server_endpoint(request: McpServerCreateRequest):
 
 @dataagent_router.patch(
     "/mcp/servers/{server_id}",
-    dependencies=[Depends(require_permission("mcp:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def update_mcp_server_endpoint(server_id: str, request: McpServerUpdateRequest):
     try:
@@ -319,7 +316,7 @@ def update_mcp_server_endpoint(server_id: str, request: McpServerUpdateRequest):
 
 @dataagent_router.delete(
     "/mcp/servers/{server_id}",
-    dependencies=[Depends(require_permission("mcp:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def delete_mcp_server_endpoint(server_id: str):
     try:
@@ -334,7 +331,7 @@ def delete_mcp_server_endpoint(server_id: str):
 @dataagent_router.post(
     "/mcp/servers/{server_id}/detections",
     response_model=McpServerDetectionResponse,
-    dependencies=[Depends(require_permission("mcp:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 async def detect_mcp_server_endpoint(server_id: str):
     try:
@@ -346,7 +343,7 @@ async def detect_mcp_server_endpoint(server_id: str):
 
 @dataagent_router.post(
     "/mcp/servers/import",
-    dependencies=[Depends(require_permission("mcp:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def import_mcp_servers_endpoint(payload: dict[str, Any] = Body(...)):
     try:
@@ -361,7 +358,7 @@ def import_mcp_servers_endpoint(payload: dict[str, Any] = Body(...)):
 @settings_router.get(
     "/feedback",
     response_model=AdminFeedbackPage,
-    dependencies=[Depends(require_permission("feedback:view"))],
+    dependencies=[Depends(require_admin)],
 )
 def admin_list_feedback(
     agent_id: str | None = Query(default=None),
@@ -385,7 +382,7 @@ def admin_list_feedback(
 @settings_router.get(
     "/experiences",
     response_model=ExperiencePage,
-    dependencies=[Depends(require_permission("experience:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def admin_list_experiences(
     kind: str = Query(default="", pattern="^(|knowledge|memory)$"),
@@ -417,7 +414,7 @@ def admin_list_experiences(
 @settings_router.post(
     "/experiences",
     response_model=Experience,
-    dependencies=[Depends(require_permission("experience:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def admin_create_experience(payload: ExperienceCreateRequest, user_id: int = Depends(current_user_id)):
     try:
@@ -428,7 +425,7 @@ def admin_create_experience(payload: ExperienceCreateRequest, user_id: int = Dep
 
 @settings_router.get(
     "/experiences/injection-preview",
-    dependencies=[Depends(require_permission("experience:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def admin_injection_preview(agent_id: str = Query(min_length=1)):
     return {
@@ -439,7 +436,7 @@ def admin_injection_preview(agent_id: str = Query(min_length=1)):
 
 @settings_router.delete(
     "/experiences/{experience_id}",
-    dependencies=[Depends(require_permission("experience:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def admin_delete_experience(experience_id: str):
     if not experience.delete_experience(experience_id):
@@ -450,7 +447,7 @@ def admin_delete_experience(experience_id: str):
 @settings_router.patch(
     "/experiences/{experience_id}",
     response_model=Experience,
-    dependencies=[Depends(require_permission("experience:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def admin_update_experience(
     experience_id: str,
@@ -491,7 +488,7 @@ def admin_list_all_topics(
     end: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
-    user: User = Depends(require_permission("topics:audit")),
+    user: User = Depends(require_admin),
 ):
     payload = get_topic_task_store().admin_list_topics(
         source=source,
@@ -511,20 +508,6 @@ def admin_list_all_topics(
     )
 
 
-@settings_router.get(
-    "/auth-users",
-    response_model=AdminAuthUserList,
-    dependencies=[Depends(require_any_permission("users:manage", "agents:manage", "topics:audit"))],
-)
-def admin_list_auth_users(
-    keyword: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=200),
-):
-    """Platform users from da_user for pickers and admin topic filters."""
-    page = get_account_store().list_users(keyword=keyword or "", page=1, page_size=limit)
-    return AdminAuthUserList(items=[AdminAuthUser.model_validate(row) for row in page.get("items") or []])
-
-
 def _require_audit_topic(store, topic_id: str) -> dict:
     topic = store.get_topic(topic_id, context=None)
     if not topic or topic.get("is_agent_preview"):
@@ -533,14 +516,14 @@ def _require_audit_topic(store, topic_id: str) -> dict:
 
 
 @settings_router.get("/topics/{topic_id}", response_model=AdminWidgetTopicSummary)
-def admin_get_topic(topic_id: str, user: User = Depends(require_permission("topics:audit"))):
+def admin_get_topic(topic_id: str, user: User = Depends(require_admin)):
     return _admin_topic_summary(_require_audit_topic(get_topic_task_store(), topic_id), user)
 
 
 @settings_router.get(
     "/topics/{topic_id}/messages",
     response_model=TopicMessagePageResponse,
-    dependencies=[Depends(require_permission("topics:audit"))],
+    dependencies=[Depends(require_admin)],
 )
 def admin_list_topic_messages(
     topic_id: str,
@@ -559,7 +542,7 @@ def admin_list_topic_messages(
 @settings_router.get(
     "/topics/{topic_id}/files",
     response_model=WorkspaceFileListResponse,
-    dependencies=[Depends(require_permission("topics:audit"))],
+    dependencies=[Depends(require_admin)],
 )
 def admin_list_topic_files(topic_id: str):
     _require_audit_topic(get_topic_task_store(), topic_id)
@@ -568,7 +551,7 @@ def admin_list_topic_files(topic_id: str):
 
 @settings_router.get(
     "/topics/{topic_id}/files/{rel_path:path}",
-    dependencies=[Depends(require_permission("topics:audit"))],
+    dependencies=[Depends(require_admin)],
 )
 def admin_download_topic_file(topic_id: str, rel_path: str, download: int = Query(default=1)):
     _require_audit_topic(get_topic_task_store(), topic_id)
@@ -594,7 +577,7 @@ def _preview_owner_context(user: User) -> dict[str, Any]:
 @dataagent_router.get(
     "/agents/capabilities",
     response_model=AgentCapabilitiesResponse,
-    dependencies=[Depends(require_permission("agents:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def get_agent_capabilities():
     return AgentCapabilitiesResponse.model_validate(agent_capabilities(list_documents()))
@@ -602,7 +585,7 @@ def get_agent_capabilities():
 
 @dataagent_router.get(
     "/agents/workbench",
-    dependencies=[Depends(require_any_permission("agents:manage", "roles:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def list_agent_workbench():
     return agent_drafts.list()
@@ -616,7 +599,7 @@ def get_agent_builtin_prompt(_: User = Depends(current_user)):
 
 
 @dataagent_router.get("/agents/profiles", response_model=list[AgentReadableProfile])
-def get_readable_agent_profiles(user: User = Depends(require_permission("menu:agents"))):
+def get_readable_agent_profiles(user: User = Depends(current_user)):
     profiles = filter_accessible_agents(user, list_agent_profiles())
     return [AgentReadableProfile.model_validate(_readable_agent_payload(item)) for item in profiles]
 
@@ -631,7 +614,7 @@ def get_agents(ctx: AccountContext = Depends(current_account_context)):
 
 @dataagent_router.post(
     "/agents",
-    dependencies=[Depends(require_permission("agents:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def create_agent(request: AgentProfileCreateRequest):
     try:
@@ -644,7 +627,7 @@ def create_agent(request: AgentProfileCreateRequest):
 
 
 @dataagent_router.get("/agents/{agent_id}/draft")
-def get_agent_draft(agent_id: str, user: User = Depends(require_permission("agents:manage"))):
+def get_agent_draft(agent_id: str, user: User = Depends(require_admin)):
     try:
         draft = agent_drafts.get(agent_id)
         preview_id = draft.get("preview_topic_id")
@@ -657,7 +640,7 @@ def get_agent_draft(agent_id: str, user: User = Depends(require_permission("agen
 
 @dataagent_router.put(
     "/agents/{agent_id}/remote-mcp",
-    dependencies=[Depends(require_permission("agents:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def set_agent_remote_mcp(agent_id: str, request: AgentRemoteMcpRequest):
     try:
@@ -668,7 +651,7 @@ def set_agent_remote_mcp(agent_id: str, request: AgentRemoteMcpRequest):
 
 @dataagent_router.post(
     "/agents/{agent_id}/publish",
-    dependencies=[Depends(require_permission("agents:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def publish_agent(agent_id: str, request: AgentDraftRevisionRequest):
     try:
@@ -681,7 +664,7 @@ def publish_agent(agent_id: str, request: AgentDraftRevisionRequest):
 def create_agent_preview_topic(
     agent_id: str,
     request: AgentDraftRevisionRequest,
-    user: User = Depends(require_permission("agents:manage")),
+    user: User = Depends(require_admin),
 ):
     try:
         draft = agent_drafts.get(agent_id)
@@ -700,7 +683,7 @@ def create_agent_preview_topic(
 async def submit_agent_preview(
     agent_id: str,
     request: AgentPreviewMessageRequest,
-    user: User = Depends(require_permission("agents:manage")),
+    user: User = Depends(require_admin),
 ):
     try:
         draft = agent_drafts.get(agent_id)
@@ -731,7 +714,7 @@ async def submit_agent_preview(
 
 
 @dataagent_router.get("/agents/{agent_id}/profile", response_model=AgentReadableProfile)
-def get_readable_agent_profile(agent_id: str, user: User = Depends(require_permission("menu:agents"))):
+def get_readable_agent_profile(agent_id: str, user: User = Depends(current_user)):
     try:
         profile = require_agent_access(user.id, agent_id)
     except AgentAccessDeniedError as exc:
@@ -742,7 +725,7 @@ def get_readable_agent_profile(agent_id: str, user: User = Depends(require_permi
 @dataagent_router.get(
     "/agents/{agent_id}/configuration",
     response_model=AgentProfile,
-    dependencies=[Depends(require_permission("agents:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def get_agent_configuration(agent_id: str):
     profile = get_agent_profile(agent_id)
@@ -777,7 +760,7 @@ def get_agent(agent_id: str, ctx: AccountContext = Depends(current_account_conte
 
 @dataagent_router.put(
     "/agents/{agent_id}",
-    dependencies=[Depends(require_permission("agents:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def update_agent(agent_id: str, request: AgentProfileUpdateRequest):
     try:
@@ -793,7 +776,7 @@ def update_agent(agent_id: str, request: AgentProfileUpdateRequest):
 
 @dataagent_router.delete(
     "/agents/{agent_id}",
-    dependencies=[Depends(require_permission("agents:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def delete_agent(agent_id: str):
     try:
@@ -805,7 +788,7 @@ def delete_agent(agent_id: str):
 
 @dataagent_router.get(
     "/tasks/{task_id}/system-prompt",
-    dependencies=[Depends(require_permission("agents:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def get_task_system_prompt(task_id: str):
     record = get_topic_task_store().get_task_system_prompt(task_id)
@@ -819,7 +802,7 @@ def get_task_system_prompt(task_id: str):
 @dataagent_router.get(
     "/skills/documents",
     response_model=list[SkillDocumentSummary],
-    dependencies=[Depends(require_permission("menu:skills"))],
+    dependencies=[Depends(current_user)],
 )
 def get_skill_documents():
     return [SkillDocumentSummary.model_validate(item) for item in list_documents()]
@@ -828,7 +811,7 @@ def get_skill_documents():
 @dataagent_router.get(
     "/skills/documents/{document_id}",
     response_model=SkillDocumentDetail,
-    dependencies=[Depends(require_permission("menu:skills"))],
+    dependencies=[Depends(current_user)],
 )
 def get_skill_document(document_id: int):
     document = get_document_detail(document_id)
@@ -840,7 +823,7 @@ def get_skill_document(document_id: int):
 @dataagent_router.put(
     "/skills/documents/{document_id}",
     response_model=SkillDocumentDetail,
-    dependencies=[Depends(require_permission("skills:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def update_skill_document(document_id: int, request: SkillDocumentUpdateRequest):
     try:
@@ -855,7 +838,7 @@ def update_skill_document(document_id: int, request: SkillDocumentUpdateRequest)
 @dataagent_router.put(
     "/skills/runtime/{folder}",
     response_model=SkillRuntimeConfig,
-    dependencies=[Depends(require_permission("skills:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def update_skill_runtime_config(folder: str, request: SkillRuntimeUpdateRequest):
     try:
@@ -868,7 +851,7 @@ def update_skill_runtime_config(folder: str, request: SkillRuntimeUpdateRequest)
 @dataagent_router.post(
     "/skills/imports",
     response_model=SkillImportResponse,
-    dependencies=[Depends(require_permission("skills:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 async def import_skill(file: UploadFile = File(...)):
     try:
@@ -881,7 +864,7 @@ async def import_skill(file: UploadFile = File(...)):
 
 @dataagent_router.get(
     "/skills/{folder}/export",
-    dependencies=[Depends(require_permission("skills:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def export_skill(folder: str):
     try:
@@ -900,7 +883,7 @@ def export_skill(folder: str):
 @dataagent_router.delete(
     "/skills/{folder}",
     response_model=SkillUninstallResponse,
-    dependencies=[Depends(require_permission("skills:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def delete_skill(folder: str):
     try:
@@ -915,7 +898,7 @@ def delete_skill(folder: str):
 @dataagent_router.post(
     "/skills/documents/{document_id}/compare",
     response_model=SkillDocumentCompareResponse,
-    dependencies=[Depends(require_permission("menu:skills"))],
+    dependencies=[Depends(current_user)],
 )
 def compare_skill_document(document_id: int, request: SkillDocumentCompareRequest):
     try:
@@ -934,7 +917,7 @@ def compare_skill_document(document_id: int, request: SkillDocumentCompareReques
 @dataagent_router.post(
     "/skills/documents/{document_id}/versions/{version_id}/rollback",
     response_model=SkillDocumentDetail,
-    dependencies=[Depends(require_permission("skills:manage"))],
+    dependencies=[Depends(require_admin)],
 )
 def rollback_skill_document(document_id: int, version_id: int):
     try:

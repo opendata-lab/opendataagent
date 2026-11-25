@@ -258,12 +258,7 @@ async def oauth_callback(provider: str, request: Request):
     }
     try:
         user = await anyio.to_thread.run_sync(
-            lambda: link_or_register(
-                cfg.oauth.provider_name,
-                oauth_sub,
-                profile,
-                trusted_username_namespace=cfg.oauth_trusted_username_namespace,
-            )
+            lambda: link_or_register(cfg.oauth.provider_name, oauth_sub, profile)
         )
     except AccountDisabledError:
         return _terminal_oauth_redirect("account_disabled")

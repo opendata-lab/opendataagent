@@ -8,7 +8,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
-from core.accounts import current_user_id, require_permission
+from core.accounts import current_user_id, require_admin
 from core.eval_contract import canonical_bytes, dataset_hash, parse_jsonl, validate
 from core.eval_dataset_service import export_dataset, import_dataset
 from core.eval_store import get_eval_store
@@ -29,7 +29,7 @@ from models.schemas import (
     EvalTrendPoint,
 )
 
-router = APIRouter(prefix="/api/v1/nl2sql-eval", dependencies=[Depends(require_permission("evals:manage"))])
+router = APIRouter(prefix="/api/v1/nl2sql-eval", dependencies=[Depends(require_admin)])
 
 
 # ---- Datasets ----

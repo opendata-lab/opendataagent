@@ -139,7 +139,6 @@ def upgrade() -> None:
         sa.Column("token_prefix", sa.String(10), nullable=False),
         sa.Column("user_id", sa.BigInteger(), sa.ForeignKey("da_user.id", name="fk_da_mcp_access_token_user"), nullable=False),
         sa.Column("name", sa.String(64), nullable=False),
-        sa.Column("expires_at", sa.DateTime(), nullable=True),
         sa.Column("last_used_at", sa.DateTime(), nullable=True),
         sa.Column("revoked_at", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),

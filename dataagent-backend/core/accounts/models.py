@@ -69,8 +69,6 @@ class User:
     is_active: bool = True
     roles: tuple[RoleRef, ...] = field(default_factory=tuple)
     identities: tuple[IdentityRef, ...] = field(default_factory=tuple)
-    permissions: frozenset[str] = field(default_factory=frozenset)
-    menus: tuple[str, ...] = field(default_factory=tuple)
     created_at: str = ""
     updated_at: str = ""
     last_login_at: str | None = None
@@ -87,9 +85,6 @@ class User:
     def is_admin(self) -> bool:
         return "admin" in self.role_keys
 
-    def has_permission(self, key: str) -> bool:
-        return key in self.permissions
-
     def to_public_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -100,8 +95,6 @@ class User:
             "is_admin": self.is_admin,
             "roles": [r.to_dict() for r in self.roles],
             "identities": [i.to_dict() for i in self.identities],
-            "permissions": sorted(self.permissions),
-            "menus": list(self.menus),
             "created_at": self.created_at,
             "last_login_at": self.last_login_at,
         }

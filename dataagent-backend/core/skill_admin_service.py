@@ -155,13 +155,10 @@ def _normalize_widget_allowed_sites(raw: Any) -> list[dict[str, Any]]:
         if not website_id or website_id in seen:
             continue
         seen.add(website_id)
-        origins = item.get("allowed_origins")
-        origin_list = _string_list(list(origins) if isinstance(origins, (list, tuple, set)) else [])
+        # A site is its id and its server-side key: the host backend forwards every
+        # request, so browser origins and display settings live with the host.
         normalized.append({
             "website_id": website_id[:128],
-            "allowed_origins": origin_list,
-            "project_name": str(item.get("project_name") or "").strip()[:128],
-            "project_color": str(item.get("project_color") or "").strip()[:32],
             "server_side": _normalize_server_side(item.get("server_side")),
         })
     return normalized

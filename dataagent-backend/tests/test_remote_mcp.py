@@ -160,52 +160,42 @@ def rpc_messages(response):
     return [json.loads(line[5:]) for line in response.text.splitlines() if line.startswith("data: {")]
 
 
-def test_create_and_list_mine_or_all(tokens_app):
+def test_create_and_list_own_tokens(tokens_app):
     client = tokens_app.client
     first = create(client, "内网客户端 ")
     item, token = first["item"], first["token"]
     assert set(first) == {"item", "token"}
     assert token.startswith("dak_") and len(token) == 47
+    # Tokens never expire (user decision 2026-11-24).
     assert item == {
         "id": 1, "name": "内网客户端", "token_prefix": token[:10],
-        "user_id": tokens_app.alice.id, "username": "alice", "display_name": "Alice", "status": "active",
-        "created_at": "2026-11-22T12:00:00Z", "expires_at": "2027-02-20T12:00:00Z",
-        "last_used_at": None, "revoked_at": None,
+        "user_id": tokens_app.alice.id, "status": "active",
+        "created_at": "2026-11-22T12:00:00Z", "last_used_at": None, "revoked_at": None,
     }
     with tokens_app.db.connect() as connection, connection.cursor() as cursor:
         cursor.execute("SELECT token_hash FROM da_mcp_access_token WHERE id = %s", (item["id"],))
         assert cursor.fetchone()["token_hash"] == hashlib.sha256(token.encode()).hexdigest()
-    second = create(client, expires_in_days=None)["item"]
-    assert second["expires_at"] is None
+    second = create(client)["item"]
     tokens_app.login(tokens_app.other)
-    other = create(client, expires_in_days=30)["item"]
+    other = create(client)["item"]
     assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [other]}
-    assert client.get(f"{MANAGEMENT}?scope=all", headers=BROWSER_HEADERS).status_code == 403
+    # Administrators manage only their own tokens too.
     tokens_app.login(tokens_app.admin)
-    admin_item = create(client, expires_in_days=180, user_id=tokens_app.alice.id)["item"]
+    admin_item = create(client, user_id=tokens_app.alice.id)["item"]
     assert admin_item["user_id"] == tokens_app.admin.id
-    assert client.get(f"{MANAGEMENT}?scope=mine", headers=BROWSER_HEADERS).json() == {"items": [admin_item]}
-    assert client.get(f"{MANAGEMENT}?scope=all", headers=BROWSER_HEADERS).json() == {
-        "items": [admin_item, other, second, item],
-    }
+    assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [admin_item]}
+    tokens_app.login(tokens_app.alice)
+    assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [second, item]}
 
 
-def test_active_limit_frees_slots_after_expiry_and_revocation(tokens_app):
+def test_no_cap_on_tokens(tokens_app):
     client = tokens_app.client
-    items = [create(client, f"token-{index}", expires_in_days=30)["item"] for index in range(10)]
-    assert client.post(MANAGEMENT, headers=BROWSER_HEADERS, json={"name": "extra"}).status_code == 409
-    assert client.delete(f"{MANAGEMENT}/{items[0]['id']}", headers=BROWSER_HEADERS).status_code == 200
-    create(client, expires_in_days=None)
-    assert client.post(MANAGEMENT, headers=BROWSER_HEADERS, json={"name": "extra"}).status_code == 409
-    tokens_app.db.clock.now += timedelta(days=30)
-    create(client)
+    for index in range(12):
+        create(client, f"token-{index}")
+    assert len(client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"]) == 12
 
 
-@pytest.mark.parametrize("payload", [
-    {}, {"name": ""}, {"name": " \t "}, {"name": "字" * 65}, {"name": 123},
-    {"name": "client", "expires_in_days": 31}, {"name": "client", "expires_in_days": "90"},
-    {"name": "client", "expires_in_days": 90.0}, {"name": "client", "expires_in_days": True},
-])
+@pytest.mark.parametrize("payload", [{}, {"name": ""}, {"name": " \t "}, {"name": "字" * 65}, {"name": 123}])
 def test_token_create_validates_request(tokens_app, payload):
     assert tokens_app.client.post(MANAGEMENT, headers=BROWSER_HEADERS, json=payload).status_code == 422
 
@@ -225,12 +215,9 @@ def test_management_requires_a_session_and_full_same_origin(tokens_app):
         options = {"json": {"name": "client"}} if method == "POST" else {}
         headers = {**BROWSER_HEADERS, **bearer(created["token"])}
         assert client.request(method, url, headers=headers, **options).status_code == 401
-    assert client.get(f"{MANAGEMENT}?scope=someone", headers=BROWSER_HEADERS).status_code == 401
-    tokens_app.login(tokens_app.alice)
-    assert client.get(f"{MANAGEMENT}?scope=someone", headers=BROWSER_HEADERS).status_code == 422
 
 
-def test_user_can_revoke_own_token_and_admin_can_revoke_others(tokens_app):
+def test_users_revoke_only_their_own_tokens(tokens_app):
     client = tokens_app.client
     first = create(client)["item"]
     second = create(client)["item"]
@@ -244,23 +231,18 @@ def test_user_can_revoke_own_token_and_admin_can_revoke_others(tokens_app):
     tokens_app.login(tokens_app.other)
     assert client.delete(other_url, headers=BROWSER_HEADERS).status_code == 404
     tokens_app.login(tokens_app.admin)
-    response = client.delete(other_url, headers=BROWSER_HEADERS)
-    assert response.status_code == 200 and response.json()["item"]["status"] == "revoked"
+    assert client.delete(other_url, headers=BROWSER_HEADERS).status_code == 404
     assert client.delete(f"{MANAGEMENT}/999", headers=BROWSER_HEADERS).status_code == 404
 
 
-def test_lists_only_active_and_recently_invalid_tokens(tokens_app):
+def test_lists_active_and_recently_revoked_tokens(tokens_app):
     client = tokens_app.client
-    revoked = create(client, "revoked", expires_in_days=None)["item"]
+    revoked = create(client, "revoked")["item"]
     client.delete(f"{MANAGEMENT}/{revoked['id']}", headers=BROWSER_HEADERS)
-    expired = create(client, "expired", expires_in_days=30)["item"]
-    tokens_app.db.clock.now += timedelta(days=30, seconds=1)
-    active = create(client, "active", expires_in_days=None)["item"]
+    active = create(client, "active")["item"]
     items = client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"]
-    assert [(item["id"], item["status"]) for item in items] == [
-        (active["id"], "active"), (expired["id"], "expired"),
-    ]
-    tokens_app.db.clock.now += timedelta(days=30)
+    assert [(item["id"], item["status"]) for item in items] == [(active["id"], "active"), (revoked["id"], "revoked")]
+    tokens_app.db.clock.now += timedelta(days=30, seconds=1)
     assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [active]}
 
 
@@ -314,12 +296,10 @@ def test_browser_download_requires_the_owner_session_and_preserves_bearer_checks
     assert client.get(DOWNLOAD).json() == {"file": "report"}
 
 
-def test_mcp_rejects_expired_unknown_and_session_tokens(tokens_app):
+def test_mcp_rejects_unknown_and_session_tokens(tokens_app):
     client = tokens_app.client
-    expiring = create(client, expires_in_days=30)["token"]
-    tokens_app.db.clock.now += timedelta(days=30)
     unknown = "dak_" + secrets.token_urlsafe(32)
-    for token in (expiring, unknown, accounts.issue_session_token(tokens_app.alice.id), ""):
+    for token in (unknown, accounts.issue_session_token(tokens_app.alice.id), ""):
         response = mcp_call(client, token)
         assert response.status_code == 401
         assert response.headers["WWW-Authenticate"] == 'Bearer realm="DataAgent MCP"'

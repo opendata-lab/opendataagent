@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import logging
 import re
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request
 from starlette.requests import Request as StarletteRequest
@@ -128,11 +128,12 @@ def link_or_register(
     source: str,
     subject: str,
     profile: dict[str, Any] | None = None,
-    *,
-    trusted_username_namespace: bool = False,
 ) -> User:
-    """Unified public entry point for OAuth & trusted Widget external identity binding/registration."""
-    cfg = get_auth_settings()
+    """Unified public entry point for OAuth & trusted Widget external identity binding/registration.
+
+    An external user name is the platform user name (user decision 2026-11-24):
+    an unbound identity binds to the same-named account or registers one.
+    """
     store = get_account_store()
 
     def _pw_fn() -> str:
@@ -143,7 +144,6 @@ def link_or_register(
         subject,
         profile,
         default_password_hash_fn=_pw_fn,
-        trusted_username_namespace=trusted_username_namespace,
     )
 
 
@@ -225,7 +225,7 @@ def current_account_context(request: Request) -> AccountContext:
     # The host's user name is the platform user name (user decision 2026-11-24):
     # it binds to the same-named account or registers it. Only the name is forwarded.
     try:
-        user = link_or_register(website_id, raw_user_id, {"username": raw_user_id}, trusted_username_namespace=True)
+        user = link_or_register(website_id, raw_user_id, {"username": raw_user_id})
     except AccountDisabledError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except IdentityConflictError as exc:
@@ -265,24 +265,11 @@ def current_user_id(request: Request) -> int:
     return current_user(request).id
 
 
-def require_permission(key: str) -> Callable[..., User]:
-    """Return a FastAPI dependency that enforces a static role permission key."""
-    def _dep(user: User = Depends(current_user)) -> User:
-        if not user.has_permission(key):
-            raise HTTPException(status_code=403, detail=f"Permission required: {key}")
-        return user
-
-    return _dep
-
-
-def require_any_permission(*keys: str) -> Callable[..., User]:
-    """Return a FastAPI dependency that enforces any one of the given static permission keys."""
-    def _dep(user: User = Depends(current_user)) -> User:
-        if not any(user.has_permission(k) for k in keys):
-            raise HTTPException(status_code=403, detail=f"Permission required: {' | '.join(keys)}")
-        return user
-
-    return _dep
+def require_admin(user: User = Depends(current_user)) -> User:
+    """FastAPI dependency for administrator-only routes (menus and management)."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Administrator required")
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -295,10 +282,10 @@ def authenticate_mcp_token(authorization: str) -> User:
 
     scheme, _, token = str(authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not _MCP_TOKEN_RE.fullmatch(token):
-        raise HTTPException(status_code=401, detail="MCP 访问令牌无效或已过期")
+        raise HTTPException(status_code=401, detail="MCP 访问令牌无效或已被吊销")
     record = remote_mcp_tokens.find_active_token(token)
     if record is None:
-        raise HTTPException(status_code=401, detail="MCP 访问令牌无效或已过期")
+        raise HTTPException(status_code=401, detail="MCP 访问令牌无效或已被吊销")
     user = get_account_store().get_user(int(record["user_id"]))
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="账号已停用或不存在")

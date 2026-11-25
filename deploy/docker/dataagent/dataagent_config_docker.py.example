@@ -71,10 +71,7 @@ OAUTH_PROVIDERS = [
 #   OAUTH_USER_INFO = oauth_user_info
 # ---------------------------------------------------------------------------
 OAUTH_USER_INFO = None
-
-# 仅当企业 OAuth 的 username 与 DataAgent 本地用户名属于同一命名空间时置 True，
-# 允许首次 OAuth 登录按同名普通用户自动归并（绝不自动归并管理员账号）。
-OAUTH_TRUSTED_USERNAME_NAMESPACE = False
+# OAuth 返回的用户名就是 DataAgent 的同名账号：首次登录绑定同名账号，没有则注册普通用户。
 
 # ---------------------------------------------------------------------------
 # 其他运行时配置覆盖（可选）：键为 dataagent-backend/config.py 中 Settings 的

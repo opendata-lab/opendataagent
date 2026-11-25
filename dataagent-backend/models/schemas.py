@@ -337,9 +337,6 @@ class WidgetServerSide(BaseModel):
 
 class WidgetAllowedSite(BaseModel):
     website_id: str = ""
-    allowed_origins: List[str] = Field(default_factory=list)
-    project_name: str = ""
-    project_color: str = ""
     server_side: WidgetServerSide = Field(default_factory=WidgetServerSide)
 
 
@@ -770,20 +767,6 @@ class ExperienceUpdateRequest(BaseModel):
     when_text: Optional[str] = Field(default=None, min_length=1, max_length=120)
     body: Optional[str] = Field(default=None, min_length=1, max_length=500)
     inject_mode: Optional[Literal["always", "on_demand"]] = None
-
-
-class AdminAuthUser(BaseModel):
-    """A platform user from da_user for pickers and admin filters."""
-
-    id: int = 0
-    user_id: int = 0
-    username: str = ""
-    display_name: str = ""
-    is_active: bool = True
-
-
-class AdminAuthUserList(BaseModel):
-    items: List[AdminAuthUser] = Field(default_factory=list)
 
 
 class UpdateMessageFeedbackRequest(BaseModel):

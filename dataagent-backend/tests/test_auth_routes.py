@@ -28,7 +28,7 @@ def _reset_auth(monkeypatch):
     accounts.set_account_store_for_tests(None)
 
 
-def _setup_oauth(*, trusted_username_namespace: bool = False):
+def _setup_oauth():
     oauth = OAuthSettings(
         provider_name="SSO",
         icon="fa-github",
@@ -45,7 +45,6 @@ def _setup_oauth(*, trusted_username_namespace: bool = False):
         default_user_password=TEST_DEFAULT_PASSWORD,
         oauth=oauth,
         oauth_user_info=lambda p, t, r: t.get("userinfo") or {"sub": "u-100"},
-        oauth_trusted_username_namespace=trusted_username_namespace,
     )
     return install_fake_accounts(settings=settings)
 
@@ -76,7 +75,7 @@ def test_local_login_me_and_logout_roundtrip():
     assert data["user_id"] == admin.id
     assert data["username"] == "admin"
     assert data["is_admin"] is True
-    assert "users:manage" in data["permissions"]
+    assert data["is_admin"] is True
     assert "httponly" in resp.headers.get("set-cookie", "").lower()
 
     me = client.get("/api/v1/nl2sql/auth/me")
@@ -122,24 +121,25 @@ def test_oauth_callback_auto_registers_and_ignores_hook_role_claim(monkeypatch):
     assert [r["role_key"] for r in body["roles"]] == [ROLE_USER]
 
 
-def test_oauth_callback_rejects_csrf_mismatch_conflict_and_disabled(monkeypatch):
-    store, admin, alice = _setup_oauth(trusted_username_namespace=False)
+def test_oauth_callback_rejects_csrf_mismatch_and_disabled(monkeypatch):
+    store, admin, alice = _setup_oauth()
     client = TestClient(app, follow_redirects=False)
 
     # 1. Missing nonce cookie -> 400
     state_only = accounts.issue_oauth_state("/chat", nonce="n1", provider="SSO")
     assert client.get(f"/oauth-authorized/SSO?code=x&state={state_only}").status_code == 400
 
-    # 2. Username conflict with existing 'alice' -> redirects with identity_conflict
-    async def conflict_exchange(code: str) -> dict:
+    # 2. SSO "alice" is the platform alice: the first login binds to her account.
+    async def same_name_exchange(code: str) -> dict:
         return {"sub": "u-alice", "preferred_username": "alice"}
 
-    monkeypatch.setattr(auth_routes, "_exchange_code_for_userinfo", conflict_exchange)
+    monkeypatch.setattr(auth_routes, "_exchange_code_for_userinfo", same_name_exchange)
     auth_resp = client.get("/api/v1/nl2sql/auth/oauth/authorize")
     state = parse_qs(urlparse(auth_resp.headers["location"]).query)["state"][0]
     cb = client.get(f"/oauth-authorized/SSO?code=x&state={state}")
     assert cb.status_code == 302
-    assert cb.headers["location"] == "/login?error=identity_conflict"
+    assert cb.headers["location"] != "/login?error=identity_conflict"
+    client.cookies.clear()
 
     # 3. Disabled bound user -> redirects with account_disabled
     store.add_identity(alice.id, "SSO", "u-alice-bound")

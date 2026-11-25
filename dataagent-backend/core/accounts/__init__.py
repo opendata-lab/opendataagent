@@ -37,18 +37,7 @@ from core.accounts.models import (
     User,
 )
 from core.accounts.passwords import hash_password, verify_password
-from core.accounts.permissions import (
-    ALL_PERMISSION_KEYS,
-    BUILTIN_ROLE_KEYS,
-    PERMISSION_CATALOG,
-    ROLE_ADMIN,
-    ROLE_PERMISSIONS,
-    ROLE_USER,
-    list_permission_catalog,
-    menus_for_permissions,
-    permissions_for_roles,
-    role_permission_summary,
-)
+from core.accounts.permissions import BUILTIN_ROLE_KEYS, ROLE_ADMIN, ROLE_USER
 from core.accounts.service import (
     authenticate_mcp_request,
     authenticate_mcp_token,
@@ -61,9 +50,8 @@ from core.accounts.service import (
     filter_accessible_agents,
     hash_default_password,
     link_or_register,
+    require_admin,
     require_agent_access,
-    require_any_permission,
-    require_permission,
 )
 from core.accounts.store import (
     AccountStore,
@@ -74,7 +62,6 @@ from core.accounts.store import (
 )
 
 __all__ = [
-    "ALL_PERMISSION_KEYS",
     "AUTH_CONFIG_ENV",
     "AccountContext",
     "AccountDisabledError",
@@ -93,9 +80,7 @@ __all__ = [
     "OAUTH_STATE_COOKIE",
     "OAUTH_STATE_COOKIE_MAX_AGE",
     "OAuthSettings",
-    "PERMISSION_CATALOG",
     "ROLE_ADMIN",
-    "ROLE_PERMISSIONS",
     "ROLE_USER",
     "RoleRef",
     "SECRET_KEY_ENV",
@@ -120,15 +105,10 @@ __all__ = [
     "issue_oauth_state",
     "issue_session_token",
     "link_or_register",
-    "list_permission_catalog",
     "load_auth_settings",
-    "menus_for_permissions",
-    "permissions_for_roles",
     "require_agent_access",
-    "require_any_permission",
-    "require_permission",
+    "require_admin",
     "reset_auth_for_tests",
-    "role_permission_summary",
     "sanitize_redirect_path",
     "set_account_store_for_tests",
     "set_auth_settings_for_tests",

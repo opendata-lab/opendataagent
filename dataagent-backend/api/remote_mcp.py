@@ -36,7 +36,7 @@ from core.accounts import (
     User,
     authenticate_mcp_request,
     require_agent_access,
-    require_permission,
+    current_user,
 )
 from core.agent_profile_service import build_agent_snapshot
 from core.task_status import ACTIVE_TASK_STATUSES
@@ -400,14 +400,6 @@ transport = Router(routes=[Route("/{agent_id}/mcp", RemoteTransport())], redirec
 
 class CreateMcpTokenRequest(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
-    expires_in_days: Literal[30, 90, 180] | None = 90
-
-    @field_validator("expires_in_days", mode="before")
-    @classmethod
-    def require_integer_days(cls, value: Any) -> Any:
-        if value is not None and type(value) is not int:
-            raise ValueError("有效期必须是整数天数或 null")
-        return value
 
 
 def _require_mcp_enabled() -> None:
@@ -418,7 +410,7 @@ def _require_mcp_enabled() -> None:
 def _token_user(
     request: Request,
     _: Annotated[None, Depends(_require_mcp_enabled)],
-    user: Annotated[User, Depends(require_permission("menu:mcp_tokens"))],
+    user: Annotated[User, Depends(current_user)],
 ) -> User:
     origin = request.headers.get("Origin")
     if (request.method != "GET" or origin is not None) and origin != _origin(request):
@@ -430,31 +422,20 @@ TokenUser = Annotated[User, Depends(_token_user)]
 
 
 @router.get(_TOKEN_MANAGEMENT_PATH)
-def list_mcp_tokens(user: TokenUser, scope: Literal["mine", "all"] = "mine"):
-    if scope == "all" and not user.has_permission("mcp_tokens:manage_all"):
-        raise HTTPException(403, "Permission required: mcp_tokens:manage_all")
-    return {"items": tokens.list_tokens(None if scope == "all" else user.id)}
+def list_mcp_tokens(user: TokenUser):
+    return {"items": tokens.list_tokens(user.id)}
 
 
 @router.post(_TOKEN_MANAGEMENT_PATH, status_code=201)
 def create_mcp_token(payload: CreateMcpTokenRequest, response: Response, user: TokenUser):
-    try:
-        item, token = tokens.create_token(user.id, payload.name, payload.expires_in_days)
-    except tokens.TokenLimitReached as exc:
-        raise HTTPException(409, "每个用户最多可有 10 个有效的访问令牌") from exc
-    except TimeoutError as exc:
-        raise HTTPException(503, "暂时无法创建访问令牌，请重试") from exc
+    item, token = tokens.create_token(user.id, payload.name)
     response.headers["Cache-Control"] = "no-store"
     return {"item": item, "token": token}
 
 
 @router.delete(_TOKEN_MANAGEMENT_PATH + "/{token_id}")
 def revoke_mcp_token(token_id: int, user: TokenUser):
-    item = tokens.revoke_token(
-        token_id,
-        user_id=user.id,
-        can_manage_all=user.has_permission("mcp_tokens:manage_all"),
-    )
+    item = tokens.revoke_token(token_id, user_id=user.id)
     if item is None:
         raise HTTPException(404, "找不到访问令牌")
     return {"item": item}

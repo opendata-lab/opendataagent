@@ -22,9 +22,6 @@ from core.accounts.permissions import (
     BUILTIN_ROLE_KEYS,
     ROLE_ADMIN,
     ROLE_USER,
-    menus_for_permissions,
-    permissions_for_roles,
-    role_permission_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,8 +121,6 @@ class AccountStore:
         for row in rows:
             uid = int(row["id"])
             roles = tuple(roles_by_uid.get(uid) or ())
-            perms = permissions_for_roles(r.role_key for r in roles)
-            menus = menus_for_permissions(perms)
             users.append(
                 User(
                     id=uid,
@@ -134,8 +129,6 @@ class AccountStore:
                     is_active=bool(row.get("is_active")),
                     roles=roles,
                     identities=tuple(identities_by_uid.get(uid) or ()),
-                    permissions=perms,
-                    menus=menus,
                     created_at=_to_iso(row.get("created_at")),
                     updated_at=_to_iso(row.get("updated_at")),
                     last_login_at=_to_iso(row.get("last_login_at")) or None,
@@ -472,7 +465,6 @@ class AccountStore:
         profile: dict[str, Any] | None,
         *,
         default_password_hash_fn: Callable[[], str],
-        trusted_username_namespace: bool = False,
     ) -> User:
         """Atomically look up, controlled-match, or register a platform user for (source, subject)."""
         clean_source = str(source or "").strip()[:128]
@@ -530,10 +522,6 @@ class AccountStore:
                     existing_row = cur.fetchone()
                     if existing_row:
                         existing_user = self._hydrate_users(cur, [existing_row])[0]
-                        if not trusted_username_namespace:
-                            raise IdentityConflictError(
-                                f"用户名 {candidate_username!r} 已存在且未绑定外部身份，请联系管理员核对绑定"
-                            )
                         if not existing_user.is_active:
                             raise AccountDisabledError("账号已停用")
                         cur.execute(
@@ -638,7 +626,6 @@ class AccountStore:
         for row in rows:
             rid = int(row["id"])
             role_key = str(row["role_key"])
-            perm_summary = role_permission_summary(role_key)
             result.append(
                 {
                     "id": rid,
@@ -648,8 +635,6 @@ class AccountStore:
                     "is_builtin": bool(row.get("is_builtin")),
                     "user_count": int(row.get("user_count") or 0),
                     "agent_ids": grants_by_role.get(rid, []),
-                    "permissions": perm_summary["permissions"],
-                    "menus": perm_summary["menus"],
                     "created_at": _to_iso(row.get("created_at")),
                     "updated_at": _to_iso(row.get("updated_at")),
                 }

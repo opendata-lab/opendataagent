@@ -43,7 +43,7 @@ def _verify_topic_execution_access(topic: dict, agent_id: str) -> int | None:
         # Draft previews run the topic's draft snapshot, which may have no
         # published profile yet; the owner must still be able to manage agents.
         user = get_account_store().get_user(uid)
-        if user is None or not user.is_active or not user.has_permission("agents:manage"):
+        if user is None or not user.is_active or not user.is_admin:
             raise AgentAccessDeniedError("账号不存在、已停用或无助手管理权限")
         return uid
     require_agent_access(uid, resolved_agent_id)

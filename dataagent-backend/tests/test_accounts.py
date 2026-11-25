@@ -110,16 +110,12 @@ def test_link_or_register_auto_registration_and_conflict():
     # Default password works on main-site login immediately.
     assert authenticate_password("bob", TEST_DEFAULT_PASSWORD) is not None
 
-    # 3. Unbound external identity colliding with existing username fails without trusted namespace.
-    with pytest.raises(IdentityConflictError):
-        link_or_register("SSO", "u-alice", {"preferred_username": "alice"}, trusted_username_namespace=False)
+    # 3. An external user name is the platform user name: SSO "alice" binds to alice.
+    assert link_or_register("SSO", "u-alice", {"preferred_username": "alice"}).id == alice.id
 
-    # 4. With trusted_username_namespace=True, non-admin 'alice' is bound and reused.
-    bound_alice = link_or_register("odw", "alice", {"username": "alice"}, trusted_username_namespace=True)
-    assert bound_alice.id == alice.id
-
-    # 5. The trusted host's "admin" is the platform admin (user decision 2026-11-24).
-    assert link_or_register("odw", "admin", {"username": "admin"}, trusted_username_namespace=True).id == admin.id
+    # 4. Same for a Widget host, including its "admin" (user decision 2026-11-24).
+    assert link_or_register("odw", "alice", {"username": "alice"}).id == alice.id
+    assert link_or_register("odw", "admin", {"username": "admin"}).id == admin.id
 
     # 6. Disabled user is rejected on subsequent external login.
     store.update_user(bob.id, is_active=False)
@@ -129,13 +125,10 @@ def test_link_or_register_auto_registration_and_conflict():
 
 def test_user_role_profile_and_grant_apis(monkeypatch):
     store, admin, alice = install_fake_accounts(valid_agent_ids={"agent_default", "agent_sales"})
-    monkeypatch.setattr(
-        "api.account_routes.list_agent_profiles",
-        lambda: [
-            {"agent_id": "agent_default", "name": "默认助手", "description": "", "visibility": {"mode": "all"}},
-            {"agent_id": "agent_sales", "name": "销售助手", "description": "", "visibility": {"mode": "selected"}},
-        ],
-    )
+    profiles = [
+        {"agent_id": "agent_default", "name": "默认助手", "description": "", "visibility": {"mode": "all"}},
+        {"agent_id": "agent_sales", "name": "销售助手", "description": "", "visibility": {"mode": "selected"}},
+    ]
     client = TestClient(main.app)
 
     # Create user via admin API (gets default password, user role; no DELETE user endpoint).
@@ -194,7 +187,6 @@ def test_user_role_profile_and_grant_apis(monkeypatch):
     )
     assert role_resp.status_code == 201
     role_id = role_resp.json()["id"]
-    assert role_resp.json()["permissions"] == []  # Custom roles have no static menu/admin permissions.
 
     # Built-in role cannot be deleted.
     admin_role_id = store.role_id_for(ROLE_ADMIN)
@@ -217,11 +209,11 @@ def test_user_role_profile_and_grant_apis(monkeypatch):
     assert grants.status_code == 200
     assert grants.json()["role_ids"] == [role_id]
 
-    # Dave's profile now lists agent_sales as accessible; alice does not have it.
-    dave_profile = client.get("/api/v1/dataagent/profile", headers=bearer_headers(dave_id)).json()
-    alice_profile = client.get("/api/v1/dataagent/profile", headers=bearer_headers(alice.id)).json()
-    assert [a["agent_id"] for a in dave_profile["accessible_agents"]] == ["agent_default", "agent_sales"]
-    assert [a["agent_id"] for a in alice_profile["accessible_agents"]] == ["agent_default"]
+    # Dave can now use agent_sales through the role grant; alice cannot.
+    from core.accounts import filter_accessible_agents
+
+    assert [a["agent_id"] for a in filter_accessible_agents(store.get_user(dave_id), profiles)] == ["agent_default", "agent_sales"]
+    assert [a["agent_id"] for a in filter_accessible_agents(store.get_user(alice.id), profiles)] == ["agent_default"]
 
     # Deleting the custom role cleans up its grants in the same transaction.
     assert client.delete(f"/api/v1/dataagent/roles/{role_id}", headers=bearer_headers(admin.id)).status_code == 200

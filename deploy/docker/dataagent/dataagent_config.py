@@ -8,8 +8,7 @@
 
 可配置内容：
 - 认证（始终启用）：`SECRET_KEY` / `DEFAULT_USER_PASSWORD` /
-  `OAUTH_PROVIDERS` / `OAUTH_USER_INFO` /
-  `OAUTH_TRUSTED_USERNAME_NAMESPACE`（UserInfo 钩子见
+  `OAUTH_PROVIDERS` / `OAUTH_USER_INFO`（UserInfo 钩子见
   custom_sso_user_info.py.example）。用户、角色和助手授权统一存库管理，
   不再从配置文件读取 `LOCAL_ADMINS` 或 `ADMIN_USERS`。
 - 其他运行时配置：`DATAAGENT_SETTINGS = {"<config.py Settings 字段>": 值}`，
@@ -45,7 +44,6 @@ COOKIE_SAMESITE = "lax"
 
 OAUTH_PROVIDERS = []
 OAUTH_USER_INFO = None
-OAUTH_TRUSTED_USERNAME_NAMESPACE = False
 
 # 非认证的运行时 Settings 覆盖（config.py 字段），默认不覆盖任何值。
 DATAAGENT_SETTINGS = {}

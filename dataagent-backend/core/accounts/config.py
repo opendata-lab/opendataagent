@@ -73,7 +73,6 @@ class AuthSettings:
     cookie_samesite: str = "lax"
     oauth: OAuthSettings = field(default_factory=OAuthSettings)
     oauth_user_info: Any = None
-    oauth_trusted_username_namespace: bool = False
     runtime_settings: dict[str, Any] = field(default_factory=dict)
     config_path: str = ""
 
@@ -237,7 +236,6 @@ def _build_settings(module: Any, config_path: str) -> AuthSettings:
         cookie_samesite=str(getattr(module, "COOKIE_SAMESITE", "lax") or "lax").lower(),
         oauth=_parse_oauth_providers(getattr(module, "OAUTH_PROVIDERS", None)),
         oauth_user_info=getattr(module, "OAUTH_USER_INFO", None),
-        oauth_trusted_username_namespace=bool(getattr(module, "OAUTH_TRUSTED_USERNAME_NAMESPACE", False)),
         config_path=config_path,
     )
     if settings.oauth_user_info is not None and not callable(settings.oauth_user_info):
