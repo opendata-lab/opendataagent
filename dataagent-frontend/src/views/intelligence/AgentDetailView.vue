@@ -289,7 +289,6 @@
                 <label class="field-label" for="visibility">谁可以使用</label
                   ><select id="visibility" v-model="form.visibility.mode">
                     <option value="all">全部用户</option>
-                    <option value="authenticated">仅登录用户</option>
                     <option value="selected">指定用户或角色</option>
                   </select>
                   <template v-if="form.visibility.mode === 'selected'">
@@ -711,7 +710,7 @@ const previewComposerConfig = computed(() => ({
 const nextVersion = computed(() => Number(draft.published_version || 0) + 1);
 const visibilityLabel = computed(
   () =>
-    ({ all: "全部用户", authenticated: "仅登录用户", selected: "指定用户" })[
+    ({ all: "全部用户", selected: "指定用户" })[
       form.visibility.mode
     ],
 );

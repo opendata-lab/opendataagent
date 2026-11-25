@@ -307,7 +307,7 @@ def test_widget_event_types_allowlist_contains_expected_values():
     assert "message_send" in WIDGET_EVENT_TYPES
 
 
-def test_admin_list_topics_scopes_to_widget_and_forwards_filters(monkeypatch):
+def test_admin_list_topics_filters_by_source_and_user(monkeypatch):
     class FakeCursor:
         def __init__(self, conn):
             self.conn = conn
@@ -361,7 +361,7 @@ def test_admin_list_topics_scopes_to_widget_and_forwards_filters(monkeypatch):
     monkeypatch.setattr(store, "_ensure_ready", lambda: None)
     monkeypatch.setattr(store, "_connect", lambda database: conn)
 
-    result = store.admin_list_topics(website_id="site_a", visitor_id="visitor_x", page=2, page_size=10)
+    result = store.admin_list_topics(source="widget", user_id=7, page=2, page_size=10)
 
     assert result["total"] == 1
     assert result["page"] == 2
@@ -371,68 +371,15 @@ def test_admin_list_topics_scopes_to_widget_and_forwards_filters(monkeypatch):
     count_sql, count_params = conn.executed[0]
     assert "COUNT(*)" in count_sql
     assert "t.source = %s" in count_sql
-    assert count_params == ["widget", "site_a", "visitor_x"]
+    assert count_params == ["widget", 7]
 
     list_sql, list_params = conn.executed[1]
     assert "LIMIT %s OFFSET %s" in list_sql
-    # widget source + filters first, then pagination (page 2, size 10 -> offset 10)
-    assert list_params == ["widget", "site_a", "visitor_x", 10, 10]
+    # source + user first, then pagination (page 2, size 10 -> offset 10)
+    assert list_params == ["widget", 7, 10, 10]
     # Per-user isolation predicate must never be reused by the admin path.
     assert "COALESCE(t.source" not in list_sql
 
-
-def test_admin_list_widget_users_groups_users_and_forwards_filters(monkeypatch):
-    class FakeCursor:
-        def __init__(self, conn):
-            self.conn = conn
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def execute(self, sql, params):
-            self.conn.executed.append((sql, list(params)))
-
-        def fetchall(self):
-            return [
-                {"kind": "ext", "user_id": "u_10086", "topic_count": 3, "last_active_at": None},
-                {"kind": "vis", "user_id": "", "topic_count": 1, "last_active_at": None},
-            ]
-
-    class FakeConnection:
-        def __init__(self):
-            self.executed = []
-
-        def cursor(self):
-            return FakeCursor(self)
-
-        def close(self):
-            return None
-
-    store = TopicTaskStore()
-    conn = FakeConnection()
-    monkeypatch.setattr(store, "_ensure_ready", lambda: None)
-    monkeypatch.setattr(store, "_connect", lambda database: conn)
-
-    users = store.admin_list_widget_users(website_id="site_a", keyword="u_", limit=50)
-
-    # Rows without a user_id are dropped; counts are coerced to int.
-    assert users == [{"kind": "ext", "user_id": "u_10086", "topic_count": 3}]
-
-    sql, params = conn.executed[0]
-    assert "GROUP BY kind, user_id" in sql
-    assert "t.source = %s" in sql
-    # widget source + website + keyword (LIKE twice) + limit
-    assert params == ["widget", "site_a", "%u_%", "%u_%", 50]
-    # Admin facet must not reuse the per-user isolation predicate.
-    assert "COALESCE(t.source" not in sql
-
-
-# ---------------------------------------------------------------------------
-# 统一用户可见性谓词矩阵
-# ---------------------------------------------------------------------------
 
 def test_predicate_fail_closed_without_user_id():
     store = TopicTaskStore()

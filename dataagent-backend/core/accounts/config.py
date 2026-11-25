@@ -67,7 +67,6 @@ class OAuthSettings:
 class AuthSettings:
     secret_key: str = ""
     default_user_password: str = ""
-    auto_register_enabled: bool = True
     session_ttl_seconds: int = 28800
     cookie_name: str = "da_session"
     cookie_secure: bool = False
@@ -228,12 +227,10 @@ def _build_settings(module: Any, config_path: str) -> AuthSettings:
 
     raw_secret = getattr(module, "SECRET_KEY", "") or os.environ.get(SECRET_KEY_ENV, "")
     raw_default_pw = getattr(module, "DEFAULT_USER_PASSWORD", "") or os.environ.get(DEFAULT_PASSWORD_ENV, "")
-    auto_register = bool(getattr(module, "AUTO_REGISTER_ENABLED", True))
 
     settings = AuthSettings(
         secret_key=_validate_secret_key(raw_secret),
         default_user_password=str(raw_default_pw or "").strip(),
-        auto_register_enabled=auto_register,
         session_ttl_seconds=int(getattr(module, "SESSION_TTL_SECONDS", 28800)),
         cookie_name=str(getattr(module, "COOKIE_NAME", "da_session") or "da_session"),
         cookie_secure=bool(getattr(module, "COOKIE_SECURE", False)),
@@ -263,9 +260,9 @@ def _build_settings(module: Any, config_path: str) -> AuthSettings:
         raise AuthConfigError(
             "OAUTH_PROVIDERS 已配置，但缺少 OAUTH_USER_INFO(provider, token_response, oauth_remotes)"
         )
-    if settings.oauth_login_enabled and settings.auto_register_enabled and not settings.default_user_password:
+    if settings.oauth_login_enabled and not settings.default_user_password:
         raise AuthConfigError(
-            "启用 OAuth 自动注册时必须配置 DEFAULT_USER_PASSWORD（用于为新注册用户写入默认密码哈希）"
+            "启用 OAuth 时必须配置 DEFAULT_USER_PASSWORD（首次登录自动注册的普通用户使用该默认密码）"
         )
 
     raw_runtime = getattr(module, "DATAAGENT_SETTINGS", None)

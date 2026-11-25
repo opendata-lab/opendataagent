@@ -20,7 +20,6 @@ def main(argv: list[str] | None = None) -> int:
     create.add_argument("--username", required=True)
     create.add_argument("--password", required=True)
     create.add_argument("--display-name", default="")
-    create.add_argument("--email", default="")
     create.add_argument("--admin", action="store_true", help="Assign admin role in addition to user role")
 
     args = parser.parse_args(argv)
@@ -29,7 +28,6 @@ def main(argv: list[str] | None = None) -> int:
             username=args.username,
             password=args.password,
             display_name=args.display_name,
-            email=args.email or None,
             is_admin=bool(args.admin),
         )
         print(json.dumps(user.to_public_dict(), ensure_ascii=False))

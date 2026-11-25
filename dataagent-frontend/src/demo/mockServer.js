@@ -250,9 +250,8 @@ const handleDemoWidgetTopics = (params = {}) => {
   const pageSize = Math.max(1, Number(params.page_size) || 20)
   const keyword = String(params.keyword || '').trim().toLowerCase()
   const filtered = demoWidgetTopics.filter((topic) => {
-    if (params.website_id && topic.website_id !== params.website_id) return false
-    if (params.external_user_id && topic.external_user_id !== params.external_user_id) return false
-    if (params.visitor_id && topic.visitor_id !== params.visitor_id) return false
+    if (params.source && (topic.source || 'widget') !== params.source) return false
+    if (params.user_id && Number(topic.user_id) !== Number(params.user_id)) return false
     if (params.agent_id && topic.agent_id !== params.agent_id) return false
     if (keyword && !String(topic.title || '').toLowerCase().includes(keyword)) return false
     return true
@@ -263,31 +262,6 @@ const handleDemoWidgetTopics = (params = {}) => {
     return clone(summary)
   })
   return { items, total: filtered.length, page, page_size: pageSize }
-}
-
-const handleDemoWidgetUsers = (params = {}) => {
-  const keyword = String(params.keyword || '').trim().toLowerCase()
-  const limit = Math.max(1, Math.min(500, Number(params.limit) || 100))
-  const byUser = new Map()
-  for (const topic of demoWidgetTopics) {
-    if (params.website_id && topic.website_id !== params.website_id) continue
-    const ext = String(topic.external_user_id || '').trim()
-    const vis = String(topic.visitor_id || '').trim()
-    const kind = ext ? 'ext' : (vis ? 'vis' : '')
-    const userId = ext || vis
-    if (!kind || !userId) continue
-    if (keyword && !userId.toLowerCase().includes(keyword)) continue
-    const key = `${kind}:${userId}`
-    const entry = byUser.get(key) || { kind, user_id: userId, topic_count: 0, last_active_at: '' }
-    entry.topic_count += 1
-    if (String(topic.updated_at || '') > entry.last_active_at) entry.last_active_at = String(topic.updated_at || '')
-    byUser.set(key, entry)
-  }
-  const items = Array.from(byUser.values())
-    .sort((a, b) => (b.last_active_at > a.last_active_at ? 1 : b.last_active_at < a.last_active_at ? -1 : b.topic_count - a.topic_count))
-    .slice(0, limit)
-    .map(({ kind, user_id, topic_count }) => ({ kind, user_id, topic_count }))
-  return { items }
 }
 
 const handleDemoWidgetTopicMessages = (topicId, params = {}) => {
@@ -751,8 +725,6 @@ export const demoAdapter = async (config) => {
     id: 1,
     username: 'demo_admin',
     display_name: '演示管理员',
-    email: 'demo@example.com',
-    email_verified: true,
     is_active: true,
     roles: [
       { id: 1, role_key: 'admin', name: '管理员', is_builtin: true },
@@ -830,15 +802,7 @@ export const demoAdapter = async (config) => {
     })
   }
 
-  if (method === 'get' && pathname === '/v1/nl2sql-admin/widget-topics') {
-    return createResponse(config, handleDemoWidgetTopics(params))
-  }
-
-  if (method === 'get' && pathname === '/v1/nl2sql-admin/widget-users') {
-    return createResponse(config, handleDemoWidgetUsers(params))
-  }
-
-  if (method === 'get' && pathname.match(/^\/v1\/nl2sql-admin\/widget-topics\/[^/]+\/messages$/)) {
+  if (method === 'get' && pathname.match(/^\/v1\/nl2sql-admin\/topics\/[^/]+\/messages$/)) {
     const topicId = decodeURIComponent(pathname.split('/')[4])
     const payload = handleDemoWidgetTopicMessages(topicId, params)
     return payload

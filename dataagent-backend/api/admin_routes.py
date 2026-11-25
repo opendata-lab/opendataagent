@@ -71,8 +71,6 @@ from models.schemas import (
     AdminSettingsUpdateRequest,
     AdminWidgetTopicPage,
     AdminWidgetTopicSummary,
-    AdminWidgetUser,
-    AdminWidgetUserList,
     AgentCapabilitiesResponse,
     AgentCatalogProfile,
     AgentDraftRevisionRequest,
@@ -486,11 +484,7 @@ def _admin_topic_summary(topic: dict, user: User) -> AdminWidgetTopicSummary:
 @settings_router.get("/topics", response_model=AdminWidgetTopicPage)
 def admin_list_all_topics(
     source: str = Query(default="", pattern="^(|web|widget|remote)$"),
-    website_id: str | None = Query(default=None),
-    external_user_id: str | None = Query(default=None),
-    visitor_id: str | None = Query(default=None),
     user_id: int | None = Query(default=None),
-    auth_user_id: str | None = Query(default=None),
     agent_id: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
     start: str | None = Query(default=None),
@@ -501,45 +495,6 @@ def admin_list_all_topics(
 ):
     payload = get_topic_task_store().admin_list_topics(
         source=source,
-        website_id=website_id,
-        external_user_id=external_user_id,
-        visitor_id=visitor_id,
-        user_id=user_id,
-        auth_user_id=auth_user_id,
-        agent_id=agent_id,
-        keyword=keyword,
-        start=start,
-        end=end,
-        page=page,
-        page_size=page_size,
-    )
-    return AdminWidgetTopicPage(
-        items=[_admin_topic_summary(item, user) for item in payload.get("items") or []],
-        total=int(payload.get("total") or 0),
-        page=int(payload.get("page") or page),
-        page_size=int(payload.get("page_size") or page_size),
-    )
-
-
-@settings_router.get("/widget-topics", response_model=AdminWidgetTopicPage)
-def admin_list_widget_topics(
-    website_id: str | None = Query(default=None),
-    external_user_id: str | None = Query(default=None),
-    visitor_id: str | None = Query(default=None),
-    user_id: int | None = Query(default=None),
-    agent_id: str | None = Query(default=None),
-    keyword: str | None = Query(default=None),
-    start: str | None = Query(default=None),
-    end: str | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=200),
-    user: User = Depends(require_permission("topics:audit")),
-):
-    payload = get_topic_task_store().admin_list_topics(
-        source="widget",
-        website_id=website_id,
-        external_user_id=external_user_id,
-        visitor_id=visitor_id,
         user_id=user_id,
         agent_id=agent_id,
         keyword=keyword,
@@ -554,25 +509,6 @@ def admin_list_widget_topics(
         page=int(payload.get("page") or page),
         page_size=int(payload.get("page_size") or page_size),
     )
-
-
-@settings_router.get(
-    "/widget-users",
-    response_model=AdminWidgetUserList,
-    dependencies=[Depends(require_permission("topics:audit"))],
-)
-def admin_list_widget_users(
-    website_id: str | None = Query(default=None),
-    keyword: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-):
-    rows = get_topic_task_store().admin_list_widget_users(
-        source="widget",
-        website_id=website_id,
-        keyword=keyword,
-        limit=limit,
-    )
-    return AdminWidgetUserList(items=[AdminWidgetUser.model_validate(row) for row in rows])
 
 
 @settings_router.get(
@@ -603,11 +539,6 @@ def admin_get_topic(topic_id: str, user: User = Depends(require_permission("topi
 
 @settings_router.get(
     "/topics/{topic_id}/messages",
-    response_model=TopicMessagePageResponse,
-    dependencies=[Depends(require_permission("topics:audit"))],
-)
-@settings_router.get(
-    "/widget-topics/{topic_id}/messages",
     response_model=TopicMessagePageResponse,
     dependencies=[Depends(require_permission("topics:audit"))],
 )

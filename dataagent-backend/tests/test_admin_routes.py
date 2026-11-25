@@ -557,34 +557,32 @@ class _FakeWidgetStore:
         }
 
 
-def test_admin_widget_topics_routes_contract(monkeypatch):
+def test_admin_topics_routes_contract(monkeypatch):
     store = _FakeWidgetStore()
     monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: store)
 
     client = _admin_client()
 
     listing = client.get(
-        "/api/v1/nl2sql-admin/widget-topics",
-        params={"website_id": "site_a", "keyword": "嵌入", "page": 1, "page_size": 20},
+        "/api/v1/nl2sql-admin/topics",
+        params={"source": "widget", "user_id": 7, "keyword": "嵌入", "page": 1, "page_size": 20},
     )
     assert listing.status_code == 200
     body = listing.json()
     assert body["total"] == 1
     assert body["items"][0]["source"] == "widget"
-    assert body["items"][0]["website_id"] == "site_a"
-    assert body["items"][0]["visitor_id"] == "visitor_x"
-    # Admin listing must always scope to widget source and forward filters.
+    # Admin listing filters by source and platform user only.
     assert store.list_calls[0]["source"] == "widget"
-    assert store.list_calls[0]["website_id"] == "site_a"
+    assert store.list_calls[0]["user_id"] == 7
     assert store.list_calls[0]["keyword"] == "嵌入"
 
-    messages = client.get("/api/v1/nl2sql-admin/widget-topics/topic_widget_1/messages")
+    messages = client.get("/api/v1/nl2sql-admin/topics/topic_widget_1/messages")
     assert messages.status_code == 200
     assert messages.json()["topic_id"] == "topic_widget_1"
     # Admin message read bypasses owner isolation via context=None.
     assert store.message_calls[0]["context"] is None
 
-    missing = client.get("/api/v1/nl2sql-admin/widget-topics/unknown/messages")
+    missing = client.get("/api/v1/nl2sql-admin/topics/unknown/messages")
     assert missing.status_code == 404
 
 
@@ -602,7 +600,6 @@ def test_admin_routes_require_admin_when_auth_enabled(monkeypatch):
 
     # 未登录 → 401
     assert client.get("/api/v1/nl2sql-admin/settings").status_code == 401
-    assert client.get("/api/v1/nl2sql-admin/widget-topics").status_code == 401
     assert client.get("/api/v1/nl2sql-admin/topics").status_code == 401
     assert client.get("/api/v1/dataagent/skills/documents").status_code == 401
     assert client.post("/api/v1/dataagent/agents", json={"name": "x"}).status_code == 401

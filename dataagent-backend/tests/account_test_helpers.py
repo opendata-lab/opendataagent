@@ -98,8 +98,6 @@ class FakeAccountStore:
             id=uid,
             username=row["username"],
             display_name=row["display_name"] or row["username"],
-            email=row["email"],
-            email_verified=bool(row["email_verified"]),
             is_active=bool(row["is_active"]),
             roles=roles,
             identities=idents,
@@ -156,7 +154,7 @@ class FakeAccountStore:
         items: list[User] = []
         for row in sorted(self.users.values(), key=lambda x: x["id"]):
             u = self._hydrate(row)
-            if kw and kw not in u.username.lower() and kw not in u.display_name.lower() and kw not in (u.email or "").lower():
+            if kw and kw not in u.username.lower() and kw not in u.display_name.lower():
                 continue
             if is_active is not None and u.is_active != is_active:
                 continue
@@ -178,8 +176,6 @@ class FakeAccountStore:
         username: str,
         display_name: str = "",
         password_hash: str,
-        email: str | None = None,
-        email_verified: bool = False,
         role_ids: Sequence[int] | None = None,
         role_keys: Sequence[str] | None = None,
         is_active: bool = True,
@@ -200,13 +196,10 @@ class FakeAccountStore:
         uid = self._next_uid
         self._next_uid += 1
         now = _now_iso()
-        clean_email = str(email or "").strip() or None
         self.users[uid] = {
             "id": uid,
             "username": clean_username,
             "display_name": str(display_name or "").strip() or clean_username,
-            "email": clean_email,
-            "email_verified": bool(clean_email and email_verified),
             "password_hash": password_hash,
             "is_active": bool(is_active),
             "created_at": now,
@@ -222,8 +215,6 @@ class FakeAccountStore:
         user_id: int,
         *,
         display_name: str | None = None,
-        email: Any = ...,
-        email_verified: bool | None = None,
         is_active: bool | None = None,
         role_ids: Sequence[int] | None = None,
         acting_user_id: int | None = None,
@@ -238,13 +229,6 @@ class FakeAccountStore:
             if not clean_d:
                 raise ValueError("显示名不能为空")
             row["display_name"] = clean_d
-        if email is not ...:
-            clean_e = str(email or "").strip() or None
-            if email_verified is not None:
-                row["email_verified"] = bool(clean_e and email_verified)
-            elif clean_e != row["email"]:
-                row["email_verified"] = False
-            row["email"] = clean_e
         if is_active is not None:
             if not is_active and acting_user_id == uid:
                 raise ValueError("不能停用当前登录账号")
@@ -311,8 +295,6 @@ class FakeAccountStore:
         prof = dict(profile or {})
         raw_username = str(prof.get("username") or prof.get("preferred_username") or subject).strip()
         raw_display = str(prof.get("display_name") or prof.get("name") or "").strip()
-        raw_email = str(prof.get("email") or "").strip() or None
-        email_verified = bool(prof.get("email_verified")) and bool(raw_email)
 
         existing = self.get_user_by_identity(source, subject)
         if existing is not None:
@@ -322,9 +304,6 @@ class FakeAccountStore:
             row["last_login_at"] = _now_iso()
             if not row["display_name"] and raw_display:
                 row["display_name"] = raw_display
-            if not row["email"] and email_verified and raw_email:
-                row["email"] = raw_email
-                row["email_verified"] = True
             return self._hydrate(row)
 
         candidate = validate_username(raw_username)
@@ -333,8 +312,6 @@ class FakeAccountStore:
             matched_user = self._hydrate(matched_row)
             if not trusted_username_namespace:
                 raise IdentityConflictError(f"用户名 {candidate!r} 已存在且未绑定外部身份")
-            if matched_user.is_admin:
-                raise IdentityConflictError(f"管理员账号 {candidate!r} 不能通过外部登录或 Widget 使用")
             if not matched_user.is_active:
                 raise AccountDisabledError("账号已停用")
             self.add_identity(matched_user.id, source, subject)
@@ -346,8 +323,6 @@ class FakeAccountStore:
             username=candidate,
             display_name=raw_display or candidate,
             password_hash=pw_hash,
-            email=raw_email if email_verified else None,
-            email_verified=email_verified,
             role_keys=[ROLE_USER],
         )
         self.add_identity(created.id, source, subject)
@@ -525,7 +500,6 @@ def install_fake_accounts(
     cfg = settings or AuthSettings(
         secret_key=TEST_SECRET_KEY,
         default_user_password=TEST_DEFAULT_PASSWORD,
-        auto_register_enabled=True,
     )
     set_auth_settings_for_tests(cfg)
     store = FakeAccountStore(valid_agent_ids=valid_agent_ids)

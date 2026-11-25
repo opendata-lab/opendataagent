@@ -1,6 +1,7 @@
 """Agent visibility mode normalization and access checks.
 
-``da_agent_profile.visibility_json`` stores only ``{"mode": "all|authenticated|selected"}``.
+``da_agent_profile.visibility_json`` stores only ``{"mode": "all|selected"}``.
+Every caller is signed in, so "all" means every signed-in user.
 When ``mode == "selected"``, access grants live solely in ``da_agent_grant``
 (managed through ``core.accounts``). Legacy ``allowed_users`` and
 ``allowed_groups`` fields are stripped and no longer persisted.
@@ -14,11 +15,9 @@ from core.accounts.models import User
 from core.accounts.service import can_user_access_agent, filter_accessible_agents
 
 VISIBILITY_MODE_ALL = "all"
-VISIBILITY_MODE_AUTHENTICATED = "authenticated"
 VISIBILITY_MODE_SELECTED = "selected"
 VISIBILITY_MODES = (
     VISIBILITY_MODE_ALL,
-    VISIBILITY_MODE_AUTHENTICATED,
     VISIBILITY_MODE_SELECTED,
 )
 

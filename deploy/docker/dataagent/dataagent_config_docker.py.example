@@ -27,9 +27,6 @@ SECRET_KEY = "CHANGE-ME-generate-with-secrets.token_urlsafe(32)"
 # ---------------------------------------------------------------------------
 DEFAULT_USER_PASSWORD = ""
 
-# 是否允许 OAuth 或受信任代理 Widget 首次登录时自动创建平台账号。
-AUTO_REGISTER_ENABLED = True
-
 # 会话有效期（秒），默认 8 小时。
 SESSION_TTL_SECONDS = 28800
 
@@ -68,7 +65,7 @@ OAUTH_PROVIDERS = [
 
 # ---------------------------------------------------------------------------
 # UserInfo 获取与归一化钩子（OAuth 启用时必填）。
-# 仅返回身份和资料字段（sub / username / display_name / email / email_verified），
+# 仅返回身份和资料字段（sub / username / display_name），
 # 不再由 OAuth 钩子下发 role；角色统一在后台「角色管理 / 用户管理」维护。
 #
 #   from custom_sso_user_info import oauth_user_info

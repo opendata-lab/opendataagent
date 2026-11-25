@@ -14,7 +14,6 @@ from core.accounts import (
     OAUTH_STATE_COOKIE,
     OAUTH_STATE_COOKIE_MAX_AGE,
     AccountDisabledError,
-    AutoRegisterUnavailableError,
     IdentityConflictError,
     User,
     authenticate_password,
@@ -252,21 +251,10 @@ async def oauth_callback(provider: str, request: Request):
         logger.error("OAUTH_USER_INFO returned invalid preferred_username")
         return _terminal_oauth_redirect("oauth_user_info_failed")
 
-    raw_email = userinfo.get("email")
-    email_verified = userinfo.get("email_verified") is True
-    email = ""
-    if raw_email not in (None, ""):
-        if not _valid_identity_text(raw_email):
-            logger.error("OAUTH_USER_INFO returned invalid email")
-            return _terminal_oauth_redirect("oauth_user_info_failed")
-        email = raw_email
-
     # Role claims from OAUTH_USER_INFO are deliberately ignored; roles live solely in MySQL.
     profile = {
         "username": preferred_username or oauth_sub,
         "display_name": display_name or preferred_username or oauth_sub,
-        "email": email if email_verified else "",
-        "email_verified": email_verified,
     }
     try:
         user = await anyio.to_thread.run_sync(
@@ -281,8 +269,6 @@ async def oauth_callback(provider: str, request: Request):
         return _terminal_oauth_redirect("account_disabled")
     except IdentityConflictError:
         return _terminal_oauth_redirect("identity_conflict")
-    except AutoRegisterUnavailableError:
-        return _terminal_oauth_redirect("auto_register_disabled")
     except ValueError:
         return _terminal_oauth_redirect("oauth_user_info_failed")
 

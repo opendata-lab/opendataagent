@@ -6,7 +6,7 @@ Base URL：`http://<DataAgent 主机>:8900/api/v1/nl2sql`。DataAgent 始终启�
 
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| `GET` / `PUT` | `/profile` | `menu:profile` | 查看个人资料（含角色、外部身份、菜单、可用助手）/ 修改显示名与邮箱（手工修改标记未验证） |
+| `GET` / `PUT` | `/profile` | `menu:profile` | 查看个人资料（含角色、外部身份、菜单、可用助手）/ 修改显示名 |
 | `PUT` | `/profile/password` | `menu:profile` | 修改本人密码 |
 | `GET` / `POST` | `/users` | `users:manage` | 列出 / 新建用户（使用系统默认初始密码） |
 | `GET` / `PUT` | `/users/{user_id}` | `users:manage` | 查看 / 编辑用户、角色或启用停用（不提供物理删除） |

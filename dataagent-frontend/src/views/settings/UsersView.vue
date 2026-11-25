@@ -40,16 +40,6 @@
       <el-table-column label="显示名" min-width="130" show-overflow-tooltip>
         <template #default="{ row }">{{ row.display_name || '—' }}</template>
       </el-table-column>
-      <el-table-column label="邮箱" min-width="180" show-overflow-tooltip>
-        <template #default="{ row }">
-          <span v-if="row.email">
-            {{ row.email }}
-            <el-tag v-if="row.email_verified" size="small" type="success" class="inline-tag">已验证</el-tag>
-            <el-tag v-else size="small" type="info" class="inline-tag">未验证</el-tag>
-          </span>
-          <span v-else class="muted">—</span>
-        </template>
-      </el-table-column>
       <el-table-column label="角色" min-width="160">
         <template #default="{ row }">
           <div class="tag-list">
@@ -120,9 +110,6 @@
         <el-form-item label="显示名">
           <el-input v-model="createForm.display_name" placeholder="例如 张三（留空默认同用户名）" />
         </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="createForm.email" placeholder="可选，例如 zhangsan@example.com" />
-        </el-form-item>
         <el-form-item label="角色">
           <el-select v-model="createForm.role_ids" multiple placeholder="默认分配普通用户角色" style="width: 100%">
             <el-option
@@ -151,9 +138,6 @@
         </el-form-item>
         <el-form-item label="显示名">
           <el-input v-model="editForm.display_name" placeholder="显示名" />
-        </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="editForm.email" placeholder="可选，留空清除邮箱" />
         </el-form-item>
         <el-form-item label="角色">
           <el-select v-model="editForm.role_ids" multiple placeholder="选择角色" style="width: 100%">
@@ -195,10 +179,10 @@ const loading = ref(false)
 const submitting = ref(false)
 
 const createVisible = ref(false)
-const createForm = reactive({ username: '', display_name: '', email: '', role_ids: [] })
+const createForm = reactive({ username: '', display_name: '', role_ids: [] })
 
 const editVisible = ref(false)
-const editForm = reactive({ id: null, username: '', display_name: '', email: '', role_ids: [] })
+const editForm = reactive({ id: null, username: '', display_name: '', role_ids: [] })
 
 
 const formatTime = (value) => (value ? String(value).replace('T', ' ').slice(0, 19) : '—')
@@ -238,7 +222,6 @@ function openCreateDialog() {
   const defaultUserRole = roles.value.find((r) => r.role_key === 'user')
   createForm.username = ''
   createForm.display_name = ''
-  createForm.email = ''
   createForm.role_ids = defaultUserRole ? [defaultUserRole.id] : []
   createVisible.value = true
 }
@@ -253,7 +236,6 @@ async function submitCreate() {
     await dataagentApi.createUser({
       username: createForm.username.trim(),
       display_name: createForm.display_name.trim(),
-      email: createForm.email.trim() || null,
       role_ids: createForm.role_ids
     })
     ElMessage.success('用户已创建（使用默认初始密码）')
@@ -270,7 +252,6 @@ function openEditDialog(row) {
   editForm.id = row.id
   editForm.username = row.username
   editForm.display_name = row.display_name || ''
-  editForm.email = row.email || ''
   editForm.role_ids = (row.roles || []).map((r) => r.id)
   editVisible.value = true
 }
@@ -280,7 +261,6 @@ async function submitEdit() {
   try {
     await dataagentApi.updateUser(editForm.id, {
       display_name: editForm.display_name.trim(),
-      email: editForm.email.trim() || null,
       role_ids: editForm.role_ids
     })
     ElMessage.success('用户信息已更新')
@@ -388,9 +368,6 @@ onMounted(() => {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
-}
-.inline-tag {
-  margin-left: 6px;
 }
 .muted {
   color: #94a3b8;

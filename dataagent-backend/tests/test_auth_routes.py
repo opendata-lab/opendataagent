@@ -43,7 +43,6 @@ def _setup_oauth(*, trusted_username_namespace: bool = False):
     settings = AuthSettings(
         secret_key=TEST_SECRET_KEY,
         default_user_password=TEST_DEFAULT_PASSWORD,
-        auto_register_enabled=True,
         oauth=oauth,
         oauth_user_info=lambda p, t, r: t.get("userinfo") or {"sub": "u-100"},
         oauth_trusted_username_namespace=trusted_username_namespace,

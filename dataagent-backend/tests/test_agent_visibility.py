@@ -40,7 +40,9 @@ def test_normalize_defaults_and_strips_legacy_lists():
 
 
 def test_normalize_accepts_json_string_and_known_modes():
-    assert normalize_agent_visibility('{"mode": "authenticated"}') == {"mode": "authenticated"}
+    assert normalize_agent_visibility('{"mode": "all"}') == {"mode": "all"}
+    # The retired "authenticated" mode reads as "all": every caller is signed in.
+    assert normalize_agent_visibility('{"mode": "authenticated"}') == {"mode": "all"}
     assert normalize_agent_visibility({"mode": " Selected "}) == {"mode": "selected"}
 
 

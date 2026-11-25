@@ -219,7 +219,7 @@ def test_normalize_agent_profile_payload_accepts_visibility_scope():
 def test_normalize_agent_profile_payload_preserves_existing_visibility_on_partial_update():
     existing = {
         "name": "受限智能体",
-        "visibility": {"mode": "authenticated", "allowed_users": [], "allowed_groups": []},
+        "visibility": {"mode": "selected", "allowed_users": [], "allowed_groups": []},
     }
     payload = agent_profile_service.normalize_agent_profile_payload(
         {"description": "只改描述"},
@@ -228,7 +228,7 @@ def test_normalize_agent_profile_payload_preserves_existing_visibility_on_partia
         available_mcp_server_ids=set(),
     )
 
-    assert payload["visibility"]["mode"] == "authenticated"
+    assert payload["visibility"]["mode"] == "selected"
 
 
 def test_normalize_agent_profile_payload_rejects_invalid_visibility_mode():

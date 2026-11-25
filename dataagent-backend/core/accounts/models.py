@@ -66,8 +66,6 @@ class User:
     id: int
     username: str
     display_name: str
-    email: str | None = None
-    email_verified: bool = False
     is_active: bool = True
     roles: tuple[RoleRef, ...] = field(default_factory=tuple)
     identities: tuple[IdentityRef, ...] = field(default_factory=tuple)
@@ -98,8 +96,6 @@ class User:
             "user_id": self.id,
             "username": self.username,
             "display_name": self.display_name or self.username,
-            "email": self.email,
-            "email_verified": self.email_verified,
             "is_active": self.is_active,
             "is_admin": self.is_admin,
             "roles": [r.to_dict() for r in self.roles],

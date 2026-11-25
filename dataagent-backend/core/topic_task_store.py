@@ -683,12 +683,8 @@ class TopicTaskStore(SessionCheckpointStore):
     def admin_list_topics(
         self,
         *,
-        source: str = "widget",
-        website_id: str | None = None,
-        external_user_id: str | None = None,
-        visitor_id: str | None = None,
+        source: str = "",
         user_id: int | None = None,
-        auth_user_id: str | None = None,
         agent_id: str | None = None,
         keyword: str | None = None,
         start: str | None = None,
@@ -697,8 +693,8 @@ class TopicTaskStore(SessionCheckpointStore):
         page_size: int = 20,
     ) -> dict[str, Any]:
         """Admin-only paginated read across topics, bypassing the per-user
-        context isolation used by `list_topics`. Defaults to widget-sourced
-        topics. All filters are explicit and additive so the isolation
+        context isolation used by `list_topics`. Filters by source and platform
+        user (plus assistant, title keyword and time). All filters are explicit and additive so the isolation
         semantics in `_topic_context_predicate` are never reused or weakened.
         """
         self._ensure_ready()
@@ -714,17 +710,10 @@ class TopicTaskStore(SessionCheckpointStore):
             filters.append("t.user_id = %s")
             params.append(int(user_id))
 
-        for column, value in (
-            ("website_id", website_id),
-            ("external_user_id", external_user_id),
-            ("visitor_id", visitor_id),
-            ("auth_user_id", auth_user_id),
-            ("agent_id", agent_id),
-        ):
-            safe_value = str(value or "").strip()
-            if safe_value:
-                filters.append(f"t.{column} = %s")
-                params.append(safe_value)
+        safe_agent = str(agent_id or "").strip()
+        if safe_agent:
+            filters.append("t.agent_id = %s")
+            params.append(safe_agent)
 
         safe_keyword = str(keyword or "").strip()
         if safe_keyword:
@@ -793,86 +782,6 @@ class TopicTaskStore(SessionCheckpointStore):
             "page": safe_page,
             "page_size": safe_page_size,
         }
-
-    def admin_list_widget_users(
-        self,
-        *,
-        source: str = "widget",
-        website_id: str | None = None,
-        keyword: str | None = None,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        """Distinct widget users for the admin user filter. Each user is a
-        logged-in `external_user_id` or, when absent, an anonymous
-        `visitor_id`; the two namespaces are kept apart via `kind` so the
-        composite key matches the frontend's `ext:`/`vis:` filter value.
-        Returns the conversation count per user, most recently active first.
-        """
-        self._ensure_ready()
-        filters: list[str] = []
-        params: list[Any] = []
-
-        safe_source = str(source or "").strip().lower()
-        if safe_source:
-            filters.append("t.source = %s")
-            params.append(safe_source)
-
-        safe_website = str(website_id or "").strip()
-        if safe_website:
-            filters.append("t.website_id = %s")
-            params.append(safe_website)
-
-        # Only rows that actually carry a user identity.
-        filters.append(
-            "(NULLIF(t.external_user_id, '') IS NOT NULL OR NULLIF(t.visitor_id, '') IS NOT NULL)"
-        )
-
-        safe_keyword = str(keyword or "").strip()
-        if safe_keyword:
-            filters.append("(t.external_user_id LIKE %s OR t.visitor_id LIKE %s)")
-            params.append(f"%{safe_keyword}%")
-            params.append(f"%{safe_keyword}%")
-
-        where_sql = " AND ".join(filters) if filters else "1 = 1"
-        safe_limit = max(1, min(500, int(limit or 100)))
-
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT
-                        CASE WHEN NULLIF(t.external_user_id, '') IS NOT NULL
-                             THEN 'ext' ELSE 'vis' END AS kind,
-                        CASE WHEN NULLIF(t.external_user_id, '') IS NOT NULL
-                             THEN t.external_user_id ELSE t.visitor_id END AS user_id,
-                        COUNT(*) AS topic_count,
-                        MAX(t.updated_at) AS last_active_at
-                    FROM da_agent_topic t
-                    WHERE {where_sql}
-                    GROUP BY kind, user_id
-                    ORDER BY last_active_at DESC, topic_count DESC
-                    LIMIT %s
-                    """,
-                    [*params, safe_limit],
-                )
-                rows = cur.fetchall() or []
-        finally:
-            conn.close()
-
-        users: list[dict[str, Any]] = []
-        for row in rows:
-            user_id = str(row.get("user_id") or "").strip()
-            if not user_id:
-                continue
-            users.append(
-                {
-                    "kind": "ext" if str(row.get("kind") or "") == "ext" else "vis",
-                    "user_id": user_id,
-                    "topic_count": int(row.get("topic_count") or 0),
-                }
-            )
-        return users
 
     def get_topic(self, topic_id: str, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
         self._ensure_ready()

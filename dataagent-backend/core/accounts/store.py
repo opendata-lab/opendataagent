@@ -131,8 +131,6 @@ class AccountStore:
                     id=uid,
                     username=str(row["username"]),
                     display_name=str(row.get("display_name") or "") or str(row["username"]),
-                    email=str(row["email"]).strip() if row.get("email") else None,
-                    email_verified=bool(row.get("email_verified")),
                     is_active=bool(row.get("is_active")),
                     roles=roles,
                     identities=tuple(identities_by_uid.get(uid) or ()),
@@ -274,9 +272,9 @@ class AccountStore:
         params: list[Any] = []
         clean_kw = str(keyword or "").strip()
         if clean_kw:
-            where.append("(u.username LIKE %s OR u.display_name LIKE %s OR COALESCE(u.email, '') LIKE %s)")
+            where.append("(u.username LIKE %s OR u.display_name LIKE %s)")
             like = f"%{clean_kw}%"
-            params.extend([like, like, like])
+            params.extend([like, like])
         if is_active is not None:
             where.append("u.is_active = %s")
             params.append(1 if is_active else 0)
@@ -320,15 +318,12 @@ class AccountStore:
         username: str,
         display_name: str = "",
         password_hash: str,
-        email: str | None = None,
-        email_verified: bool = False,
         role_ids: Sequence[int] | None = None,
         role_keys: Sequence[str] | None = None,
         is_active: bool = True,
     ) -> User:
         clean_username = validate_username(username)
         clean_display = str(display_name or "").strip()[:255] or clean_username
-        clean_email = str(email or "").strip()[:255] or None
 
         conn = self._connect()
         try:
@@ -352,14 +347,12 @@ class AccountStore:
 
                 cur.execute(
                     """
-                    INSERT INTO da_user (username, display_name, email, email_verified, password_hash, is_active)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO da_user (username, display_name, password_hash, is_active)
+                    VALUES (%s, %s, %s, %s)
                     """,
                     (
                         clean_username,
                         clean_display,
-                        clean_email,
-                        1 if (clean_email and email_verified) else 0,
                         password_hash,
                         1 if is_active else 0,
                     ),
@@ -385,8 +378,6 @@ class AccountStore:
         user_id: int,
         *,
         display_name: str | None = None,
-        email: Any = ...,
-        email_verified: bool | None = None,
         is_active: bool | None = None,
         role_ids: Sequence[int] | None = None,
         acting_user_id: int | None = None,
@@ -409,15 +400,6 @@ class AccountStore:
                         raise ValueError("显示名不能为空")
                     updates.append("display_name = %s")
                     params.append(clean_display)
-                if email is not ...:
-                    clean_email = str(email or "").strip()[:255] or None
-                    updates.append("email = %s")
-                    params.append(clean_email)
-                    if email_verified is not None:
-                        updates.append("email_verified = %s")
-                        params.append(1 if (clean_email and email_verified) else 0)
-                    elif clean_email != current.email:
-                        updates.append("email_verified = 0")
                 if is_active is not None:
                     if not is_active and acting_user_id is not None and acting_user_id == uid:
                         raise ValueError("不能停用当前登录账号")
@@ -501,8 +483,6 @@ class AccountStore:
         prof = dict(profile or {})
         raw_username = str(prof.get("username") or prof.get("preferred_username") or clean_subject).strip()
         raw_display = str(prof.get("display_name") or prof.get("name") or "").strip()[:255]
-        raw_email = str(prof.get("email") or "").strip()[:255] or None
-        email_verified = bool(prof.get("email_verified")) and bool(raw_email)
 
         for attempt in range(4):
             conn = self._connect()
@@ -530,11 +510,6 @@ class AccountStore:
                         if not str(row.get("display_name") or "").strip() and raw_display:
                             updates.append("display_name = %s")
                             params.append(raw_display)
-                        # Only fill empty email when explicitly verified by the IdP.
-                        if not row.get("email") and email_verified and raw_email:
-                            updates.append("email = %s")
-                            updates.append("email_verified = 1")
-                            params.append(raw_email)
                         cur.execute(
                             f"UPDATE da_user SET {', '.join(updates)} WHERE id = %s",
                             [*params, user.id],
@@ -559,10 +534,6 @@ class AccountStore:
                             raise IdentityConflictError(
                                 f"用户名 {candidate_username!r} 已存在且未绑定外部身份，请联系管理员核对绑定"
                             )
-                        if existing_user.is_admin:
-                            raise IdentityConflictError(
-                                f"管理员账号 {candidate_username!r} 不能通过外部登录或 Widget 使用"
-                            )
                         if not existing_user.is_active:
                             raise AccountDisabledError("账号已停用")
                         cur.execute(
@@ -574,10 +545,6 @@ class AccountStore:
                         if not str(existing_row.get("display_name") or "").strip() and raw_display:
                             updates.append("display_name = %s")
                             params.append(raw_display)
-                        if not existing_row.get("email") and email_verified and raw_email:
-                            updates.append("email = %s")
-                            updates.append("email_verified = 1")
-                            params.append(raw_email)
                         cur.execute(
                             f"UPDATE da_user SET {', '.join(updates)} WHERE id = %s",
                             [*params, existing_user.id],
@@ -595,14 +562,12 @@ class AccountStore:
                     cur.execute(
                         """
                         INSERT INTO da_user
-                            (username, display_name, email, email_verified, password_hash, is_active, last_login_at)
-                        VALUES (%s, %s, %s, %s, %s, 1, %s)
+                            (username, display_name, password_hash, is_active, last_login_at)
+                        VALUES (%s, %s, %s, 1, %s)
                         """,
                         (
                             candidate_username,
                             initial_display,
-                            raw_email if email_verified else None,
-                            1 if email_verified else 0,
                             password_hash,
                             now,
                         ),

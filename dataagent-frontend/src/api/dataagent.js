@@ -227,14 +227,6 @@ export const dataagentApi = {
     return dataagentRequest.get('/v1/nl2sql-admin/topics', { params })
   },
 
-  listWidgetTopics(params = {}) {
-    return dataagentRequest.get('/v1/nl2sql-admin/widget-topics', { params })
-  },
-
-  listWidgetUsers(params = {}) {
-    return dataagentRequest.get('/v1/nl2sql-admin/widget-users', { params })
-  },
-
   listAuthUsers(params = {}) {
     return dataagentRequest.get('/v1/nl2sql-admin/auth-users', { params })
   },

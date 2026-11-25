@@ -99,7 +99,6 @@ def ensure_local_user(
     username: str,
     password: str,
     display_name: str = "",
-    email: str | None = None,
     is_admin: bool = False,
 ) -> User:
     """Create or update a local user (for bootstrap CLI, local dev, and smoke tests)."""
@@ -112,7 +111,6 @@ def ensure_local_user(
             username=username,
             display_name=display_name or username,
             password_hash=pw_hash,
-            email=email,
             role_keys=role_keys,
             is_active=True,
         )
@@ -144,8 +142,6 @@ def link_or_register(
     store = get_account_store()
 
     def _pw_fn() -> str:
-        if not cfg.auto_register_enabled:
-            raise AutoRegisterUnavailableError("自动注册已关闭")
         return _default_password_hash()
 
     return store.link_or_register(
@@ -233,22 +229,9 @@ def current_account_context(request: Request) -> AccountContext:
             detail={"code": "WIDGET_LOGIN_REQUIRED", "message": "请先登录后使用智能问数"},
         )
     # The host's user name is the platform user name (user decision 2026-11-24):
-    # it binds to the same-named account or registers it.
-    display_name = _clean_header(request.headers.get("X-DataAgent-User-Display-Name"), 255)
-    email = _clean_header(request.headers.get("X-DataAgent-User-Email"), 255)
-    email_verified = _clean_header(request.headers.get("X-DataAgent-User-Email-Verified"), 16).lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    profile = {
-        "username": raw_user_id,
-        "display_name": display_name,
-        "email": email,
-        "email_verified": email_verified,
-    }
+    # it binds to the same-named account or registers it. Only the name is forwarded.
     try:
-        user = link_or_register(website_id, raw_user_id, profile, trusted_username_namespace=True)
+        user = link_or_register(website_id, raw_user_id, {"username": raw_user_id}, trusted_username_namespace=True)
     except AccountDisabledError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except IdentityConflictError as exc:
@@ -356,7 +339,7 @@ def can_user_access_agent(user: User | None, profile: dict[str, Any] | None) -> 
         return True
     visibility = profile.get("visibility") or {}
     mode = str(visibility.get("mode") or "all").strip().lower()
-    if mode in {"all", "authenticated"}:
+    if mode != "selected":  # "all": every signed-in user
         return True
     agent_id = str(profile.get("agent_id") or "").strip()
     if not agent_id:
@@ -392,7 +375,7 @@ def filter_accessible_agents(user: User | None, profiles: list[dict[str, Any]]) 
     visible: list[dict[str, Any]] = []
     for profile in profiles:
         mode = str((profile.get("visibility") or {}).get("mode") or "all").strip().lower()
-        if mode in {"all", "authenticated"}:
+        if mode != "selected":  # "all": every signed-in user
             visible.append(profile)
             continue
         if granted is None:

@@ -32,7 +32,6 @@ router = APIRouter(prefix="/api/v1/dataagent", tags=["accounts"])
 
 class ProfileUpdateRequest(BaseModel):
     display_name: Optional[str] = None
-    email: Optional[str] = None
 
 
 class PasswordChangeRequest(BaseModel):
@@ -43,13 +42,11 @@ class PasswordChangeRequest(BaseModel):
 class UserCreateRequest(BaseModel):
     username: str = Field(min_length=1, max_length=128)
     display_name: str = ""
-    email: Optional[str] = None
     role_ids: Optional[List[int]] = None
 
 
 class UserUpdateRequest(BaseModel):
     display_name: Optional[str] = None
-    email: Optional[str] = None
     is_active: Optional[bool] = None
     role_ids: Optional[List[int]] = None
 
@@ -120,9 +117,6 @@ def update_profile(
         updated = get_account_store().update_user(
             user.id,
             display_name=fields["display_name"] if "display_name" in fields else None,
-            email=fields["email"] if "email" in fields else ...,
-            # Manual email changes are always saved as unverified.
-            email_verified=False if "email" in fields else None,
         )
     except Exception as exc:
         raise _map_account_error(exc) from exc
@@ -190,8 +184,6 @@ def create_user(
         created = get_account_store().create_user(
             username=payload.username,
             display_name=payload.display_name,
-            email=payload.email,
-            email_verified=False,
             password_hash=pw_hash,
             role_ids=payload.role_ids,
         )
@@ -227,7 +219,6 @@ def update_user(
         updated = get_account_store().update_user(
             user_id,
             display_name=fields["display_name"] if "display_name" in fields else None,
-            email=fields["email"] if "email" in fields else ...,
             is_active=fields["is_active"] if "is_active" in fields else None,
             role_ids=fields["role_ids"] if "role_ids" in fields else None,
             acting_user_id=actor.id,

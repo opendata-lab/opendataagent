@@ -92,7 +92,7 @@ def test_weak_secret_key_fails_startup(tmp_path, secret):
         load_auth_settings(path)
 
 
-def test_oauth_requires_user_info_and_default_password_when_auto_register_enabled(tmp_path):
+def test_oauth_requires_user_info_and_default_password(tmp_path):
     provider = {
         "name": "SSO",
         "remote_app": {
@@ -109,7 +109,7 @@ def test_oauth_requires_user_info_and_default_password_when_auto_register_enable
     with pytest.raises(AuthConfigError, match="OAUTH_USER_INFO"):
         load_auth_settings(p1)
 
-    # Missing DEFAULT_USER_PASSWORD when auto_register=True -> fail
+    # Missing DEFAULT_USER_PASSWORD -> fail
     p2 = write_config(
         tmp_path,
         f"SECRET_KEY = {VALID_SECRET!r}\nOAUTH_PROVIDERS = {[provider]!r}\n{VALID_OAUTH_USER_INFO}",

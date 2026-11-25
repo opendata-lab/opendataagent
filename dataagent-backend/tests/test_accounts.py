@@ -113,22 +113,16 @@ def test_jwt_contains_no_role_claims_and_role_revocation_is_immediate():
     assert client.get("/api/v1/dataagent/users", headers={"Authorization": f"Bearer {token}"}).status_code == 403
 
 
-def test_link_or_register_auto_registration_conflict_and_admin_protection():
+def test_link_or_register_auto_registration_and_conflict():
     store, admin, alice = install_fake_accounts()
 
     # 1. Brand new external user auto-registers with default password and 'user' role.
-    bob = link_or_register("SSO", "u-bob", {"preferred_username": "bob", "display_name": "鲍勃", "email": "bob@x.com", "email_verified": True})
+    bob = link_or_register("SSO", "u-bob", {"preferred_username": "bob", "display_name": "鲍勃"})
     assert bob.username == "bob"
     assert bob.display_name == "鲍勃"
-    assert bob.email == "bob@x.com"
-    assert bob.email_verified is True
     assert bob.role_keys == frozenset({ROLE_USER})
     # Default password works on main-site login immediately.
     assert authenticate_password("bob", TEST_DEFAULT_PASSWORD) is not None
-
-    # 2. Unverified email is not stored on auto-registration.
-    carol = link_or_register("SSO", "u-carol", {"preferred_username": "carol", "email": "carol@x.com", "email_verified": False})
-    assert carol.email is None
 
     # 3. Unbound external identity colliding with existing username fails without trusted namespace.
     with pytest.raises(IdentityConflictError):
@@ -138,9 +132,8 @@ def test_link_or_register_auto_registration_conflict_and_admin_protection():
     bound_alice = link_or_register("odw", "alice", {"username": "alice"}, trusted_username_namespace=True)
     assert bound_alice.id == alice.id
 
-    # 5. Even with trusted_username_namespace=True, admin accounts MUST be bound explicitly!
-    with pytest.raises(IdentityConflictError):
-        link_or_register("odw", "admin", {"username": "admin"}, trusted_username_namespace=True)
+    # 5. The trusted host's "admin" is the platform admin (user decision 2026-11-24).
+    assert link_or_register("odw", "admin", {"username": "admin"}, trusted_username_namespace=True).id == admin.id
 
     # 6. Disabled user is rejected on subsequent external login.
     store.update_user(bob.id, is_active=False)
@@ -178,13 +171,11 @@ def test_user_role_profile_and_grant_apis(monkeypatch):
 
     prof_upd = client.put(
         "/api/v1/dataagent/profile",
-        json={"display_name": "大卫王", "email": "dave@corp.local"},
+        json={"display_name": "大卫王"},
         headers=bearer_headers(dave_id),
     )
     assert prof_upd.status_code == 200
     assert prof_upd.json()["display_name"] == "大卫王"
-    assert prof_upd.json()["email"] == "dave@corp.local"
-    assert prof_upd.json()["email_verified"] is False
 
     pw_bad = client.put(
         "/api/v1/dataagent/profile/password",

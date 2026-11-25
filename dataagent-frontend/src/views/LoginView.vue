@@ -78,7 +78,6 @@ const OAUTH_ERROR_MESSAGES = {
   oauth_missing_user_id: 'OAuth 登录失败：身份服务未返回用户标识',
   account_disabled: '您的账号已被停用，请联系管理员',
   identity_conflict: '外部身份与现有账号存在冲突，请联系管理员绑定或排查',
-  auto_register_disabled: '系统已关闭自动注册，请联系管理员为您创建账号',
   access_denied: 'OAuth 登录已取消'
 }
 

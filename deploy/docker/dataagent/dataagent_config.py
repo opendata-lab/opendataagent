@@ -8,7 +8,7 @@
 
 可配置内容：
 - 认证（始终启用）：`SECRET_KEY` / `DEFAULT_USER_PASSWORD` /
-  `AUTO_REGISTER_ENABLED` / `OAUTH_PROVIDERS` / `OAUTH_USER_INFO` /
+  `OAUTH_PROVIDERS` / `OAUTH_USER_INFO` /
   `OAUTH_TRUSTED_USERNAME_NAMESPACE`（UserInfo 钩子见
   custom_sso_user_info.py.example）。用户、角色和助手授权统一存库管理，
   不再从配置文件读取 `LOCAL_ADMINS` 或 `ADMIN_USERS`。
@@ -36,7 +36,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 SECRET_KEY = ""
 DEFAULT_USER_PASSWORD = ""
-AUTO_REGISTER_ENABLED = True
 
 SESSION_TTL_SECONDS = 28800
 

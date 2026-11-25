@@ -63,8 +63,6 @@ describe('UsersView, RolesView, ProfileView', () => {
           id: 2,
           username: 'alice',
           display_name: 'Alice',
-          email: 'alice@example.com',
-          email_verified: false,
           is_active: true,
           roles: [{ id: 2, role_key: 'user', name: '普通用户' }],
           identities: [{ id: 9, source: 'CorpSSO', subject: 'u_9' }],
@@ -80,7 +78,6 @@ describe('UsersView, RolesView, ProfileView', () => {
 
     expect(wrapper.text()).toContain('alice')
     expect(wrapper.text()).toContain('Alice')
-    expect(wrapper.text()).toContain('未验证')
     expect(wrapper.text()).toContain('停用')
     expect(wrapper.text()).not.toContain('删除用户')
 
@@ -116,13 +113,11 @@ describe('UsersView, RolesView, ProfileView', () => {
     wrapper.unmount()
   })
 
-  it('ProfileView loads profile, saves display_name/email and refreshes auth store', async () => {
+  it('ProfileView loads profile, saves display_name and refreshes auth store', async () => {
     apiMocks.getProfile.mockResolvedValue({
       id: 2,
       username: 'alice',
       display_name: 'Alice',
-      email: 'alice@example.com',
-      email_verified: false,
       roles: [{ id: 2, role_key: 'user', name: '普通用户' }],
       identities: [{ id: 1, source: 'CorpSSO', subject: 'emp42' }],
       menus: ['menu:chat', 'menu:profile'],
@@ -132,8 +127,6 @@ describe('UsersView, RolesView, ProfileView', () => {
       id: 2,
       username: 'alice',
       display_name: 'Alice Chen',
-      email: 'alice.chen@example.com',
-      email_verified: false
     })
 
     const wrapper = mount(ProfileView, { global: { plugins: [ElementPlus] }, attachTo: document.body })
@@ -143,13 +136,11 @@ describe('UsersView, RolesView, ProfileView', () => {
     expect(wrapper.text()).toContain('默认助手')
 
     wrapper.vm.$.setupState.profileForm.display_name = 'Alice Chen'
-    wrapper.vm.$.setupState.profileForm.email = 'alice.chen@example.com'
     await wrapper.get('[data-testid="save-profile"]').trigger('click')
     await flushPromises()
 
     expect(apiMocks.updateProfile).toHaveBeenCalledWith({
-      display_name: 'Alice Chen',
-      email: 'alice.chen@example.com'
+      display_name: 'Alice Chen'
     })
     expect(refreshMeMock).toHaveBeenCalled()
     wrapper.unmount()

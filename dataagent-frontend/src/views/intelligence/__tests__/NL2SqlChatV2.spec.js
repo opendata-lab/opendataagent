@@ -52,7 +52,7 @@ vi.mock('@/utils/clipboard', () => ({ copyText }))
 
 const dataagentApiMock = vi.hoisted(() => ({
   listAdminTopics: vi.fn(),
-  listWidgetUsers: vi.fn(),
+  listAuthUsers: vi.fn(),
   getAdminTopic: vi.fn(),
   getAdminTopicMessages: vi.fn(),
   listAdminTopicFiles: vi.fn()
@@ -276,7 +276,7 @@ describe('NL2SqlChatV2 URL location', () => {
     scrollbarSetScrollTop.mockReset()
 
     dataagentApiMock.listAdminTopics.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 })
-    dataagentApiMock.listWidgetUsers.mockResolvedValue({ items: [] })
+    dataagentApiMock.listAuthUsers.mockResolvedValue({ items: [] })
     dataagentApiMock.getAdminTopicMessages.mockResolvedValue({
       topic_id: '', page: 1, page_size: 500, order: 'asc', total: 0, items: []
     })

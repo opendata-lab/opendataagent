@@ -17,16 +17,6 @@
           <el-form-item label="显示名">
             <el-input v-model="profileForm.display_name" placeholder="请输入显示名" data-testid="profile-display-name" />
           </el-form-item>
-          <el-form-item>
-            <template #label>
-              <span>邮箱</span>
-              <el-tag v-if="profile.email" size="small" :type="profile.email_verified ? 'success' : 'info'" class="inline-tag">
-                {{ profile.email_verified ? '已验证' : '未验证' }}
-              </el-tag>
-            </template>
-            <el-input v-model="profileForm.email" placeholder="可选" data-testid="profile-email" />
-            <div class="field-hint">手工修改的邮箱会保存为未验证状态。</div>
-          </el-form-item>
           <el-button type="primary" :loading="savingProfile" data-testid="save-profile" @click="saveProfile">
             保存资料
           </el-button>
@@ -137,15 +127,13 @@ const savingPassword = ref(false)
 const profile = ref({
   username: '',
   display_name: '',
-  email: '',
-  email_verified: false,
   roles: [],
   identities: [],
   menus: [],
   accessible_agents: []
 })
 
-const profileForm = reactive({ display_name: '', email: '' })
+const profileForm = reactive({ display_name: '' })
 const passwordForm = reactive({ current_password: '', new_password: '', confirm_password: '' })
 
 async function loadProfile() {
@@ -154,7 +142,6 @@ async function loadProfile() {
     const data = await dataagentApi.getProfile()
     profile.value = data || {}
     profileForm.display_name = String(data?.display_name || '')
-    profileForm.email = String(data?.email || '')
   } finally {
     loading.value = false
   }
@@ -164,8 +151,7 @@ async function saveProfile() {
   savingProfile.value = true
   try {
     const updated = await dataagentApi.updateProfile({
-      display_name: profileForm.display_name.trim(),
-      email: profileForm.email.trim() || null
+      display_name: profileForm.display_name.trim()
     })
     profile.value = { ...profile.value, ...updated }
     await authStore.refreshMe()
@@ -238,14 +224,6 @@ onMounted(loadProfile)
 .card-title {
   font-weight: 600;
   color: #0f172a;
-}
-.inline-tag {
-  margin-left: 6px;
-}
-.field-hint {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #94a3b8;
 }
 .readonly-section {
   margin-bottom: 14px;

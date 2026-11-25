@@ -285,8 +285,8 @@ def test_trusted_widget_user_name_is_the_platform_user(monkeypatch):
     assert emp_uid not in (None, alice.id)
     assert not acc_store.get_user(emp_uid).is_admin
 
-    # The admin account is never reachable through a Widget host.
-    assert client.get("/api/v1/nl2sql/topics", headers=widget_headers("admin")).status_code == 409
+    # The host's "admin" is the platform admin; platform routes still refuse Widget credentials.
+    assert client.get("/api/v1/nl2sql/topics", headers=widget_headers("admin")).status_code == 200
 
 
 def test_widget_origin_site_and_task_isolation(monkeypatch):
