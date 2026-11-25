@@ -95,6 +95,7 @@
                 filterable
                 remote
                 reserve-keyword
+                :teleported="false"
                 :remote-method="fetchFilterUsers"
                 :loading="filterUsersLoading"
                 placeholder="全部用户"

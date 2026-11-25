@@ -29,7 +29,7 @@
         <template #default="{ row }">{{ row.description || '—' }}</template>
       </el-table-column>
       <el-table-column label="成员" width="90">
-        <template #default="{ row }">{{ row.member_count ?? 0 }} 人</template>
+        <template #default="{ row }">{{ row.user_count ?? row.member_count ?? 0 }} 人</template>
       </el-table-column>
       <el-table-column label="助手授权" width="100">
         <template #default="{ row }">

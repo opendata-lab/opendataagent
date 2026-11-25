@@ -773,8 +773,8 @@ export const demoAdapter = async (config) => {
   if (method === 'get' && pathname === '/v1/dataagent/roles') {
     return createResponse(config, {
       items: [
-        { id: 1, role_key: 'admin', name: '管理员', description: '系统管理员', is_builtin: true, member_count: 1, agent_ids: [] },
-        { id: 2, role_key: 'user', name: '普通用户', description: '默认用户角色', is_builtin: true, member_count: 1, agent_ids: [] }
+        { id: 1, role_key: 'admin', name: '管理员', description: '系统管理员', is_builtin: true, user_count: 1, agent_ids: [] },
+        { id: 2, role_key: 'user', name: '普通用户', description: '默认用户角色', is_builtin: true, user_count: 1, agent_ids: [] }
       ]
     })
   }

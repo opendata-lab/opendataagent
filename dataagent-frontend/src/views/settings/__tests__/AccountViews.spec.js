@@ -88,8 +88,8 @@ describe('UsersView, RolesView, ProfileView', () => {
   it('RolesView lists built-in and custom roles and saves role agent grants', async () => {
     apiMocks.listRoles.mockResolvedValue({
       items: [
-        { id: 1, role_key: 'admin', name: '管理员', is_builtin: true, member_count: 1, agent_ids: [] },
-        { id: 3, role_key: 'analyst', name: '分析师', is_builtin: false, member_count: 2, agent_ids: ['agent_a'] }
+        { id: 1, role_key: 'admin', name: '管理员', is_builtin: true, user_count: 1, agent_ids: [] },
+        { id: 3, role_key: 'analyst', name: '分析师', is_builtin: false, user_count: 2, agent_ids: ['agent_a'] }
       ]
     })
     apiMocks.listAgentWorkbench.mockResolvedValue([{ agent_id: 'agent_a', name: '销售助手' }, { agent_id: 'agent_b', name: '财务助手' }])
@@ -100,6 +100,8 @@ describe('UsersView, RolesView, ProfileView', () => {
 
     expect(wrapper.text()).toContain('管理员')
     expect(wrapper.text()).toContain('分析师')
+    expect(wrapper.text()).toContain('1 人')
+    expect(wrapper.text()).toContain('2 人')
     expect(wrapper.text()).toContain('全部助手')
     expect(wrapper.text()).not.toContain('权限说明')
 
