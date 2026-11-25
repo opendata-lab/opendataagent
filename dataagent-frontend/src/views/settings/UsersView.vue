@@ -133,7 +133,13 @@
         </el-form-item>
         <el-form-item label="角色">
           <el-select v-model="createForm.role_ids" multiple placeholder="默认分配普通用户角色" style="width: 100%">
-            <el-option v-for="role in roles" :key="role.id" :label="`${role.name} (${role.role_key})`" :value="role.id" />
+            <el-option
+              v-for="role in roles"
+              :key="role.id"
+              :label="`${role.name} (${role.role_key})`"
+              :value="role.id"
+              :disabled="role.role_key === 'admin'"
+            />
           </el-select>
         </el-form-item>
       </el-form>
@@ -159,7 +165,13 @@
         </el-form-item>
         <el-form-item label="角色">
           <el-select v-model="editForm.role_ids" multiple placeholder="选择角色" style="width: 100%">
-            <el-option v-for="role in roles" :key="role.id" :label="`${role.name} (${role.role_key})`" :value="role.id" />
+            <el-option
+              v-for="role in roles"
+              :key="role.id"
+              :label="`${role.name} (${role.role_key})`"
+              :value="role.id"
+              :disabled="role.role_key === 'admin'"
+            />
           </el-select>
         </el-form-item>
       </el-form>

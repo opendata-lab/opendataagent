@@ -17,6 +17,7 @@
 - **要做**（跨仓库后续，计划第 4 步）：
   - **OpenDataWorks 仓库**：代理层加挂 `X-DataAgent-Access-Key`，传递当前登录用户标识（`local:<username>` 或 `<registration_id>:<sub>`），按目标环境核对 OAuth `provider_mappings` 与同命名空间配置。
   - **OntoFoundry 仓库**：代理层加挂 `X-DataAgent-Access-Key`，`X-DataAgent-User-Id` 改为当前登录用户（读时对账用会话 `created_by`），只允许会话创建人发问。
+  - **回退授权恢复未验证**（2026-11-24 Codex 审查第 11 条）：升级会清除已发布助手的 `allowed_users`，回退会删除 `da_agent_grant`。现有测试只验证降级、再升级命令成功，未验证回退并恢复备份后普通用户的指定助手访问。上线前在备份恢复演练中补一次该检查。
   - **上线前实测**：在目标部署核对 `LOCAL_ADMINS`/`ADMIN_USERS` 与账号映射，跑通 OpenDataWorks 个人续聊、OntoFoundry 按创建人建模会话、单助手 MCP 重申令牌及本地完整冒烟链路。
 - **来源**：2026-11-23 用户要求与 Claude、Argon 设计评审。[设计与用户引用盘点](design/2026-11-19-unified-conversation-history-design.md#独立登录-widget-的账号归属2026-11-23) · [实施计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)
 

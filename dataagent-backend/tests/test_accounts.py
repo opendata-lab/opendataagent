@@ -357,7 +357,8 @@ ADMIN_USERS = ["SSO:u-admin"]
             unknown_uid = identity[("SSO", "unknown")]
             assert len({legacy_uid, ghost_uid, case_uid, unknown_uid}) == 4
             assert ("SSO", "draft_only") not in identity
-            assert users["ghost"]["password_hash"].startswith("$argon2id$")
+            # No shared password before the owner signs in through the external identity.
+            assert users["ghost"]["password_hash"] == ""
             cur.execute("SELECT r.role_key FROM da_user_role ur JOIN da_role r ON r.id = ur.role_id WHERE ur.user_id = %s", (ghost_uid,))
             assert [r["role_key"] for r in cur.fetchall()] == ["user"]
 
@@ -487,42 +488,35 @@ def test_agent_grants_independent_of_draft_save_and_publish(monkeypatch):
 
 
 
-def test_default_password_never_reaches_an_administrator():
-    """The shared default password is for ordinary users only."""
+def test_admin_role_cannot_be_granted_through_the_api():
+    """Admins come only from the CLI (create-user --admin) or the cutover import."""
     store, admin, alice = install_fake_accounts()
     client = TestClient(main.app)
     headers = bearer_headers(admin.id)
     admin_role_id = next(r["id"] for r in store.list_roles() if r["role_key"] == "admin")
+    user_role_id = next(r["id"] for r in store.list_roles() if r["role_key"] == "user")
 
-    # Creating an account straight into the admin role is refused.
     created = client.post(
         "/api/v1/dataagent/users",
         json={"username": "eve", "display_name": "Eve", "role_ids": [admin_role_id]},
         headers=headers,
     )
     assert created.status_code == 400
-
-    # An ordinary account still on the default password cannot be promoted by either path.
-    dave = client.post("/api/v1/dataagent/users", json={"username": "dave", "display_name": "Dave"}, headers=headers)
-    dave_id = dave.json()["id"]
-    user_role_id = next(r["id"] for r in store.list_roles() if r["role_key"] == "user")
     promote = client.put(
-        f"/api/v1/dataagent/users/{dave_id}", json={"role_ids": [admin_role_id, user_role_id]}, headers=headers
+        f"/api/v1/dataagent/users/{alice.id}", json={"role_ids": [admin_role_id, user_role_id]}, headers=headers
     )
     assert promote.status_code == 400
     via_role = client.put(
-        f"/api/v1/dataagent/roles/{admin_role_id}/users", json={"user_ids": [admin.id, dave_id]}, headers=headers
+        f"/api/v1/dataagent/roles/{admin_role_id}/users", json={"user_ids": [admin.id, alice.id]}, headers=headers
     )
     assert via_role.status_code == 400
+    assert not store.get_user(alice.id).is_admin
 
-    # Alice has her own password, so she can be promoted; an admin can't be reset to the default.
-    promote_alice = client.put(
-        f"/api/v1/dataagent/users/{alice.id}", json={"role_ids": [admin_role_id, user_role_id]}, headers=headers
-    )
-    assert promote_alice.status_code == 200
-    reset = client.post(f"/api/v1/dataagent/users/{alice.id}/reset-password", headers=headers)
-    assert reset.status_code == 400
-    assert client.post(f"/api/v1/dataagent/users/{dave_id}/reset-password", headers=headers).status_code == 200
+    # Keeping the existing admin in the role is fine; an admin is never reset to the default password.
+    keep = client.put(f"/api/v1/dataagent/roles/{admin_role_id}/users", json={"user_ids": [admin.id]}, headers=headers)
+    assert keep.status_code == 200
+    assert client.post(f"/api/v1/dataagent/users/{admin.id}/reset-password", headers=headers).status_code == 400
+    assert client.post(f"/api/v1/dataagent/users/{alice.id}/reset-password", headers=headers).status_code == 200
 
 
 def test_draft_preview_runs_for_an_agent_manager_without_a_published_profile(monkeypatch):

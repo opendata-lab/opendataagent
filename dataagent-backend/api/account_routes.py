@@ -20,7 +20,6 @@ from core.accounts import (
     require_permission,
     verify_password,
 )
-from core.accounts.config import get_auth_settings
 from core.accounts.permissions import ROLE_ADMIN
 from core.agent_profile_service import list_agent_profiles
 
@@ -181,19 +180,7 @@ def _admin_role_id() -> int | None:
     return None
 
 
-def _require_private_passwords(user_ids) -> None:
-    """The default password is a shared credential for ordinary users only.
-
-    An account becomes an administrator only after it has its own password
-    (or has none, i.e. signs in through OAuth only).
-    """
-    default_pw = get_auth_settings().default_user_password
-    if not default_pw:
-        return
-    store = get_account_store()
-    for uid in user_ids:
-        if verify_password(default_pw, store.get_user_password_hash(uid))[0]:
-            raise HTTPException(status_code=400, detail="该账号仍在使用默认密码，本人修改密码后才能设为管理员")
+_NO_ADMIN_GRANT = "不支持把用户设为管理员；管理员只能通过命令行 create-user --admin 创建"
 
 
 @router.post("/users", status_code=201)
@@ -202,7 +189,7 @@ def create_user(
     _: User = Depends(require_permission("users:manage")),
 ):
     if _admin_role_id() in set(payload.role_ids or []):
-        raise HTTPException(status_code=400, detail="新账号使用默认密码，不能直接设为管理员；本人修改密码后再授予")
+        raise HTTPException(status_code=400, detail=_NO_ADMIN_GRANT)
     try:
         pw_hash = hash_default_password()
         created = get_account_store().create_user(
@@ -240,7 +227,7 @@ def update_user(
     if target is None:
         raise HTTPException(status_code=404, detail="用户不存在")
     if fields.get("role_ids") is not None and not target.is_admin and _admin_role_id() in set(fields["role_ids"]):
-        _require_private_passwords([user_id])
+        raise HTTPException(status_code=400, detail=_NO_ADMIN_GRANT)
     try:
         updated = get_account_store().update_user(
             user_id,
@@ -379,7 +366,8 @@ def set_role_users(
 ):
     if role_id == _admin_role_id():
         current = {int(item["id"]) for item in get_account_store().list_role_users(role_id)}
-        _require_private_passwords([uid for uid in payload.user_ids if uid not in current])
+        if any(uid not in current for uid in payload.user_ids):
+            raise HTTPException(status_code=400, detail=_NO_ADMIN_GRANT)
     try:
         return {"items": get_account_store().set_role_users(role_id, payload.user_ids)}
     except Exception as exc:

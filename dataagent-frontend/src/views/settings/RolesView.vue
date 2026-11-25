@@ -40,7 +40,14 @@
       <el-table-column label="操作" width="290" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openPermissionsDialog(row)">权限说明</el-button>
-          <el-button link type="primary" size="small" :data-testid="`role-members-${row.id}`" @click="openMembersDialog(row)">
+          <el-button
+            v-if="row.role_key !== 'admin'"
+            link
+            type="primary"
+            size="small"
+            :data-testid="`role-members-${row.id}`"
+            @click="openMembersDialog(row)"
+          >
             成员
           </el-button>
           <el-button

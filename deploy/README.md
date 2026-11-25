@@ -143,13 +143,15 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
    ```
 4. 重启 `dataagent-backend`。
 
+管理员只能用上面的命令行创建（或升级时导入），界面和接口不支持把用户设为管理员。
+
 从旧版本升级（不要用示例覆盖现有 `dataagent_config_docker.py`，迁移要从中读取旧管理员）：
 
 1. 备份数据库，以及现有 `dataagent_config_docker.py`。
-2. 在现有文件中保留 `LOCAL_ADMINS`、`ADMIN_USERS`，补充 `DEFAULT_USER_PASSWORD`。确认 `DATAAGENT_CONFIG` 指向这个文件。
+2. 在现有 `dataagent_config_docker.py` 中保留 `LOCAL_ADMINS`、`ADMIN_USERS`，补充 `DEFAULT_USER_PASSWORD`。Compose 中 `DATAAGENT_CONFIG` 指向 `dataagent_config.py`，它在末尾加载同目录的 `dataagent_config_docker.py`；自定义部署确认最终加载的是保留下来的这份覆盖。
 3. 运行 `alembic upgrade head`。迁移 `20261123_000042` 一次性：
    - 导入 `LOCAL_ADMINS`（保留原 bcrypt 哈希，首次登录升级为 Argon2id）和 `ADMIN_USERS`（仅 OAuth 登录，不设密码）为管理员；
-   - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<u>` / `<provider>:<sub>`）登记普通账号和外部身份，初始密码为 `DEFAULT_USER_PASSWORD`；
+   - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<u>` / `<provider>:<sub>`）登记普通账号和外部身份，不设密码：本人通过同一外部身份登录，需要密码登录时由管理员重置为默认密码；
    - 按外部身份精确回填旧会话归属，将已发布的 `allowed_users` 转为助手授权；
    - 清空旧个人 MCP 访问令牌（升级后需重新申请）。
    迁移日志 `Unified accounts migration summary` 列出导入的管理员、旧用户、回填数和未映射的授权，核对后再开放访问。

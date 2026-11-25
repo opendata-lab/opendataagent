@@ -14,8 +14,6 @@ from typing import Any
 
 import sqlalchemy as sa
 
-from core.accounts.passwords import hash_password
-
 logger = logging.getLogger(__name__)
 
 AUTH_CONFIG_ENV = "DATAAGENT_CONFIG"
@@ -211,7 +209,6 @@ def _import_legacy_principals(
     conn: sa.Connection,
     *,
     user_role_id: int,
-    config: dict[str, Any],
 ) -> list[str]:
     """Register every legacy principal as an ordinary account before backfill.
 
@@ -219,7 +216,9 @@ def _import_legacy_principals(
     (``local:<u>`` or ``<provider>:<sub>``), the exact identity a later login
     looks up. Creating that binding now is what the user's first login would
     do, so their old topics and assistant grants carry over instead of being
-    stranded as admin-only rows.
+    stranded as admin-only rows. The accounts get no password: the owner
+    signs in through the same external identity (or an admin resets the
+    password), so nobody can use the shared default before them.
     """
     principals: dict[str, str] = {}
     inspector = sa.inspect(conn)
@@ -227,20 +226,21 @@ def _import_legacy_principals(
         for row in conn.execute(
             sa.text(
                 """
-                SELECT auth_user_id, MAX(auth_username) AS auth_username
+                SELECT CAST(auth_user_id AS BINARY) AS auth_user_id, MAX(auth_username) AS auth_username
                 FROM da_agent_topic
                 WHERE auth_user_id IS NOT NULL AND auth_user_id <> ''
-                GROUP BY auth_user_id
+                GROUP BY CAST(auth_user_id AS BINARY)
                 """
             )
         ).mappings():
-            principals[str(row["auth_user_id"])] = str(row.get("auth_username") or "")
+            raw_id = row["auth_user_id"]
+            key = raw_id.decode("utf-8") if isinstance(raw_id, (bytes, bytearray)) else str(raw_id)
+            principals[key] = str(row.get("auth_username") or "")
     if inspector.has_table("da_agent_profile"):
         for row in conn.execute(sa.text("SELECT visibility_json FROM da_agent_profile")).mappings():
             for entry in _clean_visibility(row.get("visibility_json"))[1]:
                 principals.setdefault(entry, "")
 
-    default_pw = str(config.get("default_user_password") or "")
     imported: list[str] = []
     for entry, legacy_name in sorted(principals.items()):
         source, sep, subject = entry.partition(":")
@@ -270,7 +270,7 @@ def _import_legacy_principals(
             {
                 "u": _allocate_unique_username(conn, name, source),
                 "d": name[:255],
-                "pw": hash_password(default_pw) if default_pw else "",
+                "pw": "",
             },
         )
         user_id = int(res.lastrowid)
@@ -438,7 +438,7 @@ def run_accounts_data_migration(conn: sa.Connection, *, config_path: str | None 
     admin_role_id, user_role_id = _ensure_builtin_roles(conn)
     config = _load_cutover_config(config_path)
     admin_report = _import_cutover_admins(conn, admin_role_id=admin_role_id, config=config)
-    imported_users = _import_legacy_principals(conn, user_role_id=user_role_id, config=config)
+    imported_users = _import_legacy_principals(conn, user_role_id=user_role_id)
     backfilled_topics = _backfill_topic_user_ids(conn)
     grant_report = _migrate_agent_grants_and_visibility(conn)
     report = {

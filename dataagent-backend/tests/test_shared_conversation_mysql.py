@@ -1,4 +1,4 @@
-"""Real MySQL coverage for unified account ownership and shared Widget sessions."""
+"""Real MySQL coverage for unified account ownership and Widget site isolation."""
 
 import os
 from uuid import uuid4
@@ -10,7 +10,7 @@ from core.topic_task_store import TopicTaskStore
 
 
 @pytest.mark.skipif(os.environ.get("DATAAGENT_TEST_MYSQL") != "1", reason="local MySQL integration opt-in")
-def test_unified_account_and_shared_widget_isolation():
+def test_unified_account_and_widget_site_isolation():
     acc_store = get_account_store()
     store = TopicTaskStore()
     suffix = uuid4().hex[:8]
@@ -23,9 +23,6 @@ def test_unified_account_and_shared_widget_isolation():
     widget = {"source": "widget", "website_id": "test-shared", "user_id": u1.id}
     other_site = {"source": "widget", "website_id": "test-other", "user_id": u1.id}
     other_user = {"source": "widget", "website_id": "test-shared", "user_id": u2.id}
-    shared_a = {"source": "widget", "website_id": "onto-test", "user_id": u1.id, "shared_session_key": f"s_{suffix}"}
-    shared_b = {"source": "widget", "website_id": "onto-test", "user_id": u2.id, "shared_session_key": f"s_{suffix}"}
-    shared_other = {"source": "widget", "website_id": "onto-test", "user_id": u1.id, "shared_session_key": f"other_{suffix}"}
     topics = []
 
     def create(context):
@@ -42,17 +39,14 @@ def test_unified_account_and_shared_widget_isolation():
         widget_id = create(widget)
         other_site_id = create(other_site)
         other_user_id = create(other_user)
-        shared_id = create(shared_a)
 
         assert visible(web) == {web_id, remote_id, widget_id, other_site_id}
         assert visible(admin) == {web_id, remote_id, widget_id, other_site_id}
         assert store.get_topic(other_user_id, context=admin) is None
         assert visible(widget) == {web_id, remote_id, widget_id}
         assert visible(other_user) == {other_user_id}
-        assert visible(shared_a) == {shared_id}
-        assert visible(shared_b) == {shared_id}
-        assert visible(shared_other) == set()
-        assert store.get_topic(shared_id, context=web) is None
+        # Another user never sees u1's topics, on any entry point.
+        assert store.get_topic(widget_id, context=other_user) is None
     finally:
         for topic_id in topics:
             store.delete_topic(topic_id)
