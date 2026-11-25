@@ -334,7 +334,7 @@ class FakeAccountStore:
             if not trusted_username_namespace:
                 raise IdentityConflictError(f"用户名 {candidate!r} 已存在且未绑定外部身份")
             if matched_user.is_admin:
-                raise IdentityConflictError(f"管理员账号 {candidate!r} 需要手动绑定外部身份")
+                raise IdentityConflictError(f"管理员账号 {candidate!r} 不能通过外部登录或 Widget 使用")
             if not matched_user.is_active:
                 raise AccountDisabledError("账号已停用")
             self.add_identity(matched_user.id, source, subject)

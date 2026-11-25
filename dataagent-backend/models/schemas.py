@@ -333,8 +333,6 @@ class WidgetServerSide(BaseModel):
 
     enabled: bool = False
     key_configured: bool = False
-    trusted_username_namespace: bool = False
-    provider_mappings: Dict[str, str] = Field(default_factory=dict)
 
 
 class WidgetAllowedSite(BaseModel):

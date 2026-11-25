@@ -483,60 +483,6 @@ class AccountStore:
         finally:
             conn.close()
 
-    def add_identity(self, user_id: int, source: str, subject: str) -> IdentityRef:
-        clean_source = str(source or "").strip()[:128]
-        clean_subject = str(subject or "").strip()[:255]
-        if not clean_source or not clean_subject:
-            raise ValueError("source 和 subject 不能为空")
-        conn = self._connect()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id FROM da_user WHERE id = %s LIMIT 1", (int(user_id),))
-                if not cur.fetchone():
-                    raise AccountNotFoundError("用户不存在")
-                cur.execute(
-                    "SELECT user_id FROM da_user_identity WHERE source = %s AND subject = %s LIMIT 1",
-                    (clean_source, clean_subject),
-                )
-                existing = cur.fetchone()
-                if existing:
-                    if int(existing["user_id"]) == int(user_id):
-                        raise ValueError("该外部身份已绑定到当前用户")
-                    raise IdentityConflictError("该外部身份已绑定到其他用户")
-                cur.execute(
-                    "INSERT INTO da_user_identity (source, subject, user_id) VALUES (%s, %s, %s)",
-                    (clean_source, clean_subject, int(user_id)),
-                )
-                ident_id = int(cur.lastrowid)
-                cur.execute("SELECT * FROM da_user_identity WHERE id = %s LIMIT 1", (ident_id,))
-                row = cur.fetchone()
-            conn.commit()
-            return IdentityRef(
-                id=int(row["id"]),
-                source=str(row["source"]),
-                subject=str(row["subject"]),
-                created_at=_to_iso(row.get("created_at")),
-            )
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def remove_identity(self, user_id: int, identity_id: int) -> bool:
-        conn = self._connect()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM da_user_identity WHERE id = %s AND user_id = %s",
-                    (int(identity_id), int(user_id)),
-                )
-                deleted = cur.rowcount > 0
-            conn.commit()
-            return deleted
-        finally:
-            conn.close()
-
     def link_or_register(
         self,
         source: str,
@@ -615,7 +561,7 @@ class AccountStore:
                             )
                         if existing_user.is_admin:
                             raise IdentityConflictError(
-                                f"管理员账号 {candidate_username!r} 需要由管理员手动绑定外部身份"
+                                f"管理员账号 {candidate_username!r} 不能通过外部登录或 Widget 使用"
                             )
                         if not existing_user.is_active:
                             raise AccountDisabledError("账号已停用")

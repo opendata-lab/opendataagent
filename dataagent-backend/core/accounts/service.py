@@ -11,7 +11,6 @@ from fastapi import Depends, HTTPException, Request
 from starlette.requests import Request as StarletteRequest
 
 from core.accounts.config import (
-    LOCAL_PROVIDER,
     get_auth_settings,
     verify_session_token,
 )
@@ -158,44 +157,6 @@ def link_or_register(
     )
 
 
-def _resolve_widget_external_identity(
-    site: dict[str, Any],
-    raw_user_id: str,
-) -> tuple[str, str, str, bool]:
-    """Parse trusted host ``X-DataAgent-User-Id`` into ``(source, subject, username_candidate, trusted_ns)``."""
-    website_id = str(site.get("website_id") or "").strip()
-    server_side = site.get("server_side") if isinstance(site.get("server_side"), dict) else {}
-    provider_mappings = server_side.get("provider_mappings")
-    if not isinstance(provider_mappings, dict):
-        provider_mappings = {}
-    site_trusted_ns = bool(server_side.get("trusted_username_namespace"))
-
-    prefix, sep, rest = raw_user_id.partition(":")
-    if not sep:
-        return website_id, raw_user_id, raw_user_id, site_trusted_ns
-
-    reg_id = prefix.strip()
-    subject = rest.strip()
-    if not reg_id or not subject:
-        raise HTTPException(status_code=400, detail="Invalid X-DataAgent-User-Id format")
-
-    if reg_id.casefold() == LOCAL_PROVIDER:
-        return website_id, subject, subject, site_trusted_ns
-
-    mapped_provider = str(provider_mappings.get(reg_id) or "").strip()
-    if mapped_provider:
-        cfg = get_auth_settings()
-        oauth_trusted = bool(
-            cfg.oauth_login_enabled
-            and mapped_provider == cfg.oauth.provider_name
-            and cfg.oauth_trusted_username_namespace
-        )
-        return mapped_provider, subject, subject, oauth_trusted
-
-    # Unmapped host OAuth registration stays namespaced to this site.
-    return f"{website_id}:{reg_id}", subject, subject, False
-
-
 def _resolve_session_user(request: StarletteRequest) -> User | None:
     cfg = get_auth_settings()
     token = request.cookies.get(cfg.cookie_name) or ""
@@ -234,8 +195,8 @@ def current_account_context(request: Request) -> AccountContext:
         request.state._account_context = ctx
         return ctx
 
-    # Widget path: must match an allowed site AND use either same-origin platform session
-    # or a verified server-side access key. Anonymous / host-ID-only browser widget access is removed.
+    # Widget path: an allowed site whose host backend forwards the request with the
+    # site's server-side access key and its signed-in user.
     website_id = _clean_header(request.headers.get("X-DataAgent-Website-Id"), 128)
     if not website_id:
         raise HTTPException(status_code=400, detail="X-DataAgent-Website-Id is required")
@@ -250,30 +211,6 @@ def current_account_context(request: Request) -> AccountContext:
 
     server_side = matched_site.get("server_side") if isinstance(matched_site.get("server_side"), dict) else {}
     is_server_side = server_side.get("enabled") is True
-
-    if request.headers.get("X-DataAgent-Widget-Identity") == "platform":
-        origin = request.headers.get("Origin", "").rstrip("/")
-        fetch_site = request.headers.get("Sec-Fetch-Site", "")
-        request_origin = f"{request.url.scheme}://{request.url.netloc}"
-        if is_server_side or (
-            fetch_site not in {"", "same-origin", "none"}
-            or (origin and fetch_site != "same-origin" and origin != request_origin)
-        ):
-            raise HTTPException(status_code=403, detail="Widget platform session requires a same-origin browser")
-        user = _resolve_session_user(request)
-        if user is None:
-            raise HTTPException(
-                status_code=401,
-                detail={"code": "WIDGET_LOGIN_REQUIRED", "message": "请先登录后使用智能问数"},
-            )
-        ctx = AccountContext(
-            user=user,
-            source="widget",
-            website_id=website_id,
-            auth_method="widget_platform",
-        )
-        request.state._account_context = ctx
-        return ctx
 
     if not is_server_side:
         raise HTTPException(
@@ -295,9 +232,8 @@ def current_account_context(request: Request) -> AccountContext:
             status_code=401,
             detail={"code": "WIDGET_LOGIN_REQUIRED", "message": "请先登录后使用智能问数"},
         )
-    ext_source, ext_subject, username_candidate, trusted_ns = _resolve_widget_external_identity(
-        matched_site, raw_user_id
-    )
+    # The host's user name is the platform user name (user decision 2026-11-24):
+    # it binds to the same-named account or registers it.
     display_name = _clean_header(request.headers.get("X-DataAgent-User-Display-Name"), 255)
     email = _clean_header(request.headers.get("X-DataAgent-User-Email"), 255)
     email_verified = _clean_header(request.headers.get("X-DataAgent-User-Email-Verified"), 16).lower() in {
@@ -306,18 +242,13 @@ def current_account_context(request: Request) -> AccountContext:
         "yes",
     }
     profile = {
-        "username": username_candidate,
+        "username": raw_user_id,
         "display_name": display_name,
         "email": email,
         "email_verified": email_verified,
     }
     try:
-        user = link_or_register(
-            ext_source,
-            ext_subject,
-            profile,
-            trusted_username_namespace=trusted_ns,
-        )
+        user = link_or_register(website_id, raw_user_id, profile, trusted_username_namespace=True)
     except AccountDisabledError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except IdentityConflictError as exc:

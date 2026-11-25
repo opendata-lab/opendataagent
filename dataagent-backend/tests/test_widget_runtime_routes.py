@@ -14,7 +14,6 @@ if str(BACKEND_ROOT) not in sys.path:
 import api.routes as routes
 import core.agent_profile_service as agent_profile_service
 import core.skill_admin_service as skill_admin_service
-from core.accounts import issue_session_token
 from core.topic_task_store import TopicTaskStore
 from main import app
 from tests.account_test_helpers import bearer_headers, install_fake_accounts
@@ -157,6 +156,7 @@ def install_widget_settings(monkeypatch, *, sites=None):
             "allowed_origins": ["https://host.example.com"],
             "project_name": "Demo",
             "project_color": "#4A90A4",
+            "server_side": {"enabled": True, "access_key_hash": _hash_key(DEMO_KEY)},
         }
     ]
     payload = {"widget_allowed_sites": resolved_sites}
@@ -185,13 +185,16 @@ def install_agent_profile(monkeypatch, agent_id="agent_widget", *, visibility=No
     return profile
 
 
-def platform_widget_headers(*, origin="https://host.example.com", fetch_site="same-origin"):
+DEMO_KEY = "demo-secret-access-key"
+
+
+def widget_headers(user="alice", *, website_id="demo", key=DEMO_KEY):
+    """What a host backend forwards: site, access key and its signed-in user name."""
     return {
-        "Origin": origin,
-        "Sec-Fetch-Site": fetch_site,
         "X-DataAgent-Client": "widget",
-        "X-DataAgent-Website-Id": "demo",
-        "X-DataAgent-Widget-Identity": "platform",
+        "X-DataAgent-Website-Id": website_id,
+        "X-DataAgent-Access-Key": key,
+        "X-DataAgent-User-Id": user,
     }
 
 
@@ -210,28 +213,7 @@ def test_web_requests_require_authenticated_session(monkeypatch):
     assert context["website_id"] == ""
 
 
-def test_platform_widget_uses_verified_session_and_requires_same_origin(monkeypatch):
-    install_fake_accounts()
-    install_widget_settings(monkeypatch)
-    store = install_fake_store(monkeypatch)
-    client = TestClient(app, base_url="https://host.example.com")
-    headers = platform_widget_headers()
-
-    unauth = client.get("/api/v1/nl2sql/topics", headers=headers)
-    assert unauth.status_code == 401
-    assert unauth.json()["detail"]["code"] == "WIDGET_LOGIN_REQUIRED"
-
-    client.cookies.set("da_session", issue_session_token(2))
-    ok = client.get("/api/v1/nl2sql/topics", headers=headers)
-    assert ok.status_code == 200
-    context = store.calls[-1][1]
-    assert (context["source"], context["website_id"], context["user_id"]) == ("widget", "demo", 2)
-
-    denied = client.get("/api/v1/nl2sql/topics", headers=platform_widget_headers(fetch_site="same-site"))
-    assert denied.status_code == 403
-
-
-def test_browser_widget_without_platform_identity_or_server_key_is_rejected(monkeypatch):
+def test_browser_widget_without_server_key_is_rejected(monkeypatch):
     install_fake_accounts()
     install_widget_settings(monkeypatch)
     store = install_fake_store(monkeypatch)
@@ -252,8 +234,8 @@ def test_browser_widget_without_platform_identity_or_server_key_is_rejected(monk
                 **extra,
             },
         )
-        assert resp.status_code == 401
-        assert resp.json()["detail"]["code"] == "WIDGET_LOGIN_REQUIRED"
+        # The site requires the host backend's access key.
+        assert resp.status_code == 403
     assert store.calls == [("init_schema", None)] * 3
 
 
@@ -262,9 +244,8 @@ def test_widget_topic_list_and_create_agent_validation(monkeypatch):
     install_widget_settings(monkeypatch)
     profile = install_agent_profile(monkeypatch, "agent_widget")
     store = install_fake_store(monkeypatch)
-    client = TestClient(app, base_url="https://host.example.com")
-    client.cookies.set("da_session", issue_session_token(2))
-    headers = platform_widget_headers()
+    client = TestClient(app)
+    headers = widget_headers()
 
     listed = client.get("/api/v1/nl2sql/topics?agent_id=agent_widget", headers=headers)
     assert listed.status_code == 200
@@ -285,106 +266,39 @@ def test_widget_topic_list_and_create_agent_validation(monkeypatch):
     assert store.calls[-1][2]["agent_id"] == profile["agent_id"]
 
 
-def test_trusted_server_side_personal_widget_links_user_and_maps_provider(monkeypatch):
-    acc_store, _admin, _alice = install_fake_accounts()
-    raw_key = "odw-secret-access-key"
-    install_widget_settings(
-        monkeypatch,
-        sites=[
-            {
-                "website_id": "odw",
-                "allowed_origins": [],
-                "project_name": "OpenDataWorks",
-                "server_side": {
-                    "enabled": True,
-                    "access_key_hash": _hash_key(raw_key),
-                    "trusted_username_namespace": True,
-                    "provider_mappings": {"sso-corp": "CorpSSO"},
-                },
-            }
-        ],
-    )
+def test_trusted_widget_user_name_is_the_platform_user(monkeypatch):
+    acc_store, _admin, alice = install_fake_accounts()
+    install_widget_settings(monkeypatch)
     install_agent_profile(monkeypatch, "agent_widget")
     store = install_fake_store(monkeypatch)
     client = TestClient(app)
 
-    # Bad key rejected
-    bad = client.get(
-        "/api/v1/nl2sql/topics",
-        headers={
-            "X-DataAgent-Client": "widget",
-            "X-DataAgent-Website-Id": "odw",
-            "X-DataAgent-Access-Key": "wrong-key",
-            "X-DataAgent-User-Id": "alice",
-        },
-    )
-    assert bad.status_code == 403
+    assert client.get("/api/v1/nl2sql/topics", headers=widget_headers(key="wrong-key")).status_code == 403
 
-    # Bare username `alice` links to existing user #2 (trusted_username_namespace=True)
-    ok_bare = client.get(
-        "/api/v1/nl2sql/topics",
-        headers={
-            "X-DataAgent-Client": "widget",
-            "X-DataAgent-Website-Id": "odw",
-            "X-DataAgent-Access-Key": raw_key,
-            "X-DataAgent-User-Id": "alice",
-        },
-    )
-    assert ok_bare.status_code == 200
-    assert store.calls[-1][1]["user_id"] == 2
+    # The host's user name binds to the same-named platform account.
+    assert client.get("/api/v1/nl2sql/topics", headers=widget_headers("alice")).status_code == 200
+    assert store.calls[-1][1]["user_id"] == alice.id
 
-    # `local:alice` resolves to the same user #2
-    ok_local = client.get(
-        "/api/v1/nl2sql/topics",
-        headers={
-            "X-DataAgent-Client": "widget",
-            "X-DataAgent-Website-Id": "odw",
-            "X-DataAgent-Access-Key": raw_key,
-            "X-DataAgent-User-Id": "local:alice",
-        },
-    )
-    assert ok_local.status_code == 200
-    assert store.calls[-1][1]["user_id"] == 2
-
-    # Mapped OAuth `<reg>:<sub>` creates/links under provider `CorpSSO`
-    ok_oauth = client.get(
-        "/api/v1/nl2sql/topics",
-        headers={
-            "X-DataAgent-Client": "widget",
-            "X-DataAgent-Website-Id": "odw",
-            "X-DataAgent-Access-Key": raw_key,
-            "X-DataAgent-User-Id": "sso-corp:emp99",
-        },
-    )
-    assert ok_oauth.status_code == 200
+    # An unknown user name registers an ordinary account.
+    assert client.get("/api/v1/nl2sql/topics", headers=widget_headers("emp99")).status_code == 200
     emp_uid = store.calls[-1][1]["user_id"]
-    assert emp_uid is not None and emp_uid != 2
-    assert any(
-        ident["source"] == "CorpSSO" and ident["subject"] == "emp99"
-        for ident in acc_store.identities.values()
-    )
+    assert emp_uid not in (None, alice.id)
+    assert not acc_store.get_user(emp_uid).is_admin
+
+    # The admin account is never reachable through a Widget host.
+    assert client.get("/api/v1/nl2sql/topics", headers=widget_headers("admin")).status_code == 409
 
 
 def test_widget_origin_site_and_task_isolation(monkeypatch):
     install_fake_accounts()
     install_widget_settings(monkeypatch)
     install_fake_store(monkeypatch)
-    client = TestClient(app, base_url="https://host.example.com")
-    client.cookies.set("da_session", issue_session_token(2))
+    client = TestClient(app)
 
-    bad_site = client.get(
-        "/api/v1/nl2sql/topics",
-        headers={**platform_widget_headers(), "X-DataAgent-Website-Id": "unknown"},
-    )
+    bad_site = client.get("/api/v1/nl2sql/topics", headers=widget_headers(website_id="unknown"))
     assert bad_site.status_code == 403
 
-    bad_origin = client.get(
-        "/api/v1/nl2sql/topics",
-        headers=platform_widget_headers(origin="https://evil.example.com", fetch_site="cross-site"),
-    )
-    assert bad_origin.status_code == 403
-
-    missing_task = client.get("/api/v1/nl2sql/tasks/task-forbidden", headers=platform_widget_headers())
+    missing_task = client.get("/api/v1/nl2sql/tasks/task-forbidden", headers=widget_headers())
     assert missing_task.status_code == 404
 
 
@@ -424,12 +338,11 @@ def test_widget_events_and_runtime_config(monkeypatch):
             "mysql_database": "example",
         },
     )
-    client = TestClient(app, base_url="https://host.example.com")
-    client.cookies.set("da_session", issue_session_token(2))
+    client = TestClient(app)
 
     resp = client.post(
         "/api/v1/nl2sql/widget-events",
-        headers=platform_widget_headers(),
+        headers=widget_headers(),
         json={"events": [{"event_type": "widget_open"}, {"event_type": "message_send", "payload": {"length": 5}}]},
     )
     assert resp.status_code == 200
@@ -437,18 +350,11 @@ def test_widget_events_and_runtime_config(monkeypatch):
     _, ctx = store.widget_event_calls[0]
     assert (ctx["source"], ctx["website_id"], ctx["user_id"]) == ("widget", "demo", 2)
 
-    empty = client.post("/api/v1/nl2sql/widget-events", headers=platform_widget_headers(), json={"events": []})
+    empty = client.post("/api/v1/nl2sql/widget-events", headers=widget_headers(), json={"events": []})
     assert empty.status_code == 200
     assert empty.json()["accepted"] == 0
 
-    bad = client.post(
-        "/api/v1/nl2sql/widget-events",
-        headers=platform_widget_headers(origin="https://evil.example.com", fetch_site="cross-site"),
-        json={"events": [{"event_type": "widget_open"}]},
-    )
-    assert bad.status_code == 403
-
-    cfg = client.get("/api/v1/nl2sql/runtime-config")
+    cfg = client.get("/api/v1/nl2sql/runtime-config", headers=widget_headers())
     assert cfg.status_code == 200
     payload = cfg.json()
     assert payload["default_provider_id"] == "openrouter"

@@ -10,7 +10,7 @@
 - 用户、密码哈希、角色与助手授权统一存储在数据库（da_user / da_role / da_agent_grant）。
 - 首次部署请使用 CLI 创建初始管理员：
     python -m core.accounts create-user --username admin --password '<strong-pass>' --admin
-- 旧版 LOCAL_ADMINS / ADMIN_USERS 仅在 Alembic 迁移 20261123_000042 切库时读取一次，
+- 旧版 LOCAL_ADMINS 仅在 Alembic 迁移 20261123_000042 切库时读取一次（ADMIN_USERS 不再导入），
   运行时不会生效。
 """
 

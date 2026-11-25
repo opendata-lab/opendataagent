@@ -385,16 +385,6 @@ export const dataagentApi = {
     return dataagentRequest.post(`/v1/dataagent/users/${encodeURIComponent(userId)}/reset-password`)
   },
 
-  addUserIdentity(userId, data) {
-    return dataagentRequest.post(`/v1/dataagent/users/${encodeURIComponent(userId)}/identities`, data)
-  },
-
-  deleteUserIdentity(userId, identityId) {
-    return dataagentRequest.delete(
-      `/v1/dataagent/users/${encodeURIComponent(userId)}/identities/${encodeURIComponent(identityId)}`
-    )
-  },
-
   // ---- Roles ----
 
   listRolePermissions() {

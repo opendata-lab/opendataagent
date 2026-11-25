@@ -65,13 +65,6 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="外部身份" width="100">
-        <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="openIdentitiesDialog(row)">
-            {{ (row.identities || []).length }} 项
-          </el-button>
-        </template>
-      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
@@ -87,7 +80,6 @@
           <el-button link type="primary" size="small" :data-testid="`edit-user-${row.id}`" @click="openEditDialog(row)">
             编辑
           </el-button>
-          <el-button link type="primary" size="small" @click="openIdentitiesDialog(row)">身份</el-button>
           <el-button link type="warning" size="small" @click="confirmResetPassword(row)">重置密码</el-button>
           <el-button
             link
@@ -183,28 +175,6 @@
       </template>
     </el-dialog>
 
-    <!-- 外部身份管理 -->
-    <el-dialog
-      v-model="identitiesVisible"
-      :title="`外部身份绑定 · ${activeUser?.display_name || activeUser?.username || ''}`"
-      width="560px"
-      destroy-on-close
-    >
-      <div class="identity-add">
-        <el-input v-model="identityForm.source" placeholder="来源（如 CorpSSO 或 odw）" style="width: 180px" />
-        <el-input v-model="identityForm.subject" placeholder="外部主体标识（subject）" style="flex: 1" />
-        <el-button type="primary" :loading="identitySubmitting" @click="submitAddIdentity">绑定</el-button>
-      </div>
-      <el-table :data="activeUser?.identities || []" stripe size="small" empty-text="暂无绑定的外部身份">
-        <el-table-column prop="source" label="来源" width="150" />
-        <el-table-column prop="subject" label="外部标识" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="80">
-          <template #default="{ row }">
-            <el-button link type="danger" size="small" @click="confirmDeleteIdentity(row)">解绑</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-dialog>
   </div>
 </template>
 
@@ -230,10 +200,6 @@ const createForm = reactive({ username: '', display_name: '', email: '', role_id
 const editVisible = ref(false)
 const editForm = reactive({ id: null, username: '', display_name: '', email: '', role_ids: [] })
 
-const identitiesVisible = ref(false)
-const activeUser = ref(null)
-const identitySubmitting = ref(false)
-const identityForm = reactive({ source: '', subject: '' })
 
 const formatTime = (value) => (value ? String(value).replace('T', ' ').slice(0, 19) : '—')
 
@@ -256,10 +222,6 @@ async function loadUsers() {
     const data = await dataagentApi.listUsers(params)
     users.value = Array.isArray(data?.items) ? data.items : []
     total.value = Number(data?.total || 0)
-    if (activeUser.value) {
-      const refreshed = users.value.find((u) => u.id === activeUser.value.id)
-      if (refreshed) activeUser.value = refreshed
-    }
   } catch {
     users.value = []
   } finally {
@@ -372,64 +334,6 @@ async function confirmResetPassword(row) {
   }
 }
 
-async function openIdentitiesDialog(row) {
-  activeUser.value = row
-  identityForm.source = ''
-  identityForm.subject = ''
-  identitiesVisible.value = true
-  try {
-    const fresh = await dataagentApi.getUser(row.id)
-    if (fresh?.id) activeUser.value = fresh
-  } catch {
-    // keep table snapshot
-  }
-}
-
-async function submitAddIdentity() {
-  if (!activeUser.value) return
-  if (!identityForm.source.trim() || !identityForm.subject.trim()) {
-    ElMessage.error('请填写来源与外部标识')
-    return
-  }
-  identitySubmitting.value = true
-  try {
-    const updated = await dataagentApi.addUserIdentity(activeUser.value.id, {
-      source: identityForm.source.trim(),
-      subject: identityForm.subject.trim()
-    })
-    activeUser.value = updated
-    identityForm.source = ''
-    identityForm.subject = ''
-    ElMessage.success('外部身份已绑定')
-    await loadUsers()
-  } catch (error) {
-    if (!error?.__odwNotified) ElMessage.error(error?.message || '绑定失败')
-  } finally {
-    identitySubmitting.value = false
-  }
-}
-
-async function confirmDeleteIdentity(ident) {
-  if (!activeUser.value) return
-  try {
-    await ElMessageBox.confirm(`确认解绑外部身份 ${ident.source}:${ident.subject} 吗？`, '解绑外部身份', {
-      confirmButtonText: '解绑',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-  } catch {
-    return
-  }
-  try {
-    const updated = await dataagentApi.deleteUserIdentity(activeUser.value.id, ident.id)
-    activeUser.value = updated
-    ElMessage.success('外部身份已解绑')
-    await loadUsers()
-  } catch (error) {
-    if (!error?.__odwNotified) ElMessage.error(error?.message || '解绑失败')
-  }
-}
-
 onMounted(() => {
   loadRoles()
   loadUsers()
@@ -493,10 +397,5 @@ onMounted(() => {
 }
 .dialog-alert {
   margin-bottom: 16px;
-}
-.identity-add {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
 }
 </style>

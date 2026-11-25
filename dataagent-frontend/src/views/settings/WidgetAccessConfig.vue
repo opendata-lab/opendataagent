@@ -147,30 +147,7 @@
             </div>
             <div v-if="!site._persistedId" class="origin-hint">请先保存该站点后再生成服务端访问密钥。</div>
 
-            <el-row :gutter="16" class="server-side-fields">
-              <el-col :xs="24" :md="12">
-                <el-form-item label="信任同命名空间用户名">
-                  <div class="switch-row">
-                    <el-switch v-model="site.server_side.trusted_username_namespace" />
-                    <span class="switch-label">
-                      {{ site.server_side.trusted_username_namespace ? '裸用户名可自动归并同名平台账号' : '仅按外部身份绑定，不按裸用户名归并' }}
-                    </span>
-                  </div>
-                </el-form-item>
-              </el-col>
-            </el-row>
-
-            <el-form-item label="宿主 OAuth Provider 映射（registration_id → DataAgent provider）">
-              <div class="mapping-list">
-                <div v-for="(entry, mi) in site.server_side.provider_mapping_rows" :key="mi" class="mapping-row">
-                  <el-input v-model="entry.key" placeholder="宿主 registration_id，如 github" />
-                  <span class="mapping-arrow">→</span>
-                  <el-input v-model="entry.value" placeholder="DataAgent provider 名称，如 CorpSSO" />
-                  <el-button text :icon="Close" class="origin-remove" @click="removeMapping(site, mi)" />
-                </div>
-                <el-button size="small" :icon="Plus" class="origin-add" @click="addMapping(site)">添加映射</el-button>
-              </div>
-            </el-form-item>
+            <div class="origin-hint">宿主后端逐请求校验登录，并在 X-DataAgent-User-Id 中转发当前用户名，对应 DataAgent 同名账号。</div>
           </div>
         </el-form>
       </section>
@@ -197,31 +174,13 @@ const nextKey = () => `site_${++keySeq}`
 
 const normalizeServerSide = (raw = {}) => {
   const ss = raw && typeof raw === 'object' ? raw : {}
-  const mappings = ss.provider_mappings && typeof ss.provider_mappings === 'object' ? ss.provider_mappings : {}
   return {
     enabled: Boolean(ss.enabled),
-    access_key_set: Boolean(ss.access_key_set || ss.enabled),
-    trusted_username_namespace: Boolean(ss.trusted_username_namespace),
-    provider_mapping_rows: Object.entries(mappings).map(([key, value]) => ({
-      key: String(key || ''),
-      value: String(value || '')
-    }))
+    access_key_set: Boolean(ss.access_key_set || ss.enabled)
   }
 }
 
-const toPayloadServerSide = (ss = {}) => {
-  const mappings = {}
-  for (const row of ss.provider_mapping_rows || []) {
-    const k = String(row?.key || '').trim()
-    const v = String(row?.value || '').trim()
-    if (k && v) mappings[k] = v
-  }
-  return {
-    enabled: Boolean(ss.enabled),
-    trusted_username_namespace: Boolean(ss.trusted_username_namespace),
-    provider_mappings: mappings
-  }
-}
+const toPayloadServerSide = (ss = {}) => ({ enabled: Boolean(ss.enabled) })
 
 const normalizeSite = (raw = {}, persisted = false) => ({
   _key: nextKey(),
@@ -289,14 +248,6 @@ const addOrigin = (site) => {
 
 const removeOrigin = (site, index) => {
   site.allowed_origins.splice(index, 1)
-}
-
-const addMapping = (site) => {
-  site.server_side.provider_mapping_rows.push({ key: '', value: '' })
-}
-
-const removeMapping = (site, index) => {
-  site.server_side.provider_mapping_rows.splice(index, 1)
 }
 
 const generateOrRotateKey = async (site) => {
@@ -572,24 +523,17 @@ onMounted(loadSettings)
   width: 160px;
 }
 
-.origin-list,
-.mapping-list {
+.origin-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
   width: 100%;
 }
 
-.origin-row,
-.mapping-row {
+.origin-row {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.mapping-arrow {
-  color: #64748b;
-  flex: none;
 }
 
 .origin-remove {
@@ -643,21 +587,6 @@ onMounted(loadSettings)
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.server-side-fields {
-  margin-top: 14px;
-}
-
-.switch-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.switch-label {
-  font-size: 12px;
-  color: #53677e;
 }
 
 @media (max-width: 768px) {

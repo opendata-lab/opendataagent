@@ -23,7 +23,7 @@ COPY dataagent-backend/requirements.txt /tmp/requirements.txt
 ARG PIP_INDEX_URL
 ARG PIP_TRUSTED_HOST
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl gosu passwd \
+    && apt-get install -y --no-install-recommends curl gosu passwd mariadb-client \
     && rm -rf /var/lib/apt/lists/*
 RUN PIP_INDEX_URL="${PIP_INDEX_URL}" PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST}" \
     pip install --no-cache-dir -r /tmp/requirements.txt

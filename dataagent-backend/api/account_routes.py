@@ -54,11 +54,6 @@ class UserUpdateRequest(BaseModel):
     role_ids: Optional[List[int]] = None
 
 
-class UserIdentityCreateRequest(BaseModel):
-    source: str = Field(min_length=1, max_length=128)
-    subject: str = Field(min_length=1, max_length=255)
-
-
 class RoleCreateRequest(BaseModel):
     role_key: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=128)
@@ -257,31 +252,6 @@ def reset_user_password(
         get_account_store().update_password(user_id, pw_hash)
     except Exception as exc:
         raise _map_account_error(exc) from exc
-    return {"ok": True}
-
-
-@router.post("/users/{user_id}/identities", status_code=201)
-def add_user_identity(
-    user_id: int,
-    payload: UserIdentityCreateRequest,
-    _: User = Depends(require_permission("users:manage")),
-):
-    try:
-        ref = get_account_store().add_identity(user_id, payload.source, payload.subject)
-    except Exception as exc:
-        raise _map_account_error(exc) from exc
-    return ref.to_dict()
-
-
-@router.delete("/users/{user_id}/identities/{identity_id}")
-def delete_user_identity(
-    user_id: int,
-    identity_id: int,
-    _: User = Depends(require_permission("users:manage")),
-):
-    deleted = get_account_store().remove_identity(user_id, identity_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="外部身份绑定不存在")
     return {"ok": True}
 
 

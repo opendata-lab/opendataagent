@@ -11,4 +11,5 @@ topic_*/
 .DS_Store
 deploy/docker/dataagent/dataagent_config_docker.py
 deploy/logs/
+deploy/backups/
 deploy/docker-images/

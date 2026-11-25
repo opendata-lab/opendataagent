@@ -126,29 +126,14 @@ def _normalize_server_side(raw: Any) -> dict[str, Any]:
 
     ``access_key_hash`` is a sha256 digest; plaintext is returned once at
     generation and never stored. Every forwarded request names the host's
-    signed-in user in ``X-DataAgent-User-Id``.
+    signed-in user in ``X-DataAgent-User-Id``, matched to the same-named
+    platform account.
     """
-    default = {
-        "enabled": False,
-        "access_key_hash": "",
-        "trusted_username_namespace": False,
-        "provider_mappings": {},
-    }
     if not isinstance(raw, dict):
-        return default
-    raw_mappings = raw.get("provider_mappings")
-    provider_mappings: dict[str, str] = {}
-    if isinstance(raw_mappings, dict):
-        for k, v in raw_mappings.items():
-            src = str(k or "").strip()[:64]
-            dst = str(v or "").strip()[:64]
-            if src and dst:
-                provider_mappings[src] = dst
+        return {"enabled": False, "access_key_hash": ""}
     return {
         "enabled": raw.get("enabled") is True,
         "access_key_hash": str(raw.get("access_key_hash") or "").strip()[:64],
-        "trusted_username_namespace": raw.get("trusted_username_namespace") is True,
-        "provider_mappings": provider_mappings,
     }
 
 

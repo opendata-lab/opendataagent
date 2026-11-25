@@ -21,14 +21,10 @@ LOCAL_PROVIDER = "local"
 
 
 def _load_cutover_config(config_path: str | None = None) -> dict[str, Any]:
-    """Read legacy LOCAL_ADMINS / ADMIN_USERS / DEFAULT_USER_PASSWORD for cutover import only."""
+    """Read legacy LOCAL_ADMINS for the cutover import (the only admins carried over)."""
     path = (config_path if config_path is not None else os.environ.get(AUTH_CONFIG_ENV, "")).strip()
     if not path or not os.path.isfile(path) or not os.access(path, os.R_OK):
-        return {
-            "local_admins": [],
-            "admin_users": [],
-            "default_user_password": os.environ.get("DATAAGENT_DEFAULT_USER_PASSWORD", "").strip(),
-        }
+        return {"local_admins": []}
 
     config_dir = os.path.dirname(os.path.abspath(path))
     if config_dir not in sys.path:
@@ -36,7 +32,7 @@ def _load_cutover_config(config_path: str | None = None) -> dict[str, Any]:
 
     spec = importlib.util.spec_from_file_location("dataagent_cutover_config", path)
     if spec is None or spec.loader is None:
-        return {"local_admins": [], "admin_users": [], "default_user_password": ""}
+        return {"local_admins": []}
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
@@ -51,16 +47,7 @@ def _load_cutover_config(config_path: str | None = None) -> dict[str, Any]:
             if username and password_bcrypt.startswith("$2"):
                 local_admins.append({"username": username, "password_bcrypt": password_bcrypt})
 
-    raw_admins = getattr(module, "ADMIN_USERS", None) or []
-    admin_users = [str(x).strip() for x in raw_admins if str(x or "").strip()] if isinstance(raw_admins, (list, tuple)) else []
-    default_pw = str(
-        getattr(module, "DEFAULT_USER_PASSWORD", "") or os.environ.get("DATAAGENT_DEFAULT_USER_PASSWORD", "") or ""
-    ).strip()
-    return {
-        "local_admins": local_admins,
-        "admin_users": admin_users,
-        "default_user_password": default_pw,
-    }
+    return {"local_admins": local_admins}
 
 
 def _ensure_builtin_roles(conn: sa.Connection) -> tuple[int, int]:
@@ -111,7 +98,6 @@ def _import_cutover_admins(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     imported_local: list[str] = []
-    imported_oauth_admins: list[str] = []
 
     for item in config.get("local_admins") or []:
         username = item["username"]
@@ -153,55 +139,8 @@ def _import_cutover_admins(
         )
         imported_local.append(username)
 
-    for entry in config.get("admin_users") or []:
-        source, sep, subject = entry.partition(":")
-        source = source.strip()
-        subject = subject.strip()
-        if not sep or not source or not subject:
-            continue
-        ident = conn.execute(
-            sa.text(
-                "SELECT user_id FROM da_user_identity WHERE source = :src AND subject = :sub LIMIT 1"
-            ),
-            {"src": source, "sub": subject},
-        ).fetchone()
-        if ident:
-            user_id = int(ident[0])
-        else:
-            username = _allocate_unique_username(conn, subject, source)
-            # Imported OAuth administrators keep OAuth-only login: the shared
-            # default password is for ordinary users only.
-            pw_hash = ""
-            res = conn.execute(
-                sa.text(
-                    """
-                    INSERT INTO da_user (username, display_name, password_hash, is_active)
-                    VALUES (:u, :d, :pw, 1)
-                    """
-                ),
-                {"u": username, "d": subject, "pw": pw_hash},
-            )
-            user_id = int(res.lastrowid)
-            conn.execute(
-                sa.text(
-                    """
-                    INSERT IGNORE INTO da_user_identity (source, subject, user_id)
-                    VALUES (:src, :sub, :uid)
-                    """
-                ),
-                {"src": source, "sub": subject, "uid": user_id},
-            )
-        conn.execute(
-            sa.text(
-                "INSERT IGNORE INTO da_user_role (user_id, role_id) VALUES (:uid, :rid)"
-            ),
-            {"uid": user_id, "rid": admin_role_id},
-        )
-        imported_oauth_admins.append(entry)
-
     return {
         "imported_local_admins": imported_local,
-        "imported_admin_users": imported_oauth_admins,
     }
 
 

@@ -7,15 +7,6 @@ const DEFAULT_DISPLAY_MODE = 'floating'
 
 const trimTrailingSlash = (value) => String(value || '').replace(/\/+$/, '')
 
-const randomId = () => {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID().replace(/-/g, '').slice(0, 24)
-  }
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`
-}
-
-const visitorStorageKey = (websiteId) => `example_widget_visitor_id_${websiteId || 'default'}`
-
 export const parseBooleanFlag = (value) => value === true || String(value || '').trim().toLowerCase() === 'true'
 
 const VALID_PERMISSION_MODES = new Set(['default', 'acceptEdits', 'plan', 'bypassPermissions'])
@@ -51,27 +42,11 @@ export function resolveCurrentScript() {
   return document.currentScript || document.querySelector('script[data-website-id][src*="dataagent-widget"]')
 }
 
-export function resolveVisitorId(websiteId) {
-  const key = visitorStorageKey(websiteId)
-  try {
-    const existing = window.localStorage.getItem(key)
-    if (existing) return existing
-    const created = `visitor_${randomId()}`
-    window.localStorage.setItem(key, created)
-    return created
-  } catch (_error) {
-    return `visitor_${randomId()}`
-  }
-}
-
 export function parseWidgetConfig(script = resolveCurrentScript()) {
   const dataset = script?.dataset || {}
   const websiteId = String(dataset.websiteId || '').trim()
   const userId = String(dataset.userId || '').trim()
   const agentId = String(dataset.agentId || '').trim()
-  const usePlatformSession = parseBooleanFlag(dataset.usePlatformSession)
-  const allowAnonymous = parseBooleanFlag(dataset.allowAnonymous)
-  const visitorId = usePlatformSession || userId || !allowAnonymous ? '' : resolveVisitorId(websiteId)
   const loginUrl = String(dataset.loginUrl || '').trim()
   const apiBaseUrl = trimTrailingSlash(dataset.apiBaseUrl || (script?.src ? new URL(script.src, window.location.href).origin : ''))
   const projectName = String(dataset.projectName || DEFAULT_PROJECT_NAME).trim() || DEFAULT_PROJECT_NAME
@@ -84,21 +59,14 @@ export function parseWidgetConfig(script = resolveCurrentScript()) {
     'X-DataAgent-Client': 'widget',
     'X-DataAgent-Website-Id': websiteId
   }
-  if (usePlatformSession) {
-    headers['X-DataAgent-Widget-Identity'] = 'platform'
-  } else if (userId) {
-    headers['X-DataAgent-User-Id'] = userId
-  } else if (visitorId) {
-    headers['X-DataAgent-Visitor-Id'] = visitorId
-  }
+  // The host backend checks its own login and rewrites this header before
+  // forwarding with the site's access key; the browser value is never trusted.
+  if (userId) headers['X-DataAgent-User-Id'] = userId
 
   return {
     websiteId,
     userId,
-    usePlatformSession,
     agentId,
-    visitorId,
-    allowAnonymous,
     loginUrl,
     projectName,
     projectColor,
@@ -116,9 +84,8 @@ export function parseWidgetConfig(script = resolveCurrentScript()) {
 }
 
 export function isWidgetLoginRequired(config = {}) {
-  if (config.usePlatformSession) return false // the API validates the platform session
   const websiteId = String(config.websiteId || config.headers?.['X-DataAgent-Website-Id'] || '').trim()
   if (!websiteId) return false
   const userId = String(config.userId || config.headers?.['X-DataAgent-User-Id'] || '').trim()
-  return !userId && config.allowAnonymous !== true
+  return !userId
 }

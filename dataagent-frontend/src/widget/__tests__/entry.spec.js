@@ -55,7 +55,7 @@ describe('installWidget', () => {
   })
 
   it('prefills a closed panel without sending and consumes each draft once', async () => {
-    const ctrl = installWidget({ websiteId: 'draft', allowAnonymous: true, agentId: 'demo' })
+    const ctrl = installWidget({ websiteId: 'draft', userId: 'u1', agentId: 'demo' })
     const root = document.querySelector('[data-odw-widget-root]').shadowRoot
     const sent = vi.fn()
     ctrl.on('message:sent', sent)
@@ -206,7 +206,7 @@ describe('installWidget', () => {
     script.dataset.websiteId = 'demo'
     script.dataset.agentId = 'demo'
     script.dataset.projectName = 'Demo'
-    script.dataset.allowAnonymous = 'true'
+    script.dataset.userId = 'u1'
     document.body.appendChild(script)
 
     const controller = installWidget(script)
@@ -228,7 +228,7 @@ describe('installWidget', () => {
     script.dataset.websiteId = 'demo'
     script.dataset.agentId = 'demo'
     script.dataset.projectName = 'Demo'
-    script.dataset.allowAnonymous = 'true'
+    script.dataset.userId = 'u1'
     document.body.appendChild(script)
 
     const controller = installWidget(script)
@@ -270,7 +270,7 @@ describe('installWidget', () => {
     document.body.appendChild(target)
     const script = document.createElement('script')
     script.dataset.websiteId = 'demo'
-    script.dataset.allowAnonymous = 'true'
+    script.dataset.userId = 'u1'
     script.dataset.displayMode = 'inline'
     script.dataset.containerId = 'odw-intelligent-query'
     document.body.appendChild(script)

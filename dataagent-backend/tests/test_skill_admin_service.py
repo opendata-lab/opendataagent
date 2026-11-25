@@ -244,8 +244,6 @@ def test_normalize_widget_allowed_sites_from_json_string():
             "server_side": {
                 "enabled": False,
                 "access_key_hash": "",
-                "trusted_username_namespace": False,
-                "provider_mappings": {},
             },
         }
     ]
@@ -293,8 +291,6 @@ def test_merge_settings_payload_carries_widget_allowed_sites_from_patch():
             "server_side": {
                 "enabled": False,
                 "access_key_hash": "",
-                "trusted_username_namespace": False,
-                "provider_mappings": {},
             },
         }
     ]
@@ -318,8 +314,6 @@ def test_merge_settings_payload_preserves_widget_allowed_sites_without_patch():
             "server_side": {
                 "enabled": False,
                 "access_key_hash": "",
-                "trusted_username_namespace": False,
-                "provider_mappings": {},
             },
         }
     ]

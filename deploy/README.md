@@ -147,21 +147,21 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
 
 从旧版本升级（不要用示例覆盖现有 `dataagent_config_docker.py`，迁移要从中读取旧管理员）：
 
-1. 备份数据库，以及现有 `dataagent_config_docker.py`。
-2. 在现有 `dataagent_config_docker.py` 中保留 `LOCAL_ADMINS`、`ADMIN_USERS`，补充 `DEFAULT_USER_PASSWORD`。Compose 中 `DATAAGENT_CONFIG` 指向 `dataagent_config.py`，它在末尾加载同目录的 `dataagent_config_docker.py`；自定义部署确认最终加载的是保留下来的这份覆盖。
+1. 运行 `scripts/backup-db.sh`，在 `deploy/backups/` 生成数据库备份 `dataagent-<时间>.sql.gz` 和配置备份 `config-<时间>.tar.gz`（`.env` 与 `docker/dataagent/*.py`）。数据库备份由 backend 镜像内的 `mysqldump` 完成，宿主机不需要 MySQL 客户端。
+2. 在现有 `dataagent_config_docker.py` 中保留 `LOCAL_ADMINS`，补充 `DEFAULT_USER_PASSWORD`。Compose 中 `DATAAGENT_CONFIG` 指向 `dataagent_config.py`，它在末尾加载同目录的 `dataagent_config_docker.py`；自定义部署确认最终加载的是保留下来的这份覆盖。
 3. 运行 `alembic upgrade head`。迁移 `20261123_000042` 一次性：
-   - 导入 `LOCAL_ADMINS`（保留原 bcrypt 哈希，首次登录升级为 Argon2id）和 `ADMIN_USERS`（仅 OAuth 登录，不设密码）为管理员；
+   - 导入 `LOCAL_ADMINS`（保留原 bcrypt 哈希，首次登录升级为 Argon2id）为管理员；`ADMIN_USERS` 不导入；
    - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<u>` / `<provider>:<sub>`）登记普通账号和外部身份，不设密码：本人通过同一外部身份登录，需要密码登录时由管理员重置为默认密码；
    - 按外部身份精确回填旧会话归属，将已发布的 `allowed_users` 转为助手授权；
    - 清空旧个人 MCP 访问令牌（升级后需重新申请）。
    迁移日志 `Unified accounts migration summary` 列出导入的管理员、旧用户、回填数和未映射的授权，核对后再开放访问。
 4. 重启 `dataagent-backend`。
 
+该迁移不支持降级。需要回退时运行 `scripts/restore-db.sh deploy/backups/dataagent-<时间>.sql.gz`（会先清空库内全部表再导入），把 `deploy/.env` 的 `ODA_*_IMAGE` 改回旧版本，必要时从 `config-<时间>.tar.gz` 解压回旧配置，再执行 `scripts/start.sh`。
+
 缺合法 `SECRET_KEY`、显式置 `AUTH_ENABLED = False`、文件不可读或语法错误时服务启动失败（fail-closed）。
 
-宿主系统内嵌 Widget 时不再接受浏览器端自报 `X-DataAgent-User-Id` 或匿名访客，支持两种可信接入：
-- **同源平台会话**：Widget 与 DataAgent 同源部署，携带 `X-DataAgent-Widget-Identity: platform` 与平台 `da_session` Cookie。
-- **服务端受信任代理**（OpenDataWorks / OntoFoundry）：在后台「设置 → Widget 接入」为站点生成 `X-DataAgent-Access-Key`，由宿主后端逐请求校验登录，并在 `X-DataAgent-User-Id` 中转发宿主的当前登录用户（可选 `provider_mappings`）。每个会话只属于发起它的用户，不支持多人共享会话。保证 8900 端口不对外暴露。
+宿主系统内嵌 Widget 只经服务端受信任代理接入（OpenDataWorks / OntoFoundry），不接受浏览器自报用户或匿名访客：在后台「设置 → Widget 接入」为站点生成 `X-DataAgent-Access-Key`，由宿主后端逐请求校验登录，并在 `X-DataAgent-User-Id` 中转发宿主当前登录的用户名，对应 DataAgent 同名账号。每个会话只属于发起它的用户，不支持多人共享会话。保证 8900 端口不对外暴露。
 
 ## 单助手 MCP 发布
 

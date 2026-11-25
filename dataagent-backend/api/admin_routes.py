@@ -139,8 +139,6 @@ def _mask_widget_sites(sites: list) -> list:
             "server_side": {
                 "enabled": server_side.get("enabled") is True,
                 "key_configured": bool(server_side.get("access_key_hash")),
-                "trusted_username_namespace": server_side.get("trusted_username_namespace") is True,
-                "provider_mappings": dict(server_side.get("provider_mappings") or {}),
             },
         })
     return masked

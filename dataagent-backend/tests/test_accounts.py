@@ -268,7 +268,7 @@ def test_real_mysql_migration_backfill_and_concurrent_register(tmp_path, monkeyp
 SECRET_KEY = {TEST_SECRET_KEY!r}
 DEFAULT_USER_PASSWORD = {TEST_DEFAULT_PASSWORD!r}
 LOCAL_ADMINS = [{{"username": "legacy_admin", "password_bcrypt": {admin_bcrypt!r}}}]
-ADMIN_USERS = ["SSO:u-admin"]
+ADMIN_USERS = ["SSO:u-admin"]  # no longer imported: the only admin is a local one
 """,
         encoding="utf-8",
     )
@@ -341,12 +341,9 @@ ADMIN_USERS = ["SSO:u-admin"]
             assert users["legacy_admin"]["password_hash"].startswith("$2")
             legacy_uid = int(users["legacy_admin"]["id"])
 
-            # Imported OAuth admin signs in through OAuth only: no default password.
-            cur.execute(
-                "SELECT u.password_hash FROM da_user u JOIN da_user_identity i ON i.user_id = u.id"
-                " WHERE i.source = 'SSO' AND i.subject = 'u-admin'"
-            )
-            assert cur.fetchone()["password_hash"] == ""
+            # ADMIN_USERS is not imported.
+            cur.execute("SELECT COUNT(*) AS n FROM da_user_identity WHERE source = 'SSO' AND subject = 'u-admin'")
+            assert cur.fetchone()["n"] == 0
 
             # Every legacy principal becomes an ordinary account bound to the exact identity,
             # so binary-distinct principals (ghost, LEGACY_ADMIN) keep their own topics.
@@ -420,9 +417,12 @@ ADMIN_USERS = ["SSO:u-admin"]
             ids = list(pool.map(_register, range(4)))
         assert len(set(ids)) == 1
 
-        # Downgrade and re-upgrade succeed cleanly too.
-        subprocess.run([sys.executable, "-m", "alembic", "downgrade", "20261122_000041"], cwd=backend_dir, env=env, check=True)
-        subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=backend_dir, env=env, check=True)
+        # The cutover is one-way: downgrade refuses and points at the backup restore.
+        refused = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", "20261122_000041"],
+            cwd=backend_dir, env=env, capture_output=True, text=True,
+        )
+        assert refused.returncode != 0 and "restore-db.sh" in refused.stderr
     finally:
         with contextlib.suppress(Exception):
             conn.close()

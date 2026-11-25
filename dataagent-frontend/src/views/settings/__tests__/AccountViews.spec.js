@@ -8,8 +8,6 @@ const apiMocks = vi.hoisted(() => ({
   getUser: vi.fn(),
   updateUser: vi.fn(),
   resetUserPassword: vi.fn(),
-  addUserIdentity: vi.fn(),
-  deleteUserIdentity: vi.fn(),
   listRoles: vi.fn(),
   listRolePermissions: vi.fn(),
   createRole: vi.fn(),

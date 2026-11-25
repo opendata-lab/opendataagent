@@ -11,7 +11,6 @@ Base URL：`http://<DataAgent 主机>:8900/api/v1/nl2sql`。DataAgent 始终启�
 | `GET` / `POST` | `/users` | `users:manage` | 列出 / 新建用户（使用系统默认初始密码） |
 | `GET` / `PUT` | `/users/{user_id}` | `users:manage` | 查看 / 编辑用户、角色或启用停用（不提供物理删除） |
 | `POST` | `/users/{user_id}/reset-password` | `users:manage` | 重置用户密码为系统默认初始密码 |
-| `POST` / `DELETE` | `/users/{user_id}/identities[/{identity_id}]` | `users:manage` | 绑定 / 解绑外部身份 |
 | `GET` | `/roles/permissions` | `roles:manage` | 获取内置静态菜单与管理权限目录（只读） |
 | `GET` / `POST` / `PUT` / `DELETE` | `/roles[/{role_id}]` | `roles:manage` | 列出 / 管理自定义角色（内置 `admin` / `user` 不可删） |
 | `GET` / `PUT` | `/roles/{role_id}/users` | `roles:manage` | 查看 / 批量设置角色成员 |

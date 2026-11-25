@@ -28,8 +28,6 @@ class TestNormalisation:
         assert site["server_side"] == {
             "enabled": False,
             "access_key_hash": "",
-            "trusted_username_namespace": False,
-            "provider_mappings": {},
         }
 
     def test_server_side_survives_normalisation(self):
@@ -38,15 +36,11 @@ class TestNormalisation:
             "server_side": {
                 "enabled": True,
                 "access_key_hash": DIGEST,
-                "trusted_username_namespace": True,
-                "provider_mappings": {"sso": "SSO"},
             },
         })
         assert site["server_side"] == {
             "enabled": True,
             "access_key_hash": DIGEST,
-            "trusted_username_namespace": True,
-            "provider_mappings": {"sso": "SSO"},
         }
 
     def test_a_non_dict_server_side_is_ignored_rather_than_raising(self):
@@ -102,7 +96,7 @@ class TestRequestContext:
         return {
             "X-DataAgent-Client": "widget",
             "X-DataAgent-Website-Id": "ontofoundry",
-            "X-DataAgent-User-Id": "local:bob",
+            "X-DataAgent-User-Id": "bob",
             **extra,
         }
 
@@ -127,6 +121,11 @@ class TestRequestContext:
             )
         assert caught.value.status_code == 403
 
+    def test_the_forwarded_user_name_is_the_platform_user(self, resolve):
+        site = {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}}
+        ctx = resolve(site, self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret", "X-DataAgent-User-Id": "alice"}))
+        assert ctx.user is not None and ctx.user.id == self.alice.id
+
     def test_a_correct_key_passes_and_registers_the_forwarded_user(self, resolve):
         ctx = resolve(
             {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}},
@@ -144,12 +143,11 @@ class TestRequestContext:
         assert caught.value.status_code == 401
 
     def test_forwarded_widget_credentials_cannot_reach_platform_routes(self, resolve):
-        # Bind the forwarded identity to the platform admin: the site key must still not
-        # unlock account, admin, eval or MCP token routes (they depend on current_user).
-        self.store.add_identity(self.admin.id, "ontofoundry", "boss")
+        # A forwarded user's site key never unlocks account, admin, eval or MCP token
+        # routes (they depend on current_user).
         site = {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}}
-        ctx = resolve(site, self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret", "X-DataAgent-User-Id": "boss"}))
-        assert ctx.user is not None and ctx.user.is_admin
+        ctx = resolve(site, self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret", "X-DataAgent-User-Id": "alice"}))
+        assert ctx.user is not None
         req = SimpleNamespace(headers={}, cookies={}, state=SimpleNamespace(_account_context=ctx))
         with pytest.raises(HTTPException) as caught:
             account_service.current_user(req)

@@ -42,17 +42,6 @@ def _add_nullable_user_fk(conn, table: str, fk_name: str, index_name: str) -> No
         op.create_foreign_key(fk_name, table, "da_user", ["user_id"], ["id"])
 
 
-def _drop_nullable_user_fk(conn, table: str, fk_name: str, index_name: str) -> None:
-    if not _has_table(conn, table):
-        return
-    if _has_fk(conn, table, fk_name):
-        op.drop_constraint(fk_name, table, type_="foreignkey")
-    if _has_index(conn, table, index_name):
-        op.drop_index(index_name, table_name=table)
-    if _has_column(conn, table, "user_id"):
-        op.drop_column(table, "user_id")
-
-
 def upgrade() -> None:
     conn = op.get_bind()
 
@@ -174,33 +163,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    conn = op.get_bind()
-
-    _drop_nullable_user_fk(conn, "eval_dataset", "fk_eval_dataset_user", "ix_eval_dataset_user_id")
-    _drop_nullable_user_fk(conn, "da_agent_widget_event", "fk_da_agent_widget_event_user", "ix_da_agent_widget_event_user_id")
-    _drop_nullable_user_fk(conn, "da_agent_experience", "fk_da_agent_experience_user", "ix_da_agent_experience_user_id")
-    _drop_nullable_user_fk(conn, "da_agent_topic", "fk_da_agent_topic_user", "ix_da_agent_topic_user_id")
-
-    if _has_table(conn, "da_mcp_access_token"):
-        op.drop_table("da_mcp_access_token")
-    op.create_table(
-        "da_mcp_access_token",
-        sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
-        sa.Column("token_hash", sa.CHAR(64), nullable=False, unique=True),
-        sa.Column("token_prefix", sa.String(10), nullable=False),
-        sa.Column("user_id", sa.String(255, collation="utf8mb4_bin"), nullable=False),
-        sa.Column("display_name", sa.String(255), nullable=False),
-        sa.Column("name", sa.String(64), nullable=False),
-        sa.Column("expires_at", sa.DateTime(), nullable=True),
-        sa.Column("last_used_at", sa.DateTime(), nullable=True),
-        sa.Column("revoked_at", sa.DateTime(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.Column("oauth_role", sa.String(8), server_default="user"),
-        mysql_charset="utf8mb4",
-        mysql_engine="InnoDB",
-    )
-    op.create_index("ix_da_mcp_access_token_user_id", "da_mcp_access_token", ["user_id"])
-
-    for table in ("da_agent_grant", "da_user_role", "da_user_identity", "da_role", "da_user"):
-        if _has_table(conn, table):
-            op.drop_table(table)
+    # One-way cutover (user decision 2026-11-24): legacy allowlists and MCP
+    # tokens are rewritten, so going back means restoring the backup taken
+    # before the upgrade with scripts/restore-db.sh.
+    raise RuntimeError("20261123_000042 不支持降级，请用 scripts/restore-db.sh 恢复升级前的备份")
