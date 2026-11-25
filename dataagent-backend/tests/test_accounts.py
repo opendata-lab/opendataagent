@@ -9,7 +9,6 @@ import os
 import subprocess
 import sys
 
-import bcrypt
 import pymysql
 import pytest
 import sqlalchemy as sa
@@ -50,38 +49,25 @@ def _reset_accounts():
     set_account_store_for_tests(None)
 
 
-def test_argon2id_hashing_and_legacy_bcrypt_upgrade():
+def test_argon2id_hashing():
     argon = hash_password("secret-123")
     assert argon.startswith("$argon2id$")
-    matched, needs_rehash = verify_password("secret-123", argon)
-    assert matched is True
-    assert needs_rehash is False
-    assert verify_password("wrong", argon) == (False, False)
-
-    # Legacy bcrypt hash imported on cutover verifies and flags rehash.
-    legacy = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode("utf-8")
-    matched_b, needs_rehash_b = verify_password("admin123", legacy)
-    assert matched_b is True
-    assert needs_rehash_b is True
-
-    # >72 byte password against bcrypt must not raise ValueError.
-    assert verify_password("x" * 100, legacy) == (False, False)
+    assert verify_password("secret-123", argon) is True
+    assert verify_password("wrong", argon) is False
+    # An account without a password (external login only) never matches.
+    assert verify_password("anything", "") is False
 
 
-def test_password_login_upgrades_bcrypt_and_rejects_disabled_user():
+def test_password_login_and_disabled_user():
     store, admin, alice = install_fake_accounts()
-    legacy = bcrypt.hashpw(b"legacy-pass", bcrypt.gensalt()).decode("utf-8")
-    store.update_password(alice.id, legacy)
 
-    logged = authenticate_password("alice", "legacy-pass")
+    logged = authenticate_password("alice", "alice123")
     assert logged is not None
     assert logged.id == alice.id
-    # Stored hash was upgraded in place from bcrypt to Argon2id.
-    assert store.get_user_password_hash(alice.id).startswith("$argon2id$")
 
     # Disabling immediately blocks password login and existing JWT sessions.
     store.update_user(alice.id, is_active=False)
-    assert authenticate_password("alice", "legacy-pass") is None
+    assert authenticate_password("alice", "alice123") is None
 
     token = issue_session_token(alice.id)
     assert verify_session_token(token) == alice.id
@@ -243,8 +229,20 @@ def test_user_role_profile_and_grant_apis(monkeypatch):
     assert grants_after["role_ids"] == []
 
 
-def test_real_mysql_migration_backfill_and_concurrent_register(tmp_path, monkeypatch):
-    """End-to-end verification against throwaway schema da_accounts_check on local Docker MySQL."""
+def _run_sql_script(conn, path):
+    """Run a multi-statement SQL file the way the mysql client would."""
+    sql = "\n".join(line for line in open(path, encoding="utf-8").read().splitlines() if not line.lstrip().startswith("--"))
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        while cur.nextset():
+            pass
+
+
+def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch):
+    """Alembic builds the schema only; scripts/migrate-accounts.sql moves the legacy data.
+
+    Runs against a throwaway schema da_accounts_check on the local Docker MySQL.
+    """
     try:
         root_conn = pymysql.connect(host="127.0.0.1", port=3326, user="root", password="root123", autocommit=True)
     except Exception:
@@ -252,18 +250,7 @@ def test_real_mysql_migration_backfill_and_concurrent_register(tmp_path, monkeyp
 
     schema = "da_accounts_check"
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    admin_bcrypt = bcrypt.hashpw(b"OldAdminPass!", bcrypt.gensalt()).decode("utf-8")
-    cfg_file = tmp_path / "cutover_config.py"
-    cfg_file.write_text(
-        f"""
-SECRET_KEY = {TEST_SECRET_KEY!r}
-DEFAULT_USER_PASSWORD = {TEST_DEFAULT_PASSWORD!r}
-LOCAL_ADMINS = [{{"username": "legacy_admin", "password_bcrypt": {admin_bcrypt!r}}}]
-ADMIN_USERS = ["SSO:u-admin"]  # no longer imported: the only admin is a local one
-""",
-        encoding="utf-8",
-    )
-
+    script = os.path.join(os.path.dirname(backend_dir), "scripts", "migrate-accounts.sql")
     env = os.environ.copy()
     env.update(
         {
@@ -273,110 +260,59 @@ ADMIN_USERS = ["SSO:u-admin"]  # no longer imported: the only admin is a local o
             "MYSQL_PASSWORD": "root123",
             "MYSQL_DATABASE": schema,
             "SESSION_MYSQL_DATABASE": schema,
-            "DATAAGENT_CONFIG": str(cfg_file),
         }
     )
-
+    conn = None
     try:
         with root_conn.cursor() as cur:
             cur.execute(f"DROP DATABASE IF EXISTS {schema}")
             cur.execute(f"CREATE DATABASE {schema} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
         root_conn.close()
 
-        # 1. Upgrade to revision BEFORE unified accounts (20261122_000041) and seed legacy data.
+        # 1. Legacy data before the cutover.
         subprocess.run([sys.executable, "-m", "alembic", "upgrade", "20261122_000041"], cwd=backend_dir, env=env, check=True)
-        conn = pymysql.connect(host="127.0.0.1", port=3326, user="root", password="root123", database=schema, cursorclass=pymysql.cursors.DictCursor)
+        conn = pymysql.connect(host="127.0.0.1", port=3326, user="root", password="root123", database=schema,
+                               cursorclass=pymysql.cursors.DictCursor, autocommit=True,
+                               client_flag=pymysql.constants.CLIENT.MULTI_STATEMENTS)
         with conn.cursor() as cur:
-            # Legacy topics: one mappable (local:legacy_admin), one unmappable (local:ghost), one legacy shared widget
             cur.execute(
                 """INSERT INTO da_agent_topic
                    (topic_id, title, chat_topic_id, chat_conversation_id, agent_id, source, website_id, external_user_id, visitor_id, auth_user_id, auth_username, is_agent_preview)
                    VALUES
-                   ('t_mapped', 'Mapped', 'ct1', 'cc1', 'agent_default', 'web', '', '', '', 'local:legacy_admin', 'legacy_admin', 0),
-                   ('t_unmapped', 'Ghost', 'ct2', 'cc2', 'agent_default', 'web', '', '', '', 'local:ghost', 'ghost', 0),
-                   ('t_case', 'CaseDiff', 'ct3', 'cc3', 'agent_default', 'web', '', '', '', 'local:LEGACY_ADMIN', 'LEGACY_ADMIN', 0),
+                   ('t_admin', 'Admin', 'ct1', 'cc1', 'agent_default', 'web', '', '', '', 'local:admin', 'admin', 0),
+                   ('t_zhang', 'Zhang', 'ct2', 'cc2', 'agent_default', 'web', '', '', '', 'SSO:u123', 'zhangsan', 0),
+                   ('t_case', 'CaseDiff', 'ct3', 'cc3', 'agent_default', 'web', '', '', '', 'SSO:U123', 'zhangsan', 0),
                    ('t_shared_old', 'OldShared', 'ct4', 'cc4', 'agent_default', 'widget', 'ontofoundry', 'ontofoundry:ws1:s1', '', '', '', 0)
                 """
             )
-            # Legacy MCP token row (must be deleted by migration)
             cur.execute(
                 """INSERT INTO da_mcp_access_token
                    (token_hash, token_prefix, user_id, display_name, name, created_at, oauth_role)
-                   VALUES (%s, 'dak_old123', 'local:legacy_admin', 'legacy_admin', 'old', NOW(), 'admin')""",
+                   VALUES (%s, 'dak_old123', 'local:admin', 'admin', 'old', NOW(), 'admin')""",
                 (hashlib.sha256(b"old-token").hexdigest(),),
             )
-            # Legacy agent visibility with published allowed_users + draft diff
             cur.execute(
-                """UPDATE da_agent_profile SET visibility_json = %s WHERE agent_id = 'agent_default'""",
-                (json.dumps({"mode": "selected", "allowed_users": ["local:legacy_admin", "SSO:unknown"], "allowed_groups": ["g1"]}),),
+                "UPDATE da_agent_profile SET visibility_json = %s WHERE agent_id = 'agent_default'",
+                (json.dumps({"mode": "selected", "allowed_users": ["SSO:u123", "SSO:lisi"], "allowed_groups": ["g1"]}),),
             )
-            pub_blob = json.dumps({"agent_id": "agent_default", "name": "默认助手", "visibility": {"mode": "selected", "allowed_users": ["local:legacy_admin"], "allowed_groups": []}})
-            draft_blob = json.dumps({"agent_id": "agent_default", "name": "默认助手", "visibility": {"mode": "selected", "allowed_users": ["local:legacy_admin", "SSO:draft_only"], "allowed_groups": ["g2"]}})
+            pub_blob = json.dumps({"agent_id": "agent_default", "visibility": {"mode": "selected", "allowed_users": ["SSO:u123"]}})
+            draft_blob = json.dumps({"agent_id": "agent_default", "visibility": {"mode": "authenticated", "allowed_users": ["SSO:draft_only"]}})
             cur.execute(
-                """INSERT INTO da_agent_draft (agent_id, draft_json, published_json, published_version)
-                   VALUES ('agent_default', %s, %s, 1)""",
+                "INSERT INTO da_agent_draft (agent_id, draft_json, published_json, published_version) VALUES ('agent_default', %s, %s, 1)",
                 (draft_blob, pub_blob),
             )
-        conn.commit()
-        conn.close()
 
-        # 2. Run upgrade head (20261123_000042)
+        # 2. Alembic: schema and built-in roles only; no legacy data is touched.
         subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=backend_dir, env=env, check=True)
-
-        # 3. Verify cutover results directly in MySQL
-        conn = pymysql.connect(host="127.0.0.1", port=3326, user="root", password="root123", database=schema, cursorclass=pymysql.cursors.DictCursor, autocommit=True)
         with conn.cursor() as cur:
-            cur.execute("SELECT id, username, password_hash FROM da_user ORDER BY id")
-            users = {r["username"]: r for r in cur.fetchall()}
-            assert "legacy_admin" in users
-            assert users["legacy_admin"]["password_hash"].startswith("$2")
-            legacy_uid = int(users["legacy_admin"]["id"])
-
-            # ADMIN_USERS is not imported.
-            cur.execute("SELECT COUNT(*) AS n FROM da_user_identity WHERE source = 'SSO' AND subject = 'u-admin'")
+            cur.execute("SELECT COUNT(*) AS n FROM da_user")
             assert cur.fetchone()["n"] == 0
-
-            # Every legacy principal becomes an ordinary account bound to the exact identity,
-            # so binary-distinct principals (ghost, LEGACY_ADMIN) keep their own topics.
-            cur.execute("SELECT source, subject, user_id FROM da_user_identity")
-            identity = {(r["source"], r["subject"]): int(r["user_id"]) for r in cur.fetchall()}
-            ghost_uid = identity[("local", "ghost")]
-            case_uid = identity[("local", "LEGACY_ADMIN")]
-            unknown_uid = identity[("SSO", "unknown")]
-            assert len({legacy_uid, ghost_uid, case_uid, unknown_uid}) == 4
-            assert ("SSO", "draft_only") not in identity
-            # No shared password before the owner signs in through the external identity.
-            assert users["ghost"]["password_hash"] == ""
-            cur.execute("SELECT r.role_key FROM da_user_role ur JOIN da_role r ON r.id = ur.role_id WHERE ur.user_id = %s", (ghost_uid,))
-            assert [r["role_key"] for r in cur.fetchall()] == ["user"]
-
-            cur.execute("SELECT topic_id, user_id FROM da_agent_topic ORDER BY topic_id")
-            topics = {r["topic_id"]: r["user_id"] for r in cur.fetchall()}
-            assert topics["t_mapped"] == legacy_uid
-            assert topics["t_unmapped"] == ghost_uid
-            assert topics["t_case"] == case_uid
-            assert topics["t_shared_old"] is None
-
-            # Old MCP tokens deleted and column is now BIGINT.
+            cur.execute("SELECT role_key FROM da_role ORDER BY role_key")
+            assert [r["role_key"] for r in cur.fetchall()] == ["admin", "user"]
             cur.execute("SELECT COUNT(*) AS n FROM da_mcp_access_token")
             assert cur.fetchone()["n"] == 0
 
-            # Published grants migrated (including the newly registered SSO:unknown); draft-only NOT granted.
-            cur.execute("SELECT agent_id, principal_type, principal_id FROM da_agent_grant ORDER BY principal_id")
-            grants = cur.fetchall()
-            assert grants == [
-                {"agent_id": "agent_default", "principal_type": "user", "principal_id": uid}
-                for uid in sorted([legacy_uid, unknown_uid])
-            ]
-            cur.execute("SELECT visibility_json FROM da_agent_profile WHERE agent_id = 'agent_default'")
-            assert json.loads(cur.fetchone()["visibility_json"]) == {"mode": "selected"}
-            cur.execute("SELECT draft_json, published_json FROM da_agent_draft WHERE agent_id = 'agent_default'")
-            draft_row = cur.fetchone()
-            assert json.loads(draft_row["draft_json"])["visibility"] == {"mode": "selected"}
-            assert json.loads(draft_row["published_json"])["visibility"] == {"mode": "selected"}
-        conn.close()
-
-        # 4. Exercise real MySQL AccountStore: bcrypt login upgrade + concurrent link_or_register!
+        # 3. The admin may be created before or after the script; here before.
         from config import update_settings
         from core.accounts.store import AccountStore
 
@@ -394,10 +330,51 @@ ADMIN_USERS = ["SSO:u-admin"]  # no longer imported: the only admin is a local o
         )
         real_store = AccountStore()
         set_account_store_for_tests(real_store)
+        admin = accounts.ensure_local_user(username="admin", password="admin123", is_admin=True)
 
-        logged_admin = authenticate_password("legacy_admin", "OldAdminPass!")
+        # 4. The script, twice: it is idempotent.
+        _run_sql_script(conn, script)
+        _run_sql_script(conn, script)
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT source, subject, user_id FROM da_user_identity")
+            identity = {(r["source"], r["subject"]): int(r["user_id"]) for r in cur.fetchall()}
+            # local:admin is the admin account created above.
+            assert identity[("local", "admin")] == admin.id
+            # SSO:u123 and SSO:U123 differ only in case: one user, one identity.
+            zhang_keys = [k for k in identity if k[0] == "SSO" and k[1].lower() == "u123"]
+            assert len(zhang_keys) == 1
+            zhang_uid = identity[zhang_keys[0]]
+            lisi_uid = identity[("SSO", "lisi")]
+            assert len({admin.id, zhang_uid, lisi_uid}) == 3
+            assert ("SSO", "draft_only") not in identity
+
+            cur.execute("SELECT id, username, password_hash FROM da_user")
+            users = {int(r["id"]): r for r in cur.fetchall()}
+            # The old user name is kept.
+            assert users[zhang_uid]["username"] == "zhangsan"
+            assert users[lisi_uid]["username"] == "lisi"
+            # No shared password before the owner signs in.
+            assert users[lisi_uid]["password_hash"] == ""
+            cur.execute("SELECT r.role_key FROM da_user_role ur JOIN da_role r ON r.id = ur.role_id WHERE ur.user_id = %s", (lisi_uid,))
+            assert [r["role_key"] for r in cur.fetchall()] == ["user"]
+
+            cur.execute("SELECT topic_id, user_id FROM da_agent_topic ORDER BY topic_id")
+            topics = {r["topic_id"]: r["user_id"] for r in cur.fetchall()}
+            assert topics == {"t_admin": admin.id, "t_zhang": zhang_uid, "t_case": zhang_uid, "t_shared_old": None}
+
+            cur.execute("SELECT principal_id FROM da_agent_grant WHERE agent_id = 'agent_default' ORDER BY principal_id")
+            assert [int(r["principal_id"]) for r in cur.fetchall()] == sorted([zhang_uid, lisi_uid])
+            cur.execute("SELECT visibility_json FROM da_agent_profile WHERE agent_id = 'agent_default'")
+            assert json.loads(cur.fetchone()["visibility_json"]) == {"mode": "selected"}
+            cur.execute("SELECT draft_json, published_json FROM da_agent_draft WHERE agent_id = 'agent_default'")
+            draft_row = cur.fetchone()
+            assert json.loads(draft_row["draft_json"])["visibility"] == {"mode": "all"}
+            assert json.loads(draft_row["published_json"])["visibility"] == {"mode": "selected"}
+
+        # admin keeps the password set with create-user.
+        logged_admin = authenticate_password("admin", "admin123")
         assert logged_admin is not None and logged_admin.is_admin
-        assert real_store.get_user_password_hash(logged_admin.id).startswith("$argon2id$")
 
         # Concurrent first-time registration for the same (source, subject) creates exactly ONE account.
         def _register(_idx: int) -> int:

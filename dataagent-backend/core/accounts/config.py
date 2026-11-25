@@ -222,7 +222,7 @@ def _build_settings(module: Any, config_path: str) -> AuthSettings:
         )
     if getattr(module, "LOCAL_ADMINS", None) or getattr(module, "ADMIN_USERS", None):
         logger.warning(
-            "LOCAL_ADMINS / ADMIN_USERS are ignored at runtime; roles and passwords are managed in MySQL"
+            "LOCAL_ADMINS / ADMIN_USERS are ignored; create the admin with python -m core.accounts create-user --admin"
         )
 
     raw_secret = getattr(module, "SECRET_KEY", "") or os.environ.get(SECRET_KEY_ENV, "")

@@ -130,8 +130,7 @@ def change_own_password(
 ):
     store = get_account_store()
     stored_hash = store.get_user_password_hash(user.id)
-    matched, _ = verify_password(payload.current_password, stored_hash)
-    if not matched:
+    if not verify_password(payload.current_password, stored_hash):
         raise HTTPException(status_code=400, detail="当前密码不正确")
     try:
         store.update_password(user.id, hash_password(payload.new_password))

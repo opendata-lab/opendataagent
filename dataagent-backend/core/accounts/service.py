@@ -68,7 +68,7 @@ def hash_default_password() -> str:
 # ---------------------------------------------------------------------------
 
 def authenticate_password(username: str, password: str) -> User | None:
-    """Verify username + password against da_user; upgrades legacy bcrypt to Argon2id."""
+    """Verify username + password against da_user."""
     store = get_account_store()
     found = store.get_user_with_password(username)
     if found is None:
@@ -78,15 +78,9 @@ def authenticate_password(username: str, password: str) -> User | None:
     if not user.is_active:
         logger.warning("Password login rejected: disabled user_id=%s username=%r", user.id, user.username)
         return None
-    matched, needs_rehash = verify_password(password, stored_hash)
-    if not matched:
+    if not verify_password(password, stored_hash):
         logger.warning("Password login failed: bad password user_id=%s username=%r", user.id, user.username)
         return None
-    if needs_rehash:
-        try:
-            store.update_password(user.id, hash_password(password))
-        except Exception:
-            logger.warning("Password hash upgrade failed user_id=%s", user.id, exc_info=True)
     try:
         store.touch_last_login(user.id)
     except Exception:

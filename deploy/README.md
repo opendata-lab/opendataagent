@@ -143,19 +143,23 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
    ```
 4. 重启 `dataagent-backend`。
 
-管理员只能用上面的命令行创建（或升级时导入），界面和接口不支持把用户设为管理员。
+管理员只能用上面的命令行创建，界面和接口不支持把用户设为管理员。
 
-从旧版本升级（不要用示例覆盖现有 `dataagent_config_docker.py`，迁移要从中读取旧管理员）：
+从旧版本升级：
 
 1. 运行 `scripts/backup-db.sh`，在 `deploy/backups/` 生成数据库备份 `dataagent-<时间>.sql.gz` 和配置备份 `config-<时间>.tar.gz`（`.env` 与 `docker/dataagent/*.py`）。数据库备份由 backend 镜像内的 `mysqldump` 完成，宿主机不需要 MySQL 客户端。
-2. 在现有 `dataagent_config_docker.py` 中保留 `LOCAL_ADMINS`，补充 `DEFAULT_USER_PASSWORD`。Compose 中 `DATAAGENT_CONFIG` 指向 `dataagent_config.py`，它在末尾加载同目录的 `dataagent_config_docker.py`；自定义部署确认最终加载的是保留下来的这份覆盖。
-3. 运行 `alembic upgrade head`。迁移 `20261123_000042` 一次性：
-   - 导入 `LOCAL_ADMINS`（保留原 bcrypt 哈希，首次登录升级为 Argon2id）为管理员；`ADMIN_USERS` 不导入；
-   - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<u>` / `<provider>:<sub>`）登记普通账号和外部身份，不设密码：本人通过同一外部身份登录，需要密码登录时由管理员重置为默认密码；
-   - 按外部身份精确回填旧会话归属，将已发布的 `allowed_users` 转为助手授权；
-   - 清空旧个人 MCP 访问令牌（升级后需重新申请）。
-   迁移日志 `Unified accounts migration summary` 列出导入的管理员、旧用户、回填数和未映射的授权，核对后再开放访问。
-4. 重启 `dataagent-backend`。
+2. 在 `dataagent_config_docker.py` 中补充 `DEFAULT_USER_PASSWORD`（`LOCAL_ADMINS` / `ADMIN_USERS` 不再使用，可删除）。
+3. 换新镜像并执行 `scripts/start.sh`。backend 启动时 Alembic 迁移 `20261123_000042` 只建表：用户、外部身份、角色、助手授权，重建个人 MCP 访问令牌表（旧令牌作废，升级后重新申请），不改动旧数据。
+4. 运行 `scripts/migrate-accounts.sh`（执行 `scripts/migrate-accounts.sql`，可重复执行）：
+   - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<用户名>` / `<来源>:<标识>`）建普通账号和外部身份，不设密码；`local:admin` 直接对应同名的 `admin` 账号。来源和标识不区分大小写，`SSO:u123` 与 `SSO:U123` 是同一用户；
+   - 按外部身份回填旧会话归属，把已发布的 `allowed_users` 转为助手授权，助手配置和草稿只保留可见模式；
+   - 「仅登录用户」改为「全部用户」；
+   - 末尾列出账号数、已归属的旧会话、无归属会话和授权数，以及因用户名冲突没能建账号的旧用户。
+5. 设置管理员（原来的密码可以继续用，例如 `admin123`）：
+   ```bash
+   docker compose -f deploy/docker-compose.yml exec dataagent-backend python -m core.accounts create-user --username admin --password '<密码>' --admin
+   ```
+   第 4、5 步顺序不限。核对第 4 步的结果后再开放访问；在此之前普通用户看不到自己的旧会话，「指定范围」助手也暂时不可用。
 
 该迁移不支持降级。需要回退时运行 `scripts/restore-db.sh deploy/backups/dataagent-<时间>.sql.gz`（会先清空库内全部表再导入），把 `deploy/.env` 的 `ODA_*_IMAGE` 改回旧版本，必要时从 `config-<时间>.tar.gz` 解压回旧配置，再执行 `scripts/start.sh`。
 

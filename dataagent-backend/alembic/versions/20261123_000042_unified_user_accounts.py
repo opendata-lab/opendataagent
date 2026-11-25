@@ -70,8 +70,9 @@ def upgrade() -> None:
         op.create_table(
             "da_user_identity",
             sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
-            sa.Column("source", sa.String(128, collation="utf8mb4_bin"), nullable=False),
-            sa.Column("subject", sa.String(255, collation="utf8mb4_bin"), nullable=False),
+            # Case-insensitive (user decision 2026-11-24): SSO:u123 and SSO:U123 are one user.
+            sa.Column("source", sa.String(128), nullable=False),
+            sa.Column("subject", sa.String(255), nullable=False),
             sa.Column("user_id", sa.BigInteger(), sa.ForeignKey("da_user.id", name="fk_da_user_identity_user"), nullable=False),
             sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
             sa.UniqueConstraint("source", "subject", name="uq_da_user_identity_source_subject"),
@@ -154,10 +155,17 @@ def upgrade() -> None:
     _add_nullable_user_fk(conn, "da_agent_widget_event", "fk_da_agent_widget_event_user", "ix_da_agent_widget_event_user_id")
     _add_nullable_user_fk(conn, "eval_dataset", "fk_eval_dataset_user", "ix_eval_dataset_user_id")
 
-    # Seed built-in roles, import cutover admins, backfill topics, migrate published agent grants.
-    from core.accounts.migration import run_accounts_data_migration
-
-    run_accounts_data_migration(conn)
+    # Built-in roles. Legacy data (accounts for old principals, topic owners,
+    # published allowlists) is migrated by hand with scripts/migrate-accounts.sh;
+    # the admin account is created with `python -m core.accounts create-user --admin`.
+    op.execute(
+        """
+        INSERT IGNORE INTO da_role (role_key, name, description, is_builtin)
+        VALUES
+          ('admin', '管理员', '系统管理员，拥有全部管理菜单与助手访问权限', 1),
+          ('user', '普通用户', '默认用户角色，可访问授权给本人或所属角色的助手', 1)
+        """
+    )
 
 
 def downgrade() -> None:
