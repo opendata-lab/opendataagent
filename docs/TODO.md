@@ -13,11 +13,13 @@
 ### 独立登录 Widget 的统一账号与续聊
 
 - **现状**（2026-11-24）：DataAgent 仓库侧（计划第 1、2、3、5 步）已在分支 `feat/user-accounts` 完成：新增 `da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant` 及整数 `user_id` 外键迁移 `20261123_000042`（Alembic 只建表并重建 MCP 令牌表；旧数据由手动执行的 `scripts/migrate-accounts.sh` 迁移；迁移只能向前，回退用 `scripts/backup-db.sh` / `scripts/restore-db.sh`），统一 `core/accounts` 模块（移除 `core/auth.py` 与关闭认证/匿名 Widget 旁路），上线用户管理（仅停用不物理删除）、角色管理、个人资料、助手独立授权及服务端受信任代理配置页，并同步更新本地冒烟、评测脚本、部署配置与手册。
-- **最终约定**（2026-11-24）：管理员与普通用户两级，自定义角色只用于助手授权。个人资料仅包含账号名、显示名、登录方式、角色和改密。Widget 由宿主后端转发同名账号，站点只配 ID 和密钥，历史按会话所有者隔离。MCP 令牌长期有效且无数量上限，用户只管理自己的令牌。
-- **上线约束（必读）**：**OpenDataWorks 与 OntoFoundry 都改造完成前，DataAgent 不能先上线部署**（OntoFoundry 见 opendata-lab/ontofoundry#108；OpenDataWorks 截至 2026-11-24 main `8e704f90` 仍由浏览器传 `agentUserId`、nginx 直接转发 `/api/v1/nl2sql/`，尚无人改造，升级后门户问数会 401/403）。因 DataAgent 已移除匿名和浏览器自报 `X-DataAgent-User-Id` 旁路，每个 Widget 请求都要求宿主携带 `X-DataAgent-Access-Key` 与登录用户的 `X-DataAgent-User-Id`，需待 OpenDataWorks 与 OntoFoundry 两端改造就绪并完成联调后再同步切换上线。
-- **要做**（跨仓库后续，计划第 4 步）：
-  - **OpenDataWorks 仓库**：代理层加挂 `X-DataAgent-Access-Key`，在 `X-DataAgent-User-Id` 中传递当前登录的用户名（与 DataAgent 同名账号对应），不再传来源前缀。
-  - **OntoFoundry 仓库**：代理使用站点密钥与会话 `created_by` 的用户名，只允许创建人发送、取消和回答，升级时清除旧共享绑定。2026-11-24 源码核对发现 Builder 的 `beforeSend` 已拦截其他编辑者发送，输入组件的 `disabled` 未包含创建人条件，需在宿主仓库补测。
+- **最终约定**（2026-11-24 / 2026-11-25）：管理员与普通用户两级，自定义角色只用于助手授权。个人资料仅包含账号名、显示名、登录方式、角色和改密。Widget 取消访问密钥（2026-11-25 决定，仅限可信内网）：站点配置只保存 `website_id` 与 `allowed_origins`；已登记站点在无 `Origin`（如 OntoFoundry 服务端 BFF）或 `Origin` 命中白名单（如 OpenDataWorks 浏览器直连）时信任 `X-DataAgent-User-Id` 中的纯用户名并对应同名账号，历史按会话所有者隔离，Widget 凭据仍不能访问平台路由。MCP 令牌长期有效且无数量上限，用户只管理自己的令牌。
+- **上线约束（必读）**：宿主不再需要配置访问密钥。上线前须同步就绪两端并核对站点配置：
+  - **OntoFoundry**：从后端 BFF 发起无 `Origin` 请求并传会话创建人的纯用户名（见 opendata-lab/ontofoundry#108），在 DataAgent 登记站点 `ontofoundry` 即可。
+  - **OpenDataWorks**：门户前端改为传纯用户名（去掉 `local:` 前缀），并在 DataAgent 站点 `opendataworks-portal` 的 `allowed_origins` 中配置门户访问来源；未升级前门户若继续发送 `local:<用户名>` 会被当成带前缀的用户名而非同名账号。
+- **要做**（跨仓库联动与上线前验收）：
+  - **OpenDataWorks 仓库**：门户 Widget 直接传当前登录的纯用户名，并在站点配置中维护门户来源白名单（无需代理层与访问密钥）。
+  - **OntoFoundry 仓库**：移除 `ONTOFOUNDRY_DATAAGENT_ACCESS_KEY`，由后端 BFF 以会话 `created_by` 的纯用户名访问 DataAgent，只允许创建人发送、取消和回答，升级时清除旧共享绑定。
   - **上线前实测**：在目标部署先运行 `scripts/backup-db.sh` 并演练一次 `scripts/restore-db.sh` 恢复，演练 `scripts/migrate-accounts.sh` 与 `create-user --admin`，核对旧用户账号，跑通 OpenDataWorks 个人续聊、OntoFoundry 按创建人建模会话、单助手 MCP 重申令牌及本地完整冒烟链路。
 - **本地完整链路待验**（2026-11-24）：Codex 沙箱无法连接 Docker socket 或本机 MySQL 和 Redis，未执行账号迁移实库用例及浏览器冒烟。按[实施计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)使用独立 `dataagent_qa` 补测。
 - **来源**：2026-11-23 用户要求与 Claude、Argon 设计评审。[设计与用户引用盘点](design/2026-11-19-unified-conversation-history-design.md#独立登录-widget-的账号归属2026-11-23) · [实施计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)
@@ -137,7 +139,7 @@
 
 - **签名用户上下文与Portal委托接入延期（2026-11-01用户决定，2026-11-10 更新）**：DataAgent 仍为每次 MCP 调用附加`X-Agent-User-Id`和`X-Agent-Id`；OpenDataWorks 自 1.6.0 起只按服务账号 Bearer Token 授权，这两个头只记审计（opendataworks#511），按人隔离留待其 OAuth 访问令牌模式。不实现新的OAuth／JWT委托或每智能体Portal Token，也不增加缺用户时的默认账号。本机定向测试允许显式指定已登记用户，不能把固定身份部署为全部用户的身份。后续参考[Aily自定义MCP](https://aily.feishu.cn/hc/1u7kleqg_73ahi33a)的签名用户上下文：先验证宿主用户来源，再由后端逐请求注入可信身份，Portal验签并校验调用方绑定；独立登录需统一登录或明确账号绑定。凭证只发目标MCP、不进入模型环境，并覆盖会话归属／撤销／并发不串权。关联 OpenDataWorks [主体映射设计](https://github.com/opendata-lab/opendataworks/blob/main/docs/design/2026-10-26-dataagent-datasource-identity-design.md)第9.15节（当前委托限制）与第11节（服务账号接入）；当前未实现，多用户可信身份缺口保持开放。
 
-- **宿主身份转发联调**（2026-11-24）：DataAgent 统一账号分支已要求受信任密钥和宿主后端逐请求转发的用户名。原浏览器直传用户标识的接入需在宿主升级时切换。上线前校验宿主重写身份头与私有后端入口，见[联动计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)。
+- **宿主身份转发联调**（2026-11-25 更新）：DataAgent 已取消站点访问密钥，改为在可信内网下按「已登记站点 + 无 Origin 或命中 `allowed_origins` + 纯用户名 `X-DataAgent-User-Id`」接入（风险已记入设计文档，须保证 8900 端口不对外暴露）。上线前核对 OpenDataWorks 传纯用户名且来源在白名单中、OntoFoundry 后端无 `Origin` 传创建人用户名，见[联动计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)。
 
 ## 评测
 

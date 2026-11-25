@@ -59,8 +59,8 @@ export function parseWidgetConfig(script = resolveCurrentScript()) {
     'X-DataAgent-Client': 'widget',
     'X-DataAgent-Website-Id': websiteId
   }
-  // The host backend checks its own login and rewrites this header before
-  // forwarding with the site's access key; the browser value is never trusted.
+  // The host page passes its signed-in user name; DataAgent trusts it for a
+  // registered site whose allowlist contains the page's Origin (trusted intranet).
   if (userId) headers['X-DataAgent-User-Id'] = userId
 
   return {

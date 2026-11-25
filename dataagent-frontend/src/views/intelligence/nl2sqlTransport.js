@@ -213,8 +213,8 @@ export function createNl2SqlTransport(api, topicId, context = {}) {
      * Read a workspace file as bytes, for preview and for download.
      *
      * Goes through fetch rather than handing out a URL because a bare browser
-     * navigation cannot carry the site and access-key headers this runtime
-     * requires — the same reason the chat surfaces already download via Blob.
+     * navigation cannot carry the Widget headers this runtime requires — the
+     * same reason the chat surfaces already download via Blob.
      */
     readFile(relPath) {
       return api.topicApi.fetchFileBlob(topicId, relPath)

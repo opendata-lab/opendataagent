@@ -4,7 +4,7 @@
       <div class="page-header-main">
         <h2 class="page-title">Widget 接入白名单</h2>
         <p class="page-desc">
-          为宿主站点管理服务端访问密钥。宿主后端验证登录后转发当前用户名。
+          登记允许接入 Widget 的站点和浏览器来源（Origin）。请求来自已登记站点、且来源在白名单内或不带 Origin（宿主后端直接调用）时，<code>X-DataAgent-User-Id</code> 中的用户名即对应 DataAgent 同名账号。仅适用于可信内网。
         </p>
       </div>
       <div class="page-header-actions">
@@ -20,23 +20,6 @@
         </el-button>
       </div>
     </header>
-
-    <el-alert
-      v-if="revealedKey"
-      type="warning"
-      show-icon
-      :closable="true"
-      class="key-alert"
-      @close="revealedKey = null"
-    >
-      <template #title>
-        站点「{{ revealedKey.website_id }}」的访问密钥已生成（仅展示一次，请立即复制到接入方服务端配置）
-      </template>
-      <div class="key-reveal-row">
-        <code class="key-code" data-testid="revealed-access-key">{{ revealedKey.access_key }}</code>
-        <el-button size="small" @click="copyKey(revealedKey.access_key)">复制</el-button>
-      </div>
-    </el-alert>
 
     <div v-if="!sites.length" class="empty-block">
       <div class="empty-title">暂无接入站点</div>
@@ -60,7 +43,7 @@
                 <template #label>
                   <span class="field-label">
                     Website ID
-                    <el-tooltip content="站点唯一标识，需与嵌入脚本的 data-website-id 完全一致。" placement="top">
+                    <el-tooltip content="站点唯一标识，需与嵌入脚本的 data-website-id 或 X-DataAgent-Website-Id 完全一致。" placement="top">
                       <el-icon><QuestionFilled /></el-icon>
                     </el-tooltip>
                   </span>
@@ -70,42 +53,33 @@
             </el-col>
           </el-row>
 
-          <div class="server-side-box">
-            <div class="server-side-head">
-              <div>
-                <div class="server-side-title">服务端受信任代理（OpenDataWorks / OntoFoundry 等）</div>
-                <div class="server-side-desc">
-                  启用后，该站点只能通过后端携带 <code>X-DataAgent-Access-Key</code> 与用户标识头接入。
-                </div>
+          <el-form-item>
+            <template #label>
+              <span class="field-label">
+                允许来源（Origin）
+                <el-tooltip placement="top">
+                  <template #content>
+                    浏览器嵌入页面的来源，例如 https://app.example.com。
+                  </template>
+                  <el-icon><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
+            </template>
+            <div class="origin-list">
+              <div v-for="(_, oi) in site.allowed_origins" :key="oi" class="origin-row">
+                <el-input
+                  v-model="site.allowed_origins[oi]"
+                  placeholder="https://app.example.com"
+                  @keyup.enter="addOrigin(site)"
+                />
+                <el-button text :icon="Close" class="origin-remove" @click="removeOrigin(site, oi)" />
               </div>
-              <div class="server-side-key-actions">
-                <el-tag :type="site.server_side.access_key_set ? 'success' : 'info'" size="small">
-                  {{ site.server_side.access_key_set ? '已配置密钥' : '未配置密钥' }}
-                </el-tag>
-                <el-button
-                  size="small"
-                  :disabled="!site._persistedId || keyWorkingId === site._persistedId"
-                  :data-testid="`generate-key-${site.website_id || index}`"
-                  @click="generateOrRotateKey(site)"
-                >
-                  {{ site.server_side.access_key_set ? '轮换密钥' : '生成密钥' }}
-                </el-button>
-                <el-button
-                  v-if="site.server_side.access_key_set"
-                  size="small"
-                  type="danger"
-                  plain
-                  :disabled="keyWorkingId === site._persistedId"
-                  @click="revokeKey(site)"
-                >
-                  吊销密钥
-                </el-button>
+              <el-button class="origin-add" :icon="Plus" @click="addOrigin(site)">添加来源</el-button>
+              <div v-if="!site.allowed_origins.length" class="origin-hint">
+                未配置来源时只接受宿主后端（不带 Origin）的请求；浏览器直接嵌入需填写宿主页面来源。
               </div>
             </div>
-            <div v-if="!site._persistedId" class="server-side-hint">请先保存该站点后再生成服务端访问密钥。</div>
-
-            <div class="server-side-hint">宿主后端逐请求校验登录，并在 X-DataAgent-User-Id 中转发当前用户名，对应 DataAgent 同名账号。</div>
-          </div>
+          </el-form-item>
         </el-form>
       </section>
     </div>
@@ -115,40 +89,28 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Delete, Plus, QuestionFilled } from '@element-plus/icons-vue'
+import { Check, Close, Delete, Plus, QuestionFilled } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
-import { copyText } from '@/utils/clipboard'
 
 const loading = ref(false)
 const saving = ref(false)
 const sites = ref([])
 const savedSnapshot = ref('[]')
-const revealedKey = ref(null)
-const keyWorkingId = ref('')
 
 let keySeq = 0
 const nextKey = () => `site_${++keySeq}`
 
-const normalizeServerSide = (raw = {}) => {
-  const ss = raw && typeof raw === 'object' ? raw : {}
-  return {
-    enabled: Boolean(ss.enabled),
-    access_key_set: Boolean(ss.access_key_set || ss.enabled)
-  }
-}
-
-const toPayloadServerSide = (ss = {}) => ({ enabled: Boolean(ss.enabled) })
-
-const normalizeSite = (raw = {}, persisted = false) => ({
+const normalizeSite = (raw = {}) => ({
   _key: nextKey(),
-  _persistedId: persisted ? String(raw.website_id || '').trim() : '',
   website_id: String(raw.website_id || ''),
-  server_side: normalizeServerSide(raw.server_side)
+  allowed_origins: Array.isArray(raw.allowed_origins) ? raw.allowed_origins.map((item) => String(item || '')) : []
 })
 
 const toPayloadSite = (site) => ({
   website_id: String(site.website_id || '').trim(),
-  server_side: toPayloadServerSide(site.server_side)
+  allowed_origins: (site.allowed_origins || [])
+    .map((item) => String(item || '').trim())
+    .filter((item, index, arr) => item && arr.indexOf(item) === index)
 })
 
 const payloadSites = computed(() => sites.value.map(toPayloadSite).filter((site) => site.website_id))
@@ -158,7 +120,7 @@ const isDirty = computed(() => snapshotOf(payloadSites.value) !== savedSnapshot.
 
 const applySettings = (payload) => {
   const list = Array.isArray(payload?.widget_allowed_sites) ? payload.widget_allowed_sites : []
-  sites.value = list.map((item) => normalizeSite(item, true))
+  sites.value = list.map(normalizeSite)
   savedSnapshot.value = snapshotOf(sites.value.map(toPayloadSite).filter((site) => site.website_id))
 }
 
@@ -173,7 +135,7 @@ const loadSettings = async () => {
 }
 
 const addSite = () => {
-  sites.value.push(normalizeSite({}, false))
+  sites.value.push(normalizeSite({ allowed_origins: [''] }))
 }
 
 const removeSite = async (index) => {
@@ -191,69 +153,12 @@ const removeSite = async (index) => {
   sites.value.splice(index, 1)
 }
 
-const generateOrRotateKey = async (site) => {
-  const wid = site._persistedId
-  if (!wid) return
-  if (site.server_side.access_key_set) {
-    try {
-      await ElMessageBox.confirm(
-        `确认轮换站点「${wid}」的服务端访问密钥吗？旧密钥将立即失效。`,
-        '轮换访问密钥',
-        { confirmButtonText: '轮换', cancelButtonText: '取消', type: 'warning' }
-      )
-    } catch {
-      return
-    }
-  }
-  keyWorkingId.value = wid
-  try {
-    const res = await dataagentApi.createWidgetAccessKey(wid)
-    revealedKey.value = res
-    site.server_side.enabled = true
-    site.server_side.access_key_set = true
-    savedSnapshot.value = snapshotOf(payloadSites.value)
-    ElMessage.success('访问密钥已生成')
-  } catch (error) {
-    if (!error?.__odwNotified) ElMessage.error(error?.message || '生成密钥失败')
-  } finally {
-    keyWorkingId.value = ''
-  }
+const addOrigin = (site) => {
+  site.allowed_origins.push('')
 }
 
-const revokeKey = async (site) => {
-  const wid = site._persistedId
-  if (!wid) return
-  try {
-    await ElMessageBox.confirm(`确认吊销站点「${wid}」的服务端访问密钥吗？`, '吊销访问密钥', {
-      confirmButtonText: '吊销',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-  } catch {
-    return
-  }
-  keyWorkingId.value = wid
-  try {
-    await dataagentApi.deleteWidgetAccessKey(wid)
-    site.server_side.enabled = false
-    site.server_side.access_key_set = false
-    if (revealedKey.value?.website_id === wid) revealedKey.value = null
-    savedSnapshot.value = snapshotOf(payloadSites.value)
-    ElMessage.success('访问密钥已吊销')
-  } catch (error) {
-    if (!error?.__odwNotified) ElMessage.error(error?.message || '吊销密钥失败')
-  } finally {
-    keyWorkingId.value = ''
-  }
-}
-
-const copyKey = async (value) => {
-  try {
-    await copyText(value)
-    ElMessage.success('已复制到剪贴板')
-  } catch {
-    ElMessage.error('复制失败，请手动复制')
-  }
+const removeOrigin = (site, index) => {
+  site.allowed_origins.splice(index, 1)
 }
 
 const validate = () => {
@@ -331,8 +236,7 @@ onMounted(loadSettings)
 }
 
 .page-desc code,
-.field-label code,
-.server-side-desc code {
+.field-label code {
   padding: 1px 5px;
   border-radius: 4px;
   background: #eef3f9;
@@ -353,29 +257,6 @@ onMounted(loadSettings)
   --el-button-hover-border-color: #2c74b8;
   --el-button-active-bg-color: #184d7d;
   --el-button-active-border-color: #184d7d;
-}
-
-.key-alert {
-  border-radius: 8px;
-}
-
-.key-reveal-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-
-.key-code {
-  padding: 4px 8px;
-  border-radius: 4px;
-  background: #fffbeb;
-  border: 1px solid #fcd34d;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  color: #92400e;
-  word-break: break-all;
 }
 
 .empty-block {
@@ -454,44 +335,35 @@ onMounted(loadSettings)
   margin-bottom: 16px;
 }
 
-.server-side-hint {
-  font-size: 12px;
-  color: #8090a3;
-}
-
-.server-side-box {
-  margin-top: 8px;
-  padding: 14px 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #f8fafc;
-}
-
-.server-side-head {
+.origin-list {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 560px;
 }
 
-.server-side-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.server-side-desc {
-  margin-top: 2px;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.server-side-key-actions {
+.origin-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+}
+
+.origin-remove {
+  color: #71839a;
+}
+
+.origin-remove:hover {
+  color: #b42318;
+}
+
+.origin-add {
+  align-self: flex-start;
+}
+
+.origin-hint {
+  font-size: 12px;
+  color: #8090a3;
 }
 
 @media (max-width: 768px) {

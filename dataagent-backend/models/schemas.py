@@ -323,27 +323,9 @@ class RuntimeConfigResponse(BaseModel):
     providers: List[RuntimeProviderConfig] = Field(default_factory=list)
 
 
-class WidgetServerSide(BaseModel):
-    """Server-side trusted access state as the admin UI sees it.
-
-    Deliberately carries no digest. The read DTO is echoed back on save, so
-    exposing the hash here would let a settings round-trip overwrite — or a
-    client forge — a site's key. Only the access-key endpoints change it.
-    """
-
-    enabled: bool = False
-    key_configured: bool = False
-
-
 class WidgetAllowedSite(BaseModel):
     website_id: str = ""
-    server_side: WidgetServerSide = Field(default_factory=WidgetServerSide)
-
-
-class WidgetAccessKeyResponse(BaseModel):
-    website_id: str
-    # Shown exactly once, at generation. Nothing stores the plaintext.
-    access_key: str
+    allowed_origins: List[str] = Field(default_factory=list)
 
 
 class AdminSettingsResponse(BaseModel):

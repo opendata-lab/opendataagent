@@ -1,8 +1,6 @@
 """Unified request authentication, identity resolution, and authorization entry points."""
 from __future__ import annotations
 
-import hashlib
-import hmac
 import logging
 import re
 from typing import Any
@@ -32,6 +30,13 @@ _MCP_TOKEN_RE = re.compile(rf"{_MCP_TOKEN_PREFIX}[A-Za-z0-9_-]{{43}}")
 def _clean_header(value: str | None, max_length: int = 255) -> str:
     text = str(value or "").strip()
     return text[:max_length] if len(text) > max_length else text
+
+
+def _origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
+    """No Origin means a server-side caller (a host backend); a browser Origin must be listed."""
+    if not origin:
+        return True
+    return origin.rstrip("/") in {item.rstrip("/") for item in allowed_origins}
 
 
 def _allowed_widget_sites() -> list[dict[str, Any]]:
@@ -184,8 +189,9 @@ def current_account_context(request: Request) -> AccountContext:
         request.state._account_context = ctx
         return ctx
 
-    # Widget path: an allowed site whose host backend forwards the request with the
-    # site's server-side access key and its signed-in user.
+    # Widget path (trusted intranet): accept a registered site with either no
+    # Origin header (server-side caller such as a BFF) or an Origin in the
+    # site's allowlist, then trust X-DataAgent-User-Id as the plain user name.
     website_id = _clean_header(request.headers.get("X-DataAgent-Website-Id"), 128)
     if not website_id:
         raise HTTPException(status_code=400, detail="X-DataAgent-Website-Id is required")
@@ -198,22 +204,11 @@ def current_account_context(request: Request) -> AccountContext:
         logger.warning("Widget site rejected website_id=%r", website_id)
         raise HTTPException(status_code=403, detail="Widget site is not allowed")
 
-    server_side = matched_site.get("server_side") if isinstance(matched_site.get("server_side"), dict) else {}
-    is_server_side = server_side.get("enabled") is True
-
-    if not is_server_side:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "WIDGET_LOGIN_REQUIRED", "message": "请先登录后使用智能问数"},
-        )
-
-    expected_hash = str(server_side.get("access_key_hash") or "")
-    presented_key = _clean_header(request.headers.get("X-DataAgent-Access-Key"), 128)
-    if not expected_hash or not presented_key or not hmac.compare_digest(
-        hashlib.sha256(presented_key.encode("utf-8")).hexdigest(), expected_hash
-    ):
-        logger.warning("Widget access key rejected website_id=%r", website_id)
-        raise HTTPException(status_code=403, detail="Widget access key is invalid")
+    allowed_origins = matched_site.get("allowed_origins") or []
+    req_origin = _clean_header(request.headers.get("Origin"), 512)
+    if not _origin_allowed(req_origin, allowed_origins):
+        logger.warning("Widget origin rejected website_id=%r origin=%r allowed=%r", website_id, req_origin, allowed_origins)
+        raise HTTPException(status_code=403, detail="Widget origin is not allowed")
 
     raw_user_id = _clean_header(request.headers.get("X-DataAgent-User-Id"), 255)
     if not raw_user_id:
@@ -221,8 +216,8 @@ def current_account_context(request: Request) -> AccountContext:
             status_code=401,
             detail={"code": "WIDGET_LOGIN_REQUIRED", "message": "请先登录后使用智能问数"},
         )
-    # The host's user name is the platform user name (user decision 2026-11-24):
-    # it binds to the same-named account or registers it. Only the name is forwarded.
+    # The host's user name is the platform user name (user decisions 2026-11-24 / 2026-11-25):
+    # it binds to the same-named account or registers it. Only the plain name is used.
     try:
         user = link_or_register(website_id, raw_user_id, {"username": raw_user_id})
     except AccountDisabledError as exc:
@@ -238,7 +233,7 @@ def current_account_context(request: Request) -> AccountContext:
         user=user,
         source="widget",
         website_id=website_id,
-        auth_method="widget_trusted",
+        auth_method="widget",
     )
     request.state._account_context = ctx
     return ctx
@@ -248,13 +243,13 @@ def current_user(request: Request) -> User:
     """FastAPI dependency returning the verified active User of a platform session.
 
     Platform routes (account, admin, eval, MCP tokens) accept only the user's own
-    DataAgent login. A host-forwarded Widget request is limited to the routes that
-    take ``current_account_context`` (Widget runtime and assistant catalog).
+    DataAgent login. A Widget request is limited to the routes that take
+    ``current_account_context`` (Widget runtime and assistant catalog).
     """
     ctx = current_account_context(request)
     if ctx.user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    if ctx.auth_method == "widget_trusted":
+    if ctx.auth_method == "widget":
         raise HTTPException(status_code=403, detail="Widget credentials cannot access platform routes")
     return ctx.user
 

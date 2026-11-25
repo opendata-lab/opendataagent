@@ -2,7 +2,7 @@
 
 ## 2026-11-19 同源 Widget 方案（历史）
 
-> 2026-11-24 起同源平台会话接入已移除（用户决定砍掉），Widget 只经宿主服务端转发接入，见下文「独立登录 Widget 的账号归属」。本节保留作历史。
+> 2026-11-24 起同源平台会话接入已移除（用户决定砍掉），2026-11-25 起取消站点访问密钥、改由可信内网下的已登记站点 + Origin 白名单 + 用户名接入，见下文「独立登录 Widget 的账号归属」。本节保留作历史。
 
 当前 Chat 将来源同时用作列表和权限开关：平台默认可聊天，Widget 和「全部」进入只读视图。两端虽复用话题与任务接口，普通平台会话按平台登录身份授权，Widget 历史则按站点与宿主提供的用户 ID 或访客 ID 授权。不能直接按字符串把这些身份视为同一人。
 
@@ -24,17 +24,21 @@ Superset 的安全管理使用 Flask-AppBuilder。其 `ab_user.id` 是整数主�
 
 | 接入 | 当前主分支的传值 | 能否对应平台账号 |
 | --- | --- | --- |
-| OpenDataWorks 门户 `opendataworks-portal` | 悬浮和嵌入问数共用 `portalWidgetIdentity()`，取门户 `/auth/me` 的 `username` 和 `authSource`。本地用户传 `local:<用户名>`，OAuth 用户传 `<registration id>:<sub>`，例如 `local:alice` 和 `sso:u-42`。 | 本地两边采用同一账号命名规则时，`local:alice` 字符串一致。OAuth 两边须核对身份源、实际 `sub` 和 DataAgent provider 名。切换时改由宿主后端转发登录用户名。 |
-| OntoFoundry `ontofoundry` | 建模页用对话 SDK，BFF 以 Widget 客户端发请求，传 `ontofoundry:<workspace_id>:<session_id>`。访问由 OntoFoundry 工作空间权限控制。 | 该值标识共享建模会话。多人可以操作同一会话，会话归属继续由宿主控制。 |
+| OpenDataWorks 门户 `opendataworks-portal` | 悬浮和嵌入问数共用 `portalWidgetIdentity()`，取门户 `/auth/me` 的 `username` 和 `authSource`。原逻辑本地用户传 `local:<用户名>`，OAuth 用户传 `<registration id>:<sub>`。 | 切换后由门户前端直接传纯用户名 `username`（不再拼 `local:` 前缀），并在 DataAgent 站点配置中把门户来源加入 `allowed_origins`。 |
+| OntoFoundry `ontofoundry` | 建模页用对话 SDK，BFF 以 Widget 客户端发请求（无 `Origin` 头），原传 `ontofoundry:<workspace_id>:<session_id>`。访问由 OntoFoundry 工作空间权限控制。 | 切换后由 BFF 传会话创建人的纯用户名 `username`，不再使用共享会话键，也不再使用访问密钥。 |
 
 [门户取值](https://github.com/opendata-lab/opendataworks/blob/8e704f90e2b864c29e451f47825d085b330bcd92/frontend/src/utils/dataagentWidgetLoader.js#L58-L74) · [DataAgent OAuth 账号构造](../../dataagent-backend/api/auth_routes.py#L245) · [OntoFoundry 请求头](https://github.com/opendata-lab/ontofoundry/blob/1984b00dc9041e7feb126f6429c0b2b9d052e13c/apps/api/src/ontofoundry_api/services/dataagent.py#L68-L81) · [OntoFoundry 会话标识构造](https://github.com/opendata-lab/ontofoundry/blob/1984b00dc9041e7feb126f6429c0b2b9d052e13c/apps/api/src/ontofoundry_api/api/agent_conversation.py#L175-L188)
 
 2026-11-23 对本机 MySQL 做了只读核对。`dataagent` 登记了上述两个站点，表内有 35 条网页会话，Widget 会话为 0。`dataagent_eval` 的 19 条 Widget 会话全部属于 OntoFoundry，均为上述共享会话键，且没有平台账号 ID。OpenDataWorks 的 Widget 定向测试 19 项、OntoFoundry 请求头及客户端测试 7 项、DataAgent 现有 Widget 路由和隔离测试 47 项通过。生产请求、真实账号以及生产身份源配置待核对。
 
-### 可信接入与自动注册
+### 可信内网接入与自动注册
 
-1. 独立宿主的 Widget 请求走宿主自己的已登录后端。宿主逐请求检查登录和账号状态，从后端的登录主体取得用户 ID，重写用户头与站点头，再用现有 Widget 服务端接入密钥向 DataAgent 转发。密钥仅位于服务端。DataAgent 开启平台认证，为该站点要求服务端密钥并启用个人账号归属。缺少身份或站点凭据时拒绝请求。OntoFoundry 同样转发已登录用户，不再使用共享会话键（2026-11-24 用户决定：不允许共享会话）。
-2. 宿主转发的 `X-DataAgent-User-Id` 就是用户名，等同于 DataAgent 同名账号（2026-11-24 用户决定：Widget 传入的用户就是真实用户）。DataAgent 以 `(website_id, 用户名)` 记录外部身份，首次访问按用户名绑定已有同名账号或注册普通账号。宿主只传用户名，不传显示名和邮箱。不提供来源映射、命名空间开关和手动绑定外部身份。宿主的 `admin` 就是平台 `admin`。Widget 凭据只能访问问答和助手目录接口，管理类接口仍只接受平台登录。站点配置只保存站点 ID 与服务端密钥设置。
+1. **站点与来源校验（2026-11-25 用户最终决定，不设站点访问密钥）**：DataAgent 删除 Widget 站点访问密钥（无 `server_side` 配置、无 `X-DataAgent-Access-Key`、无密钥管理接口），恢复按站点维护的 `allowed_origins` 列表。Widget 请求（`X-DataAgent-Client: widget`）同时满足以下条件时放行：
+   - `X-DataAgent-Website-Id` 已在「Widget 接入白名单」登记；
+   - 请求**不带 `Origin` 头**（例如 OntoFoundry BFF 等服务端调用方），**或** `Origin` 命中该站点的 `allowed_origins`（例如 OpenDataWorks 门户浏览器直连）。
+   - 站点未登记或 `Origin` 不在允许列表时返回 `403`；缺少 `X-DataAgent-User-Id` 时返回 `401 WIDGET_LOGIN_REQUIRED`（不提供匿名访客或同源平台会话模式）。
+   - **已接受的安全风险**：因为没有服务端密钥，**任何能访问 DataAgent API 网络端口的调用方都可以用任意已登记站点宣称任意用户名**（含浏览器修改请求头或无 `Origin` 的直接调用）。该风险由用户明确接受，**仅适用于可信内网部署**，且必须确保 DataAgent 后端端口（默认 8900）不暴露到不可信网络。
+2. 宿主传入的 `X-DataAgent-User-Id` 就是纯用户名（DataAgent 不再处理 `local:` 前缀），等同于 DataAgent 同名账号（2026-11-24 / 2026-11-25 用户决定：Widget 传入的用户就是真实用户）。DataAgent 以 `(website_id, 用户名)` 记录外部身份，首次访问按用户名绑定已有同名账号或注册普通账号。宿主只传用户名，不传显示名和邮箱。不提供来源映射、命名空间开关和手动绑定外部身份。宿主的 `admin` 就是平台 `admin`。Widget 凭据（`auth_method == "widget"`）只能访问问答和助手目录接口，账号、管理、评测和 MCP 令牌等平台接口仍由 `current_user` 拒绝并返回 `403`，只接受平台登录。站点配置只保存 `website_id` 与 `allowed_origins`。
 3. 可信 Widget 和主站 OAuth 共用账号登记服务。匹配到的账号复用原用户记录。首次注册在同一事务创建账号、外部绑定、普通用户角色关联，并将管理员配置的默认密码哈希写入该账号。并发访问随后复用该账号。主站通过 OAuth 或密码登录后可以申请该账号的 MCP 个人访问令牌。
 4. 内部账号 ID 一律为整数，引用平台账号的列统一为 `user_id BIGINT REFERENCES da_user(id)`。新会话写入新增的 `da_agent_topic.user_id`；升级后手动执行 `scripts/migrate-accounts.sh`，按 `da_user_identity` 匹配旧 `auth_user_id`（`local:<u>` / `<provider>:<sub>`，不区分大小写）回填 `user_id`，匹配不到的旧会话保留 `user_id` 为空且仅管理员可读。代码仅保留按 `user_id` 的一套归属判断，不再保留按 `auth_user_id` 的旧路径。MCP 令牌表的 `user_id` 改为同样的外键，切换时直接删除旧令牌行（或重建表），用户重新申请。Widget 可访问当前账号的网页、MCP 和本站个人会话。
 
@@ -120,5 +124,5 @@ OAuth 用配置的提供方名称和 `OAUTH_USER_INFO` 返回的 `sub` 查询外
 ### 切换影响
 
 - 平台停用认证关闭时的共享池及仅凭宿主 ID 的匿名 Widget 路径。既有「所有人」「登录用户」助手都按「全部用户」对已登录的调用者可见。旧网页会话经手动迁移脚本登记旧主体并按 `da_user_identity` 映射回填 `user_id` 后继续归本人访问，没有旧主体的话题保持 `user_id` 为空且仅管理员可读；代码不再保留按 `auth_user_id` 的归属回退路径。
-- OpenDataWorks 个人 Widget 由门户认证后经站点凭据转发。OntoFoundry 的 BFF 核对工作空间权限，并转发已登录用户和站点凭据。DataAgent 不支持共享会话（2026-11-24 用户决定）：每个建模会话只属于创建人，只有创建人能发送、取消或回答，其他成员在 OntoFoundry 内查看。BFF 使用创建人的用户名调用 DataAgent。OntoFoundry 迁移 `20261124_000001` 清除旧绑定，下次发送创建新话题。旧共享会话键话题没有 `user_id`，仅管理员可在审计中查看。
+- OpenDataWorks 个人 Widget 由门户前端直接发送已登录的纯用户名 `username`，并把门户来源配置在 DataAgent 站点 `opendataworks-portal` 的 `allowed_origins` 中，无需代理层或站点密钥。OntoFoundry 的 BFF 核对工作空间权限后从后端无 `Origin` 发送请求并附带会话创建人的纯用户名，无需站点密钥。DataAgent 不支持共享会话（2026-11-24 用户决定）：每个建模会话只属于创建人，只有创建人能发送、取消或回答，其他成员在 OntoFoundry 内查看。BFF 使用创建人的用户名调用 DataAgent。OntoFoundry 迁移 `20261124_000001` 清除旧绑定，下次发送创建新话题。旧共享会话键话题没有 `user_id`，仅管理员可在审计中查看。
 - 本地开发、冒烟及评测在访问业务接口前使用专用账号登录，复用登录 Cookie 或 Bearer 会话凭据。存量评测话题保留历史，验证用登录态新话题。

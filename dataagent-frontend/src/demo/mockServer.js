@@ -124,11 +124,11 @@ const demoProviderSettings = {
   widget_allowed_sites: [
     {
       website_id: 'mall-web',
-      server_side: { enabled: false, access_key_set: false }
+      allowed_origins: ['https://mall.example.com']
     },
     {
       website_id: 'ops-console',
-      server_side: { enabled: false, access_key_set: false }
+      allowed_origins: []
     }
   ]
 }

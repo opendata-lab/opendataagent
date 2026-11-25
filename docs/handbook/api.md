@@ -1,6 +1,8 @@
 # 会话 API
 
-Base URL：`http://<DataAgent 主机>:8900/api/v1/nl2sql`。DataAgent 始终启用统一账号认证：业务接口需先调用 `POST /auth/login` 获取 `da_session` Cookie（或携带 `Authorization: Bearer <session_jwt>`）；仅 `/health`、`/auth/config`、`/auth/login`、`/auth/logout` 与 OAuth 入口可未登录访问。
+Base URL：`http://<DataAgent 主机>:8900/api/v1/nl2sql`。DataAgent 始终启用统一账号认证：平台业务接口需先调用 `POST /auth/login` 获取 `da_session` Cookie（或携带 `Authorization: Bearer <session_jwt>`）；仅 `/health`、`/auth/config`、`/auth/login`、`/auth/logout` 与 OAuth 入口可未登录访问。
+
+Widget 接入（仅限可信内网，不设访问密钥）通过请求头 `X-DataAgent-Client: widget`、`X-DataAgent-Website-Id: <website-id>` 与 `X-DataAgent-User-Id: <纯用户名>` 访问会话运行和助手目录接口：站点须已在管理后台「Widget 接入白名单」登记，且请求不带 `Origin` 头（服务端 BFF 调用）或 `Origin` 位于该站点的 `allowed_origins` 中。未登记站点或未放行 `Origin` 返回 `403`，缺少用户名返回 `401 WIDGET_LOGIN_REQUIRED`。Widget 凭据不能访问 `/api/v1/dataagent/*` 账号/角色/授权/令牌或管理与评测路由（返回 `403`）。
 
 ## 账号、角色、资料与助手授权（`/api/v1/dataagent`）
 

@@ -3,9 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiMocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
-  updateSettings: vi.fn(),
-  createWidgetAccessKey: vi.fn(),
-  deleteWidgetAccessKey: vi.fn()
+  updateSettings: vi.fn()
 }))
 
 const messageMocks = vi.hoisted(() => ({
@@ -46,6 +44,7 @@ const stubs = {
   'el-tooltip': { template: '<span><slot /><slot name="content" /></span>' },
   'el-icon': { template: '<i><slot /></i>' },
   Check: { template: '<i />' },
+  Close: { template: '<i />' },
   Delete: { template: '<i />' },
   Plus: { template: '<i />' },
   QuestionFilled: { template: '<i />' }
@@ -62,18 +61,19 @@ describe('WidgetAccessConfig', () => {
     messageBoxMocks.confirm.mockReset()
   })
 
-  it('renders existing sites from settings', async () => {
+  it('renders existing sites with origins and no access-key controls', async () => {
     apiMocks.getSettings.mockResolvedValue({
       widget_allowed_sites: [
-        { website_id: 'demo', server_side: { enabled: false } }
+        { website_id: 'demo', allowed_origins: ['https://a.com'] }
       ]
     })
     const wrapper = mountConfig()
     await flushPromises()
 
     expect(wrapper.text()).toContain('站点 1')
+    expect(wrapper.text()).not.toContain('生成密钥')
+    expect(wrapper.text()).not.toContain('X-DataAgent-Access-Key')
     expect(wrapper.find('.empty-block').exists()).toBe(false)
-    // not dirty right after load → save button disabled
     const saveButton = wrapper.findAll('button').find((b) => b.text().includes('已保存'))
     expect(saveButton?.attributes('disabled')).toBeDefined()
   })
@@ -86,12 +86,12 @@ describe('WidgetAccessConfig', () => {
     expect(wrapper.find('.empty-block').exists()).toBe(true)
   })
 
-  it('adds a site and saves the normalized payload with trusted server_side config', async () => {
+  it('adds a site with origins and saves the normalized deduplicated payload', async () => {
     apiMocks.getSettings.mockResolvedValue({ widget_allowed_sites: [] })
     apiMocks.updateSettings.mockResolvedValue({
       widget_allowed_sites: [{
         website_id: 'new-site',
-        server_side: { enabled: false }
+        allowed_origins: ['https://b.com']
       }]
     })
     const wrapper = mountConfig()
@@ -100,6 +100,7 @@ describe('WidgetAccessConfig', () => {
     wrapper.vm.addSite()
     await flushPromises()
     wrapper.vm.sites[0].website_id = '  new-site  '
+    wrapper.vm.sites[0].allowed_origins = [' https://b.com ', 'https://b.com', '']
     await flushPromises()
 
     await wrapper.vm.save()
@@ -108,9 +109,7 @@ describe('WidgetAccessConfig', () => {
     expect(apiMocks.updateSettings).toHaveBeenCalledWith({
       widget_allowed_sites: [{
         website_id: 'new-site',
-        server_side: {
-          enabled: false
-        }
+        allowed_origins: ['https://b.com']
       }]
     })
     expect(messageMocks.success).toHaveBeenCalled()
@@ -123,10 +122,6 @@ describe('WidgetAccessConfig', () => {
 
     wrapper.vm.addSite()
     wrapper.vm.sites[0].website_id = '   '
-    await flushPromises()
-
-    // payloadSites filters out blank website_id → still dirty? no payload sites → snapshot '[]' equals saved → not dirty
-    // Force dirty by adding a valid site too
     wrapper.vm.addSite()
     wrapper.vm.sites[1].website_id = 'valid'
     await flushPromises()

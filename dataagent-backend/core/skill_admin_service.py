@@ -121,22 +121,6 @@ def _string_list(values: Any) -> list[str]:
     return result
 
 
-def _normalize_server_side(raw: Any) -> dict[str, Any]:
-    """Server-side trusted access config for one widget site.
-
-    ``access_key_hash`` is a sha256 digest; plaintext is returned once at
-    generation and never stored. Every forwarded request names the host's
-    signed-in user in ``X-DataAgent-User-Id``, matched to the same-named
-    platform account.
-    """
-    if not isinstance(raw, dict):
-        return {"enabled": False, "access_key_hash": ""}
-    return {
-        "enabled": raw.get("enabled") is True,
-        "access_key_hash": str(raw.get("access_key_hash") or "").strip()[:64],
-    }
-
-
 def _normalize_widget_allowed_sites(raw: Any) -> list[dict[str, Any]]:
     items = raw
     if isinstance(raw, str):
@@ -155,11 +139,11 @@ def _normalize_widget_allowed_sites(raw: Any) -> list[dict[str, Any]]:
         if not website_id or website_id in seen:
             continue
         seen.add(website_id)
-        # A site is its id and its server-side key: the host backend forwards every
-        # request, so browser origins and display settings live with the host.
+        origins = item.get("allowed_origins")
+        origin_list = _string_list(list(origins) if isinstance(origins, (list, tuple, set)) else [])
         normalized.append({
             "website_id": website_id[:128],
-            "server_side": _normalize_server_side(item.get("server_side")),
+            "allowed_origins": origin_list,
         })
     return normalized
 
@@ -485,32 +469,6 @@ def _merge_provider_settings(
     }
 
 
-def _preserve_access_key_hashes(
-    incoming: list[dict[str, Any]], existing: list[dict[str, Any]]
-) -> None:
-    """Carry a stored digest forward when the caller did not supply one.
-
-    The admin read DTO masks the digest, so a plain settings save sends it back
-    empty; without this, opening the settings page and pressing save would
-    revoke every site's key.
-
-    Revocation therefore cannot express itself by sending an empty digest — it
-    is indistinguishable from a masked round-trip. A site that is explicitly
-    disabled is the signal instead: the delete endpoint turns server-side
-    access off and clears the digest together, and that pair means "forget it"
-    rather than "I did not say".
-    """
-    stored = {
-        site["website_id"]: site.get("server_side", {}).get("access_key_hash", "")
-        for site in existing
-    }
-    for site in incoming:
-        server_side = site["server_side"]
-        if server_side["access_key_hash"] or not server_side["enabled"]:
-            continue
-        server_side["access_key_hash"] = stored.get(site["website_id"], "")
-
-
 def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any] | None) -> dict[str, Any]:
     base = dict(current or {})
     update = dict(patch or {})
@@ -539,14 +497,6 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
         fallback_folder=fallback_skill_folder,
     )
     widget_allowed_sites = _normalize_widget_allowed_sites(base.get("widget_allowed_sites"))
-    # The admin read DTO masks access_key_hash, so a settings round-trip sends
-    # it back empty. Carrying the stored digest forward keeps a plain "save
-    # settings" from silently revoking a site's key; only the dedicated
-    # access-key endpoints may change it.
-    _preserve_access_key_hashes(
-        widget_allowed_sites,
-        _normalize_widget_allowed_sites((current or {}).get("widget_allowed_sites")),
-    )
 
     provider_id = _normalize_provider_id(base.get("provider_id"), allow_empty=True)
     if not provider_id or provider_id not in provider_settings:

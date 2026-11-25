@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,10 +16,6 @@ import core.skill_admin_service as skill_admin_service
 from core.topic_task_store import TopicTaskStore
 from main import app
 from tests.account_test_helpers import bearer_headers, install_fake_accounts
-
-
-def _hash_key(raw: str) -> str:
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def topic_payload(
@@ -153,7 +148,7 @@ def install_widget_settings(monkeypatch, *, sites=None):
     resolved_sites = sites if sites is not None else [
         {
             "website_id": "demo",
-            "server_side": {"enabled": True, "access_key_hash": _hash_key(DEMO_KEY)},
+            "allowed_origins": ["https://host.example.com"],
         }
     ]
     payload = {"widget_allowed_sites": resolved_sites}
@@ -182,17 +177,17 @@ def install_agent_profile(monkeypatch, agent_id="agent_widget", *, visibility=No
     return profile
 
 
-DEMO_KEY = "demo-secret-access-key"
-
-
-def widget_headers(user="alice", *, website_id="demo", key=DEMO_KEY):
-    """What a host backend forwards: site, access key and its signed-in user name."""
-    return {
+def widget_headers(user="alice", *, website_id="demo", origin: str | None = "https://host.example.com"):
+    """Widget request headers (with optional browser Origin or absent for BFF)."""
+    headers = {
         "X-DataAgent-Client": "widget",
         "X-DataAgent-Website-Id": website_id,
-        "X-DataAgent-Access-Key": key,
-        "X-DataAgent-User-Id": user,
     }
+    if user is not None:
+        headers["X-DataAgent-User-Id"] = user
+    if origin is not None:
+        headers["Origin"] = origin
+    return headers
 
 
 def test_web_requests_require_authenticated_session(monkeypatch):
@@ -210,29 +205,27 @@ def test_web_requests_require_authenticated_session(monkeypatch):
     assert context["website_id"] == ""
 
 
-def test_browser_widget_without_server_key_is_rejected(monkeypatch):
+def test_widget_rejects_disallowed_origin_and_missing_user(monkeypatch):
     install_fake_accounts()
     install_widget_settings(monkeypatch)
     store = install_fake_store(monkeypatch)
     client = TestClient(app)
 
-    # Host-supplied X-DataAgent-User-Id or visitor_id alone is never trusted.
-    for extra in (
-        {"X-DataAgent-User-Id": "user-123"},
-        {"X-DataAgent-Visitor-Id": "visitor-abc"},
-        {},
-    ):
+    # Disallowed Origin is rejected with 403 even when user id is supplied.
+    bad_origin = client.get(
+        "/api/v1/nl2sql/topics",
+        headers=widget_headers("alice", origin="https://evil.example.com"),
+    )
+    assert bad_origin.status_code == 403
+
+    # Allowed Origin without X-DataAgent-User-Id (even with visitor_id) returns 401 WIDGET_LOGIN_REQUIRED.
+    for extra in ({"X-DataAgent-Visitor-Id": "visitor-abc"}, {}):
         resp = client.get(
             "/api/v1/nl2sql/topics",
-            headers={
-                "Origin": "https://host.example.com",
-                "X-DataAgent-Client": "widget",
-                "X-DataAgent-Website-Id": "demo",
-                **extra,
-            },
+            headers={**widget_headers(None), **extra},
         )
-        # The site requires the host backend's access key.
-        assert resp.status_code == 403
+        assert resp.status_code == 401
+        assert resp.json()["detail"]["code"] == "WIDGET_LOGIN_REQUIRED"
     assert store.calls == [("init_schema", None)] * 3
 
 
@@ -263,27 +256,26 @@ def test_widget_topic_list_and_create_agent_validation(monkeypatch):
     assert store.calls[-1][2]["agent_id"] == profile["agent_id"]
 
 
-def test_trusted_widget_user_name_is_the_platform_user(monkeypatch):
+def test_widget_user_name_is_the_platform_user(monkeypatch):
     acc_store, _admin, alice = install_fake_accounts()
     install_widget_settings(monkeypatch)
     install_agent_profile(monkeypatch, "agent_widget")
     store = install_fake_store(monkeypatch)
     client = TestClient(app)
 
-    assert client.get("/api/v1/nl2sql/topics", headers=widget_headers(key="wrong-key")).status_code == 403
-
-    # The host's user name binds to the same-named platform account.
+    # Allowed browser Origin binds to the same-named platform account.
     assert client.get("/api/v1/nl2sql/topics", headers=widget_headers("alice")).status_code == 200
     assert store.calls[-1][1]["user_id"] == alice.id
 
-    # An unknown user name registers an ordinary account.
-    assert client.get("/api/v1/nl2sql/topics", headers=widget_headers("emp99")).status_code == 200
+    # Server-side caller without Origin header is also accepted and registers an ordinary account.
+    assert client.get("/api/v1/nl2sql/topics", headers=widget_headers("emp99", origin=None)).status_code == 200
     emp_uid = store.calls[-1][1]["user_id"]
     assert emp_uid not in (None, alice.id)
     assert not acc_store.get_user(emp_uid).is_admin
 
-    # The host's "admin" is the platform admin; platform routes still refuse Widget credentials.
+    # The host's "admin" is the platform admin for Widget routes; platform routes still refuse Widget credentials.
     assert client.get("/api/v1/nl2sql/topics", headers=widget_headers("admin")).status_code == 200
+    assert client.get("/api/v1/dataagent/users", headers=widget_headers("admin")).status_code == 403
 
 
 def test_widget_origin_site_and_task_isolation(monkeypatch):
@@ -294,6 +286,9 @@ def test_widget_origin_site_and_task_isolation(monkeypatch):
 
     bad_site = client.get("/api/v1/nl2sql/topics", headers=widget_headers(website_id="unknown"))
     assert bad_site.status_code == 403
+
+    bad_origin = client.get("/api/v1/nl2sql/topics", headers=widget_headers(origin="https://other.example.com"))
+    assert bad_origin.status_code == 403
 
     missing_task = client.get("/api/v1/nl2sql/tasks/task-forbidden", headers=widget_headers())
     assert missing_task.status_code == 404

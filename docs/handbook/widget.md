@@ -18,7 +18,7 @@ DataAgent 提供嵌入式智能问数 Widget，通过单个 `<script>` 标签即
 ></script>
 ```
 
-Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入由父应用提供当前用户 ID；匿名访问默认关闭，公开演示需要同时在站点设置和脚本中开启。
+Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入由父应用提供当前登录的纯用户名 `data-user-id`；DataAgent 不支持匿名访客，缺少用户名时显示登录提示。
 
 ## 配置属性
 
@@ -37,13 +37,18 @@ Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入�
 | `data-project-name` | 否 | `智能问数` | 面板标题栏显示名称 |
 | `data-project-color` | 否 | `#4A90A4` | 主题色（十六进制） |
 | `data-container-id` | 否 | — | 内嵌模式下容器元素 ID（内嵌模式必填） |
-| `data-user-id` | 否 | — | 宿主页面当前登录的用户名；为空时 Widget 显示登录提示。宿主后端会校验登录并改写 `X-DataAgent-User-Id` 后再转发，浏览器传的值不受信任 |
+| `data-user-id` | 否 | — | 宿主页面当前登录的纯用户名（不含 `local:` 等前缀）；为空时 Widget 显示登录提示，后端返回 `401 WIDGET_LOGIN_REQUIRED` |
 | `data-login-url` | 否 | — | 未登录时的登录跳转地址 |
 | `data-fullscreen-url` | 否 | — | 全屏按钮打开的完整页面地址，支持宿主相对路由和 HTTP(S) 地址 |
 
 ## 与平台继续同一条会话
 
-DataAgent 始终要求已验证的用户账号，不支持匿名访客、浏览器自报用户或同源复用平台登录。Widget 只经**服务端受信任代理**接入（OpenDataWorks / OntoFoundry 等独立登录系统）：在管理后台「设置 → Widget 接入」为站点生成服务端访问密钥，由宿主后端转发请求并附带 `X-DataAgent-Access-Key` 与宿主当前登录的用户名 `X-DataAgent-User-Id`，对应 DataAgent 同名账号（含 `admin`）。Widget 凭据用于运行和助手目录接口。宿主的后台对账请求使用会话发起人的用户名。缺少用户时返回 `401 WIDGET_LOGIN_REQUIRED`。
+DataAgent 始终要求已验证的用户账号，不支持匿名访客或同源复用平台登录，且不再使用站点访问密钥。在管理后台「设置 → Widget 接入」登记站点 `Website ID` 与浏览器允许来源（`allowed_origins`）：
+
+- **浏览器直连宿主（如 OpenDataWorks 门户）**：门户来源须在站点的 `allowed_origins` 中，前端直接通过 `data-user-id`（请求头 `X-DataAgent-User-Id`）传递当前登录的纯用户名。
+- **服务端代理宿主（如 OntoFoundry BFF）**：后端请求不带 `Origin` 头，只需登记站点 `Website ID`，并在 `X-DataAgent-User-Id` 中发送会话发起人的纯用户名。
+
+DataAgent 将 `X-DataAgent-User-Id` 直接对应到同名平台账号（含 `admin`），首次访问自动绑定或注册普通账号。Widget 凭据仅限运行和助手目录接口，不能访问账号、管理、评测和 MCP 令牌等平台接口（返回 `403`）。未登记站点或未放行 `Origin` 返回 `403`，缺少用户时返回 `401 WIDGET_LOGIN_REQUIRED`。**安全边界**：无密钥模式下任何能访问 DataAgent API 的调用方都可对已登记站点宣称任意用户名，仅限可信内网使用，并确保后端端口不对外暴露。
 
 平台网页、Widget 与单助手 MCP 共享同一整数 `da_user.id`，历史会话可跨入口连续查看与续聊；悬浮 Widget 默认可全屏打开平台 Chat 并带上当前助手与会话。每个会话只属于发起它的用户，不支持多人共享会话；历史上按共享会话键创建、没有 `user_id` 的旧话题仅管理员可在审计中查看。
 
@@ -311,12 +316,12 @@ Widget 请求会携带以下特殊请求头：
 
 - `X-DataAgent-Client: widget`
 - `X-DataAgent-Website-Id: <website-id>`
-- 由宿主后端补上：`X-DataAgent-Access-Key: <access-key>` + `X-DataAgent-User-Id: <用户名>`（每个请求必带）
+- `X-DataAgent-User-Id: <纯用户名>`（每个请求必带，不含 `local:` 等前缀）
 
-允许接入的站点白名单在管理后台「设置 → Widget 接入」配置，确保只有受信任的站点可以接入：
+允许接入的站点白名单在管理后台「设置 → Widget 接入」配置（不再使用访问密钥）：
 
-- **Website ID**：与嵌入脚本的 `data-website-id` 完全一致
-- **服务端受信任代理**：生成 / 轮换 / 吊销访问密钥
+- **Website ID**：与嵌入脚本的 `data-website-id`（或 `X-DataAgent-Website-Id`）完全一致
+- **允许来源（Origin）**：浏览器直连宿主的页面来源列表（如 `https://portal.example.com`）；服务端代理调用不带 `Origin` 头，留空也可放行
 
 Widget 标题和配色由宿主的嵌入参数控制。站点配置持久化在 `da_agent_settings`，保存后即时生效、无需重启服务（不再使用环境变量配置）。
 

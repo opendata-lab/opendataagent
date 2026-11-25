@@ -415,15 +415,5 @@ export const dataagentApi = {
 
   setAgentGrants(agentId, data) {
     return dataagentRequest.put(`/v1/dataagent/agents/${encodeURIComponent(agentId)}/grants`, data)
-  },
-
-  // ---- Widget server-side access key ----
-
-  createWidgetAccessKey(websiteId) {
-    return dataagentRequest.post(`/v1/nl2sql-admin/widget-sites/${encodeURIComponent(websiteId)}/access-key`)
-  },
-
-  deleteWidgetAccessKey(websiteId) {
-    return dataagentRequest.delete(`/v1/nl2sql-admin/widget-sites/${encodeURIComponent(websiteId)}/access-key`)
   }
 }

@@ -165,7 +165,7 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
 
 缺合法 `SECRET_KEY`、显式置 `AUTH_ENABLED = False`、文件不可读或语法错误时服务启动失败（fail-closed）。
 
-宿主系统内嵌 Widget 只经服务端受信任代理接入（OpenDataWorks / OntoFoundry），不接受浏览器自报用户或匿名访客：在后台「设置 → Widget 接入」填写 Website ID 并生成 `X-DataAgent-Access-Key`，由宿主后端逐请求校验登录，并在 `X-DataAgent-User-Id` 中转发宿主当前登录的用户名，对应 DataAgent 同名账号（含 `admin`）。Widget 凭据限于运行及助手目录，平台账号、管理、评测和令牌接口需要平台登录。每个会话只属于发起它的用户，不支持多人共享会话。保证 8900 端口不对外暴露。
+宿主系统内嵌 Widget 不再使用访问密钥，也不接受匿名访客或同源复用平台登录：在后台「设置 → Widget 接入」登记 `Website ID` 与浏览器允许来源（`allowed_origins`）。当站点已登记，且请求不带 `Origin` 头（例如 OntoFoundry BFF 服务端调用）或 `Origin` 命中该站点的允许来源列表（例如 OpenDataWorks 门户浏览器直连）时，DataAgent 信任请求头 `X-DataAgent-User-Id` 中的纯用户名并对应同名平台账号（含 `admin`）；缺少用户名返回 `401 WIDGET_LOGIN_REQUIRED`，未登记站点或未放行来源返回 `403`。Widget 凭据限于运行及助手目录，平台账号、管理、评测和令牌接口需要平台登录。每个会话只属于发起它的用户，不支持多人共享会话。**风险提示**：无密钥模式下任何能访问 DataAgent API 的调用方都可为已登记站点宣称任意用户名，仅适用于可信内网部署，务必保证 8900 端口不对外暴露。
 
 ## 单助手 MCP 发布
 
