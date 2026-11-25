@@ -143,7 +143,7 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
    ```
 4. 重启 `dataagent-backend`。
 
-管理员只能用上面的命令行创建，界面和接口不支持把用户设为管理员。
+平台分管理员和普通用户两级。管理员由上述命令设置，自定义角色只用于助手授权。个人资料显示用户名、显示名、本次登录方式与所属角色，并支持修改密码。OAuth 必须配置 `DEFAULT_USER_PASSWORD`，按 `OAUTH_USER_INFO` 返回的登录用户名绑定同名账号或登记普通账号。
 
 从旧版本升级：
 
@@ -165,7 +165,7 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
 
 缺合法 `SECRET_KEY`、显式置 `AUTH_ENABLED = False`、文件不可读或语法错误时服务启动失败（fail-closed）。
 
-宿主系统内嵌 Widget 只经服务端受信任代理接入（OpenDataWorks / OntoFoundry），不接受浏览器自报用户或匿名访客：在后台「设置 → Widget 接入」为站点生成 `X-DataAgent-Access-Key`，由宿主后端逐请求校验登录，并在 `X-DataAgent-User-Id` 中转发宿主当前登录的用户名，对应 DataAgent 同名账号。每个会话只属于发起它的用户，不支持多人共享会话。保证 8900 端口不对外暴露。
+宿主系统内嵌 Widget 只经服务端受信任代理接入（OpenDataWorks / OntoFoundry），不接受浏览器自报用户或匿名访客：在后台「设置 → Widget 接入」填写 Website ID 并生成 `X-DataAgent-Access-Key`，由宿主后端逐请求校验登录，并在 `X-DataAgent-User-Id` 中转发宿主当前登录的用户名，对应 DataAgent 同名账号（含 `admin`）。Widget 凭据限于运行及助手目录，平台账号、管理、评测和令牌接口需要平台登录。每个会话只属于发起它的用户，不支持多人共享会话。保证 8900 端口不对外暴露。
 
 ## 单助手 MCP 发布
 
@@ -173,7 +173,7 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
 2. 入口代理保留完整 `Host`（含非默认端口）并传递 `X-Forwarded-Proto`，在同域下将 `/api/v1/remote-agents/` 和 `/api/v1/dataagent/` 转发给后端，并限制对后端 8900 端口的访问。HTTP 会明文传输令牌，仅用于内网或可信网络。公网部署使用 HTTPS。
 3. 在已发布的助手详情页打开「MCP 访问」开关（立即生效）。能查看这个助手的登录用户均可点击「复制配置」。登录用户从用户菜单「访问令牌」创建令牌，趁弹窗显示时复制，并将配置中的 `headers.Authorization` 设为 `Bearer dak_…`。将配置粘贴到客户端的 MCP 设置。
 
-MCP 会话属于令牌所有者，可在网页上看到并续聊。运行采用无人值守模式，跳过需要用户确认的操作。助手默认关闭「MCP 访问」，关闭开关会立即停用该地址。服务在每次调用时检查令牌是否有效及助手是否可见。令牌过期后重新申请，并更新客户端配置。MCP 客户端可带令牌下载文件。直接点击下载链接时，使用同一地址的 DataAgent 网页登录态。用目标客户端验收 Bearer 连接、令牌撤销和会话隔离。[MCP 接口与工具](../docs/handbook/api.md#单助手-mcp)
+MCP 会话属于令牌所有者，可在网页上看到并续聊。运行采用无人值守模式，跳过需要用户确认的操作。助手默认关闭「MCP 访问」，关闭开关会立即停用该地址。服务在每次调用时检查令牌是否有效及助手是否可见。个人令牌无有效期和数量上限，每位用户只可列出和撤销自己的令牌。MCP 客户端可带令牌下载文件。直接点击下载链接时，使用同一地址的 DataAgent 网页登录态。用目标客户端验收 Bearer 连接、令牌撤销和会话隔离。[MCP 接口与工具](../docs/handbook/api.md#单助手-mcp)
 
 默认 `ask` 使用 Streamable HTTP 的 SSE 响应，等待上限为 15 分钟。代理须逐段转发，默认 MCP location 的读写超时为 1860 秒。外部代理和客户端的长请求上限需覆盖等待时间并预留网络余量。ZCode CLI 的 `timeoutMs` 见其[配置说明](https://github.com/zai-org/ZCode/blob/main/apps/zcode-cli/docs/usage/07-mcp.md)，桌面版本长调用以实际验收为准。需要立即返回时用 `background: true`，再以 `get_run` 读取结果。
 

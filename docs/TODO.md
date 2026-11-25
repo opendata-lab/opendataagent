@@ -12,20 +12,21 @@
 
 ### 独立登录 Widget 的统一账号与续聊
 
-- **现状**（2026-11-24）：DataAgent 仓库侧（计划第 1、2、3、5 步）已在分支 `feat/user-accounts` 完成：新增 `da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant` 及整数 `user_id` 外键迁移 `20261123_000042`（Alembic 只建表并重建 MCP 令牌表；旧数据由手动执行的 `scripts/migrate-accounts.sh` 迁移；迁移只能向前，回退用 `scripts/backup-db.sh` / `scripts/restore-db.sh`），统一 `core/accounts` 模块（移除 `core/auth.py` 与关闭认证/匿名 Widget 旁路），上线用户管理（仅停用不物理删除）、角色管理、个人资料、助手独立授权及服务端受信任代理配置页（2026-11-24 起不支持共享会话），并同步更新本地冒烟、评测脚本、部署配置与手册。
+- **现状**（2026-11-24）：DataAgent 仓库侧（计划第 1、2、3、5 步）已在分支 `feat/user-accounts` 完成：新增 `da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant` 及整数 `user_id` 外键迁移 `20261123_000042`（Alembic 只建表并重建 MCP 令牌表；旧数据由手动执行的 `scripts/migrate-accounts.sh` 迁移；迁移只能向前，回退用 `scripts/backup-db.sh` / `scripts/restore-db.sh`），统一 `core/accounts` 模块（移除 `core/auth.py` 与关闭认证/匿名 Widget 旁路），上线用户管理（仅停用不物理删除）、角色管理、个人资料、助手独立授权及服务端受信任代理配置页，并同步更新本地冒烟、评测脚本、部署配置与手册。
+- **最终约定**（2026-11-24）：管理员与普通用户两级，自定义角色只用于助手授权。个人资料仅包含账号名、显示名、登录方式、角色和改密。Widget 由宿主后端转发同名账号，站点只配 ID 和密钥，历史按会话所有者隔离。MCP 令牌长期有效且无数量上限，用户只管理自己的令牌。
 - **上线约束（必读）**：**OntoFoundry 未就绪前 DataAgent 不能先上线部署**。因 DataAgent 已移除匿名和浏览器自报 `X-DataAgent-User-Id` 旁路，每个 Widget 请求都要求宿主携带 `X-DataAgent-Access-Key` 与登录用户的 `X-DataAgent-User-Id`，需待 OpenDataWorks 与 OntoFoundry 两端改造就绪并完成联调后再同步切换上线。
 - **要做**（跨仓库后续，计划第 4 步）：
   - **OpenDataWorks 仓库**：代理层加挂 `X-DataAgent-Access-Key`，在 `X-DataAgent-User-Id` 中传递当前登录的用户名（与 DataAgent 同名账号对应），不再传来源前缀。
-  - **OntoFoundry 仓库**：代理层加挂 `X-DataAgent-Access-Key`，`X-DataAgent-User-Id` 改为当前登录用户（读时对账用会话 `created_by`），只允许会话创建人发问。
+  - **OntoFoundry 仓库**：代理使用站点密钥与会话 `created_by` 的用户名，只允许创建人发送、取消和回答，升级时清除旧共享绑定。2026-11-24 源码核对发现 Builder 的 `beforeSend` 已拦截其他编辑者发送，输入组件的 `disabled` 未包含创建人条件，需在宿主仓库补测。
   - **上线前实测**：在目标部署先运行 `scripts/backup-db.sh` 并演练一次 `scripts/restore-db.sh` 恢复，演练 `scripts/migrate-accounts.sh` 与 `create-user --admin`，核对旧用户账号，跑通 OpenDataWorks 个人续聊、OntoFoundry 按创建人建模会话、单助手 MCP 重申令牌及本地完整冒烟链路。
+- **本地完整链路待验**（2026-11-24）：Codex 沙箱无法连接 Docker socket 或本机 MySQL 和 Redis，未执行账号迁移实库用例及浏览器冒烟。按[实施计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)使用独立 `dataagent_qa` 补测。
 - **来源**：2026-11-23 用户要求与 Claude、Argon 设计评审。[设计与用户引用盘点](design/2026-11-19-unified-conversation-history-design.md#独立登录-widget-的账号归属2026-11-23) · [实施计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)
 
 ### 远端问数助手对外调用
 
 - **现状**（2026-11-22）：个人访问令牌替换 OAuth 授权服务器。此前在本地验证了单助手 MCP 发布、查询已有会话、原会话续聊、长任务取结果、下载和反馈，模型和下游查询使用测试服务。
 - **要做**：用 ZCode 实测内网 HTTP + 固定 Bearer 令牌、客户端重启后复用、带令牌下载、浏览器登录后点链接下载及撤销后返回 401。用真实模型和 OpenDataWorks 只读服务账号验证「最近 30 天工作流发布次数趋势」和业务数据范围。来源为 2026-11-19 单助手 MCP 实施验收和 2026-11-22 令牌替换计划。
-- **要做**（2026-11-22 后端交接）：运行 MySQL 临时库的迁移升级、降级、再升级，并用网页申请令牌后通过 MCP Python SDK 调用 `ask`、`get_run`，撤销后确认 401。后端交接环境无法连接 `127.0.0.1:3326`，且按任务范围未启动服务。
-- **要做**（2026-11-22 后端交接）：在已安装 Pi 依赖的环境补跑后端全量测试。此次定向用例通过，全量测试在 `test_agent_record_compat.py` 尝试构建 Pi 时因缺少 `tsc` 停止。见下方实施计划。
+- **要做**（2026-11-22 后端交接）：在 MySQL 临时库演练统一账号迁移、重复导入和备份恢复，再用网页申请个人令牌并通过 MCP Python SDK 调用 `ask`、`get_run`，撤销后确认 401。后端交接环境无法连接 `127.0.0.1:3326`，且按任务范围未启动服务。
 - **要做**（2026-11-22 授权服务器审查）：核对 Compose 发布 8900 的设置与可信代理边界。审查记录位于 `~/.agents/handoffs/2026-11-22-codex-mcp-as-review/`。
 - **要做**（2026-11-22，MCP 流式等待验收）：使用目标 ZCode 桌面端验证默认 SSE 调用持续超过 30 秒，核对工具超时设置。[实施计划](plans/2026-11-19-remote-assistant-plan.md#mcp-流式等待与显式后台)
 - [设计](design/2026-11-19-remote-assistant-design.md) · [实施计划](plans/2026-11-19-remote-assistant-plan.md)
@@ -50,7 +51,7 @@
 ### 定时消息（会话定时任务）功能完善
 
 - **现状**（2026-10-27 核实）：只有后端。`/message-schedule` 接口（增删改查、执行日志）和协调器里的定时循环都在，数据存于 `da_agent_message_schedule`；前端 `dataagent-frontend/src/api/nl2sql.js` 封装了 `scheduleApi`，但没有任何页面或菜单调用，用户无入口。来源：2026-03-23 提交 `8bb5d774`。
-- **身份**：定时消息以所属会话的所有者（`da_agent_topic.auth_user_id`）身份执行，和手动发消息走同一条路径。2026-11-10 起 OpenDataWorks MCP 只按服务账号 Token 授权，用户标识只记审计，不再有"人 EXPLAIN"检查（[服务令牌模式设计](https://github.com/opendata-lab/opendataworks/blob/main/docs/design/2026-11-09-mcp-service-token-mode-design.md)）。
+- **身份**：定时消息以所属会话的所有者（`da_agent_topic.user_id`）身份执行，和手动发消息走同一条路径。2026-11-10 起 OpenDataWorks MCP 只按服务账号 Token 授权，用户标识只记审计，不再有"人 EXPLAIN"检查（[服务令牌模式设计](https://github.com/opendata-lab/opendataworks/blob/main/docs/design/2026-11-09-mcp-service-token-mode-design.md)）。
 - **要做**：决定是否正式提供定时任务。若提供，需要单独的定时任务菜单（列表、创建/编辑 cron、启停、执行记录），并按中大型变更先写设计和计划；若不提供，删除后端接口、定时循环、两张表和前端封装。
 
 ### 插件管理与导入（暂缓，后续专门实施）
@@ -136,7 +137,7 @@
 
 - **签名用户上下文与Portal委托接入延期（2026-11-01用户决定，2026-11-10 更新）**：DataAgent 仍为每次 MCP 调用附加`X-Agent-User-Id`和`X-Agent-Id`；OpenDataWorks 自 1.6.0 起只按服务账号 Bearer Token 授权，这两个头只记审计（opendataworks#511），按人隔离留待其 OAuth 访问令牌模式。不实现新的OAuth／JWT委托或每智能体Portal Token，也不增加缺用户时的默认账号。本机定向测试允许显式指定已登记用户，不能把固定身份部署为全部用户的身份。后续参考[Aily自定义MCP](https://aily.feishu.cn/hc/1u7kleqg_73ahi33a)的签名用户上下文：先验证宿主用户来源，再由后端逐请求注入可信身份，Portal验签并校验调用方绑定；独立登录需统一登录或明确账号绑定。凭证只发目标MCP、不进入模型环境，并覆盖会话归属／撤销／并发不串权。关联 OpenDataWorks [主体映射设计](https://github.com/opendata-lab/opendataworks/blob/main/docs/design/2026-10-26-dataagent-datasource-identity-design.md)第9.15节（当前委托限制）与第11节（服务账号接入）；当前未实现，多用户可信身份缺口保持开放。
 
-- **宿主上报的用户可被冒充**（2026-10-27，用户决定先简单化；2026-11-10 更新）：widget 会话以 `X-DataAgent-User-Id` 区分会话与历史记录，并作为 `X-Agent-User-Id` 上报给 MCP。OpenDataWorks 已不再据此授权，因此改写它不能扩大查数范围，但仍可能看到他人的问数会话。该值来自宿主页面，可被篡改或直连伪造。需要一种可验证的宿主身份（例如只信任带内部令牌、由宿主反向代理写入的用户头）。
+- **宿主身份转发联调**（2026-11-24）：DataAgent 统一账号分支已要求受信任密钥和宿主后端逐请求转发的用户名。原浏览器直传用户标识的接入需在宿主升级时切换。上线前校验宿主重写身份头与私有后端入口，见[联动计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)。
 
 ## 评测
 
@@ -199,6 +200,8 @@
 
 - **MCP 会话文件在浏览器中下载**（2026-11-22，用户报告点击文件链接后返回 401）：下载使用同一 DataAgent 地址的登录会话或 MCP 令牌，并校验会话归属。本地 Chromium 已验证普通用户点击真实附件下载。[实现与回归](plans/2026-11-19-remote-assistant-plan.md#浏览器下载-mcp-会话文件2026-11-22)
 
+- **Pi 依赖就绪后的后端全量测试**（2026-11-24，回应 2026-11-22 后端交接）：`test_agent_record_compat.py` 与 Pi 端到端用例通过，全量 596 项通过、15 项数据库集成用例跳过。实库迁移和浏览器联调见[统一账号验证计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)。
+
 - **访问令牌管理同源校验与普通用户接入**（2026-11-22，PR #57 审查）：代理保留完整来源，管理接口核对 Origin，普通用户可从可见助手复制配置。SSO 令牌遵循签发时的显式角色，配置授权按当前配置检查。本地用普通用户在网页签发令牌，经 MCP Python SDK 1.30.0 通过 HTTP 完成初始化、列工具、调用 `list_threads` 和撤销后返回 401。[设计](design/2026-11-19-remote-assistant-design.md#4-授权个人访问令牌) · [计划](plans/2026-11-19-remote-assistant-plan.md#pr-57-审查修正2026-11-22)
 
 - **MCP 流式等待与显式后台**（2026-11-22，用户要求对齐 Snowflake）：默认在同一 SSE 调用等待，后台模式返回句柄。本地通过 Nginx 验证 35.9 秒工具调用、断线同键恢复、持久化附件和取消。[设计与冒烟结果](plans/2026-11-19-remote-assistant-plan.md#mcp-流式等待与显式后台)
@@ -233,4 +236,4 @@
 ### Widget 历史时间显示为负数
 
 - **现状**（2026-11-20，单助手 MCP 端到端测试截图）：平台登录模式的 Widget 历史列表把刚刚的会话显示为「-1天前」，网页 Chat 同一会话显示正常。疑似把无时区的数据库时间按浏览器本地时区解析。
-- **要做**：核对 Widget 相对时间的解析与后端时间格式，与网页 Chat 保持一致。
+- **要做**：在受信任宿主的 Widget 上复查相对时间，核对与网页 Chat 使用的后端时间格式。
