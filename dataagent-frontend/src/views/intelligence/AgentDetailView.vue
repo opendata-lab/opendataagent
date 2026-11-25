@@ -628,7 +628,7 @@ import { buildCommands } from "@opendataagent/agent-conversation";
 const route = useRoute(),
   router = useRouter(),
   authStore = useAuthStore();
-const canManage = computed(() => authStore.hasPermission("agents:manage"));
+const canManage = computed(() => authStore.isAdmin);
 const api = createNl2SqlApiClient({
   defaultHeaders: DATAAGENT_CLIENT_HEADERS,
   onUnauthorized: () =>

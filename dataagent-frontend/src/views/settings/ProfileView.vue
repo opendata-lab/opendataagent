@@ -2,7 +2,7 @@
   <div v-loading="loading" class="profile-view">
     <div class="profile-view__header">
       <div class="profile-view__title">个人资料</div>
-      <div class="profile-view__subtitle">管理个人信息、登录密码，并查看您的角色与可用智能体。</div>
+      <div class="profile-view__subtitle">管理个人信息和登录密码，查看所属角色。</div>
     </div>
 
     <div class="profile-grid">
@@ -16,6 +16,9 @@
           </el-form-item>
           <el-form-item label="显示名">
             <el-input v-model="profileForm.display_name" placeholder="请输入显示名" data-testid="profile-display-name" />
+          </el-form-item>
+          <el-form-item label="登录方式">
+            <span>{{ loginMethodLabel }}</span>
           </el-form-item>
           <el-button type="primary" :loading="savingProfile" data-testid="save-profile" @click="saveProfile">
             保存资料
@@ -46,11 +49,10 @@
 
     <el-card shadow="never" class="profile-card">
       <template #header>
-        <span class="card-title">角色、身份与可用智能体</span>
+        <span class="card-title">所属角色</span>
       </template>
 
       <div class="readonly-section">
-        <div class="readonly-section__label">所属角色</div>
         <div class="tag-list">
           <el-tag
             v-for="role in profile.roles || []"
@@ -63,63 +65,17 @@
           <span v-if="!(profile.roles && profile.roles.length)" class="muted">—</span>
         </div>
       </div>
-
-      <div class="readonly-section">
-        <div class="readonly-section__label">已绑定外部身份</div>
-        <div class="tag-list">
-          <el-tag v-for="ident in profile.identities || []" :key="ident.id" size="small" type="info">
-            {{ ident.source }}:{{ ident.subject }}
-          </el-tag>
-          <span v-if="!(profile.identities && profile.identities.length)" class="muted">未绑定外部身份</span>
-        </div>
-      </div>
-
-      <div class="readonly-section">
-        <div class="readonly-section__label">可见菜单</div>
-        <div class="tag-list">
-          <el-tag v-for="menu in profile.menus || []" :key="menu" size="small" type="success">
-            {{ MENU_LABELS[menu] || menu }}
-          </el-tag>
-        </div>
-      </div>
-
-      <div class="readonly-section">
-        <div class="readonly-section__label">可用智能体（{{ (profile.accessible_agents || []).length }}）</div>
-        <div class="agent-chips">
-          <el-button
-            v-for="agent in profile.accessible_agents || []"
-            :key="agent.agent_id"
-            size="small"
-            plain
-            @click="router.push({ path: '/chat', query: { agent_id: agent.agent_id } })"
-          >
-            {{ agent.name || agent.agent_id }}
-          </el-button>
-          <span v-if="!(profile.accessible_agents && profile.accessible_agents.length)" class="muted">暂无可用智能体</span>
-        </div>
-      </div>
     </el-card>
   </div>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { dataagentApi } from '@/api/dataagent'
 import { useAuthStore } from '@/stores/auth'
 
-const router = useRouter()
 const authStore = useAuthStore()
-
-const MENU_LABELS = {
-  'menu:chat': 'Chat 对话',
-  'menu:agents': '智能体',
-  'menu:skills': 'Skills',
-  'menu:mcp': 'MCP 服务',
-  'menu:mcp_tokens': '访问令牌',
-  'menu:profile': '个人资料'
-}
 
 const loading = ref(false)
 const savingProfile = ref(false)
@@ -128,9 +84,13 @@ const profile = ref({
   username: '',
   display_name: '',
   roles: [],
-  identities: [],
-  menus: [],
-  accessible_agents: []
+  login_method: ''
+})
+
+const loginMethodLabel = computed(() => {
+  if (profile.value.login_method === 'oauth') return 'OAuth'
+  if (profile.value.login_method === 'password') return '用户名和密码'
+  return '—'
 })
 
 const profileForm = reactive({ display_name: '' })
@@ -231,14 +191,7 @@ onMounted(loadProfile)
 .readonly-section:last-child {
   margin-bottom: 0;
 }
-.readonly-section__label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #334155;
-  margin-bottom: 8px;
-}
-.tag-list,
-.agent-chips {
+.tag-list {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;

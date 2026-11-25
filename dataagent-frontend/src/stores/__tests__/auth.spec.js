@@ -40,7 +40,7 @@ describe('useAuthStore', () => {
     vi.clearAllMocks()
   })
 
-  it('loads current user, roles, permissions and menus on bootstrap', async () => {
+  it('loads current user, roles and admin status on bootstrap', async () => {
     authApiMock.getAuthConfig.mockResolvedValue({
       enabled: true,
       provider_name: 'SSO',
@@ -53,8 +53,7 @@ describe('useAuthStore', () => {
       username: 'alice',
       display_name: 'alice',
       roles: [{ id: 2, role_key: 'user', name: '普通用户', is_builtin: true }],
-      permissions: ['menu:chat', 'menu:agents', 'menu:profile'],
-      menus: ['menu:chat', 'menu:agents', 'menu:profile']
+      is_admin: false
     })
     const store = useAuthStore()
     await store.bootstrap()
@@ -62,28 +61,25 @@ describe('useAuthStore', () => {
     expect(store.enabled).toBe(true)
     expect(store.isAuthenticated).toBe(true)
     expect(store.isAdmin).toBe(false)
-    expect(store.hasPermission('menu:chat')).toBe(true)
-    expect(store.hasPermission('users:manage')).toBe(false)
+    expect(store.roles.map((role) => role.role_key)).toEqual(['user'])
     expect(store.currentUser.display_name).toBe('alice')
     expect(store.providerName).toBe('SSO')
     expect(store.providerIcon).toBe('fa-github')
   })
 
-  it('identifies admin role and admin permissions', async () => {
+  it('uses the account is_admin flag', async () => {
     authApiMock.getAuthConfig.mockResolvedValue({ enabled: true, local_login_enabled: true })
     authApiMock.me.mockResolvedValue({
       id: 1,
       username: 'admin',
       display_name: '管理员',
       roles: [{ id: 1, role_key: 'admin', name: '管理员', is_builtin: true }],
-      permissions: ['menu:chat', 'users:manage', 'roles:manage'],
-      menus: ['menu:chat']
+      is_admin: true
     })
     const store = useAuthStore()
     await store.bootstrap()
 
     expect(store.isAdmin).toBe(true)
-    expect(store.hasPermission('users:manage')).toBe(true)
   })
 
   it('swallows the me() 401 and reports unauthenticated', async () => {
@@ -94,7 +90,6 @@ describe('useAuthStore', () => {
 
     expect(store.isAuthenticated).toBe(false)
     expect(store.isAdmin).toBe(false)
-    expect(store.hasPermission('menu:chat')).toBe(false)
   })
 
   it('fails closed when config fetch fails', async () => {

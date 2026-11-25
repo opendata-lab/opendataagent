@@ -12,7 +12,7 @@ const apiMocks = vi.hoisted(() => ({
 }))
 
 const routerPush = vi.hoisted(() => vi.fn())
-const authState = vi.hoisted(() => ({ isAdmin: true, hasPermission(k) { return this.isAdmin || k.startsWith('menu:') } }))
+const authState = vi.hoisted(() => ({ isAdmin: true }))
 const routeState = vi.hoisted(() => ({
   params: {
     folder: 'marketing-insights'

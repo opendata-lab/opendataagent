@@ -44,11 +44,11 @@ dataagentRequest.interceptors.response.use(
 )
 
 export const dataagentApi = {
-  listMcpTokens(scope = 'mine') {
-    return dataagentRequest.get('/v1/dataagent/mcp-tokens', { params: { scope } })
+  listMcpTokens() {
+    return dataagentRequest.get('/v1/dataagent/mcp-tokens')
   },
-  createMcpToken({ name, expires_in_days }) {
-    return dataagentRequest.post('/v1/dataagent/mcp-tokens', { name, expires_in_days })
+  createMcpToken({ name }) {
+    return dataagentRequest.post('/v1/dataagent/mcp-tokens', { name })
   },
   revokeMcpToken(id) {
     return dataagentRequest.delete(`/v1/dataagent/mcp-tokens/${encodeURIComponent(id)}`)
@@ -227,10 +227,6 @@ export const dataagentApi = {
     return dataagentRequest.get('/v1/nl2sql-admin/topics', { params })
   },
 
-  listAuthUsers(params = {}) {
-    return dataagentRequest.get('/v1/nl2sql-admin/auth-users', { params })
-  },
-
   getAdminTopic(topicId) {
     return dataagentRequest.get(adminTopicPath(topicId))
   },
@@ -378,10 +374,6 @@ export const dataagentApi = {
   },
 
   // ---- Roles ----
-
-  listRolePermissions() {
-    return dataagentRequest.get('/v1/dataagent/roles/permissions')
-  },
 
   listRoles() {
     return dataagentRequest.get('/v1/dataagent/roles')

@@ -43,20 +43,9 @@ const stubs = {
     emits: ['update:modelValue'],
     template: '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
   },
-  'el-color-picker': {
-    props: ['modelValue'],
-    emits: ['update:modelValue'],
-    template: '<span class="color-picker" />'
-  },
-  'el-switch': {
-    props: ['modelValue'],
-    emits: ['update:modelValue'],
-    template: '<button class="switch" type="button" @click="$emit(\'update:modelValue\', !modelValue)" />'
-  },
   'el-tooltip': { template: '<span><slot /><slot name="content" /></span>' },
   'el-icon': { template: '<i><slot /></i>' },
   Check: { template: '<i />' },
-  Close: { template: '<i />' },
   Delete: { template: '<i />' },
   Plus: { template: '<i />' },
   QuestionFilled: { template: '<i />' }
@@ -76,7 +65,7 @@ describe('WidgetAccessConfig', () => {
   it('renders existing sites from settings', async () => {
     apiMocks.getSettings.mockResolvedValue({
       widget_allowed_sites: [
-        { website_id: 'demo', allowed_origins: ['https://a.com'], project_name: 'Demo', project_color: '#4A90A4', allow_anonymous: false }
+        { website_id: 'demo', server_side: { enabled: false } }
       ]
     })
     const wrapper = mountConfig()
@@ -102,9 +91,6 @@ describe('WidgetAccessConfig', () => {
     apiMocks.updateSettings.mockResolvedValue({
       widget_allowed_sites: [{
         website_id: 'new-site',
-        allowed_origins: ['https://b.com'],
-        project_name: '',
-        project_color: '',
         server_side: { enabled: false }
       }]
     })
@@ -113,8 +99,7 @@ describe('WidgetAccessConfig', () => {
 
     wrapper.vm.addSite()
     await flushPromises()
-    wrapper.vm.sites[0].website_id = 'new-site'
-    wrapper.vm.sites[0].allowed_origins = ['https://b.com', 'https://b.com', '']
+    wrapper.vm.sites[0].website_id = '  new-site  '
     await flushPromises()
 
     await wrapper.vm.save()
@@ -123,9 +108,6 @@ describe('WidgetAccessConfig', () => {
     expect(apiMocks.updateSettings).toHaveBeenCalledWith({
       widget_allowed_sites: [{
         website_id: 'new-site',
-        project_name: '',
-        project_color: '',
-        allowed_origins: ['https://b.com'],
         server_side: {
           enabled: false
         }
@@ -141,7 +123,6 @@ describe('WidgetAccessConfig', () => {
 
     wrapper.vm.addSite()
     wrapper.vm.sites[0].website_id = '   '
-    wrapper.vm.sites[0].allowed_origins = ['https://c.com']
     await flushPromises()
 
     // payloadSites filters out blank website_id → still dirty? no payload sites → snapshot '[]' equals saved → not dirty

@@ -27,28 +27,7 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     isAuthenticated: (state) => Boolean(state.currentUser),
     roles: (state) => (Array.isArray(state.currentUser?.roles) ? state.currentUser.roles : []),
-    permissions: (state) => (Array.isArray(state.currentUser?.permissions) ? state.currentUser.permissions : []),
-    menus: (state) => (Array.isArray(state.currentUser?.menus) ? state.currentUser.menus : []),
-    isAdmin() {
-      if (!this.currentUser) return false
-      if (this.roles.some((role) => role?.role_key === 'admin')) return true
-      if (this.permissions.includes('users:manage')) return true
-      return this.currentUser?.role === 'admin'
-    },
-    hasPermission() {
-      return (permission) => {
-        if (!permission) return Boolean(this.currentUser)
-        if (!this.currentUser) return false
-        return this.permissions.includes(permission)
-      }
-    },
-    hasMenu() {
-      return (menuKey) => {
-        if (!menuKey) return Boolean(this.currentUser)
-        if (!this.currentUser) return false
-        return this.menus.includes(menuKey) || this.permissions.includes(menuKey)
-      }
-    }
+    isAdmin: (state) => state.currentUser?.is_admin === true
   },
 
   actions: {

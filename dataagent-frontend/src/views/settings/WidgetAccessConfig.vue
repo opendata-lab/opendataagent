@@ -4,7 +4,7 @@
       <div class="page-header-main">
         <h2 class="page-title">Widget 接入白名单</h2>
         <p class="page-desc">
-          管理允许嵌入智能问数 Widget 的站点。所有接入均要求已登录身份：浏览器同源嵌入使用平台会话，第三方系统通过服务端受信任代理携带访问密钥接入。
+          为宿主站点管理服务端访问密钥。宿主后端验证登录后转发当前用户名。
         </p>
       </div>
       <div class="page-header-actions">
@@ -68,50 +68,7 @@
                 <el-input v-model="site.website_id" placeholder="例如 web-prod" />
               </el-form-item>
             </el-col>
-            <el-col :xs="24" :md="12">
-              <el-form-item>
-                <template #label><span class="field-label">项目名称</span></template>
-                <el-input v-model="site.project_name" placeholder="展示在 Widget 标题，可留空" />
-              </el-form-item>
-            </el-col>
           </el-row>
-
-          <el-form-item>
-            <template #label><span class="field-label">主题色</span></template>
-            <div class="color-row">
-              <el-color-picker v-model="site.project_color" />
-              <el-input v-model="site.project_color" class="color-input" placeholder="#4A90A4" />
-            </div>
-          </el-form-item>
-
-          <el-form-item>
-            <template #label>
-              <span class="field-label">
-                允许来源（Origin）
-                <el-tooltip placement="top">
-                  <template #content>
-                    浏览器嵌入页面的来源，例如 https://app.example.com。<br>
-                    填写 <code>*</code> 表示放行所有来源（仅建议测试环境使用）。
-                  </template>
-                  <el-icon><QuestionFilled /></el-icon>
-                </el-tooltip>
-              </span>
-            </template>
-            <div class="origin-list">
-              <div v-for="(_, oi) in site.allowed_origins" :key="oi" class="origin-row">
-                <el-input
-                  v-model="site.allowed_origins[oi]"
-                  placeholder="https://app.example.com 或 *"
-                  @keyup.enter="addOrigin(site)"
-                />
-                <el-button text :icon="Close" class="origin-remove" @click="removeOrigin(site, oi)" />
-              </div>
-              <el-button class="origin-add" :icon="Plus" @click="addOrigin(site)">添加来源</el-button>
-              <div v-if="!site.allowed_origins.length" class="origin-hint">
-                未配置来源时，仅放行同源或非浏览器（无 Origin 头）的请求。
-              </div>
-            </div>
-          </el-form-item>
 
           <div class="server-side-box">
             <div class="server-side-head">
@@ -145,9 +102,9 @@
                 </el-button>
               </div>
             </div>
-            <div v-if="!site._persistedId" class="origin-hint">请先保存该站点后再生成服务端访问密钥。</div>
+            <div v-if="!site._persistedId" class="server-side-hint">请先保存该站点后再生成服务端访问密钥。</div>
 
-            <div class="origin-hint">宿主后端逐请求校验登录，并在 X-DataAgent-User-Id 中转发当前用户名，对应 DataAgent 同名账号。</div>
+            <div class="server-side-hint">宿主后端逐请求校验登录，并在 X-DataAgent-User-Id 中转发当前用户名，对应 DataAgent 同名账号。</div>
           </div>
         </el-form>
       </section>
@@ -158,7 +115,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Close, Delete, Plus, QuestionFilled } from '@element-plus/icons-vue'
+import { Check, Delete, Plus, QuestionFilled } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
 import { copyText } from '@/utils/clipboard'
 
@@ -186,19 +143,11 @@ const normalizeSite = (raw = {}, persisted = false) => ({
   _key: nextKey(),
   _persistedId: persisted ? String(raw.website_id || '').trim() : '',
   website_id: String(raw.website_id || ''),
-  project_name: String(raw.project_name || ''),
-  project_color: String(raw.project_color || ''),
-  allowed_origins: Array.isArray(raw.allowed_origins) ? raw.allowed_origins.map((item) => String(item || '')) : [],
   server_side: normalizeServerSide(raw.server_side)
 })
 
 const toPayloadSite = (site) => ({
   website_id: String(site.website_id || '').trim(),
-  project_name: String(site.project_name || '').trim(),
-  project_color: String(site.project_color || '').trim(),
-  allowed_origins: (site.allowed_origins || [])
-    .map((item) => String(item || '').trim())
-    .filter((item, index, arr) => item && arr.indexOf(item) === index),
   server_side: toPayloadServerSide(site.server_side)
 })
 
@@ -224,7 +173,7 @@ const loadSettings = async () => {
 }
 
 const addSite = () => {
-  sites.value.push(normalizeSite({ allowed_origins: [''] }, false))
+  sites.value.push(normalizeSite({}, false))
 }
 
 const removeSite = async (index) => {
@@ -240,14 +189,6 @@ const removeSite = async (index) => {
     return
   }
   sites.value.splice(index, 1)
-}
-
-const addOrigin = (site) => {
-  site.allowed_origins.push('')
-}
-
-const removeOrigin = (site, index) => {
-  site.allowed_origins.splice(index, 1)
 }
 
 const generateOrRotateKey = async (site) => {
@@ -513,43 +454,7 @@ onMounted(loadSettings)
   margin-bottom: 16px;
 }
 
-.color-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.color-input {
-  width: 160px;
-}
-
-.origin-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 100%;
-}
-
-.origin-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.origin-remove {
-  flex: none;
-  color: #98a6b8;
-}
-
-.origin-remove:hover {
-  color: #b42318;
-}
-
-.origin-add {
-  align-self: flex-start;
-}
-
-.origin-hint {
+.server-side-hint {
   font-size: 12px;
   color: #8090a3;
 }

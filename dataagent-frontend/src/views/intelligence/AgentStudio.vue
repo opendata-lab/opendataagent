@@ -64,7 +64,7 @@ import { withAgentContext } from '@/router/agentContext'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const canManage = computed(() => authStore.hasPermission('agents:manage'))
+const canManage = computed(() => authStore.isAdmin)
 const agents = ref([])
 const loading = ref(false)
 const creating = ref(false)

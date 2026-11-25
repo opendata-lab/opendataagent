@@ -124,16 +124,10 @@ const demoProviderSettings = {
   widget_allowed_sites: [
     {
       website_id: 'mall-web',
-      project_name: '商城官网',
-      project_color: '#4A90A4',
-      allowed_origins: ['https://mall.demo.example.com'],
       server_side: { enabled: false, access_key_set: false }
     },
     {
       website_id: 'ops-console',
-      project_name: '运营后台',
-      project_color: '#7C5CFC',
-      allowed_origins: ['https://ops.demo.example.com'],
       server_side: { enabled: false, access_key_set: false }
     }
   ]
@@ -168,6 +162,10 @@ const demoWidgetTopics = [
     last_message_preview: '最近 7 天整体下单转化率为 18.6%，较上周提升 1.2 个百分点。',
     source: 'widget',
     website_id: 'mall-web',
+    user_id: 2,
+    username: 'u_10086',
+    display_name: 'u_10086',
+    can_continue: false,
     external_user_id: 'u_10086',
     visitor_id: '',
     created_at: '2026-06-01T09:12:00+08:00',
@@ -191,6 +189,8 @@ const demoWidgetTopics = [
     last_message_preview: '华东区销售额 Top3 门店为：上海徐汇店、杭州西湖店、南京新街口店。',
     source: 'widget',
     website_id: 'mall-web',
+    user_id: null,
+    can_continue: false,
     external_user_id: '',
     visitor_id: 'visitor-7f3a2b',
     created_at: '2026-05-31T20:01:10+08:00',
@@ -212,6 +212,10 @@ const demoWidgetTopics = [
     last_message_preview: '昨日共拦截 23 笔高风险订单，主要风险原因为「异常收货地址」。',
     source: 'widget',
     website_id: 'ops-console',
+    user_id: 3,
+    username: 'ops_zhang',
+    display_name: 'ops_zhang',
+    can_continue: false,
     external_user_id: 'ops_zhang',
     visitor_id: '',
     created_at: '2026-05-31T08:30:00+08:00',
@@ -234,6 +238,8 @@ const demoWidgetTopics = [
     last_message_preview: '当前注册会员共 12.8 万人，其中黄金及以上等级占比 21%。',
     source: 'widget',
     website_id: 'ops-console',
+    user_id: null,
+    can_continue: false,
     external_user_id: '',
     visitor_id: 'visitor-aa19c0',
     created_at: '2026-05-30T15:48:00+08:00',
@@ -713,27 +719,16 @@ export const demoAdapter = async (config) => {
     return createResponse(config, { status: 'ok', mode: 'demo' })
   }
 
-  // 演示模式提供内置管理员登录态，覆盖统一账号、角色与权限菜单。
-  const demoAdminPermissions = [
-    'menu:chat', 'menu:agents', 'menu:skills', 'menu:mcp', 'menu:mcp_tokens', 'menu:profile',
-    'agents:manage', 'skills:manage', 'mcp:manage', 'models:manage', 'widget:manage',
-    'feedback:view', 'experience:manage', 'topics:audit', 'evals:manage',
-    'mcp_tokens:manage_all', 'users:manage', 'roles:manage'
-  ]
-  const demoAdminMenus = ['menu:chat', 'menu:agents', 'menu:skills', 'menu:mcp', 'menu:mcp_tokens', 'menu:profile']
   const demoAdminUser = {
     id: 1,
     username: 'demo_admin',
     display_name: '演示管理员',
     is_active: true,
+    is_admin: true,
     roles: [
       { id: 1, role_key: 'admin', name: '管理员', is_builtin: true },
       { id: 2, role_key: 'user', name: '普通用户', is_builtin: true }
-    ],
-    identities: [],
-    permissions: demoAdminPermissions,
-    menus: demoAdminMenus,
-    role: 'admin'
+    ]
   }
 
   if (method === 'get' && pathname === '/v1/nl2sql/auth/config') {
@@ -751,27 +746,37 @@ export const demoAdapter = async (config) => {
   }
 
   if (method === 'get' && pathname === '/v1/dataagent/profile') {
-    return createResponse(config, {
-      ...demoAdminUser,
-      accessible_agents: demoAgents.map((a) => ({ agent_id: a.agent_id, name: a.name, description: a.description || '' }))
-    })
+    const { username, display_name, roles } = demoAdminUser
+    return createResponse(config, { username, display_name, roles, login_method: 'password' })
   }
 
   if (method === 'get' && pathname === '/v1/dataagent/users') {
-    return createResponse(config, { items: [demoAdminUser], total: 1, page: 1, page_size: 20 })
+    const keyword = String(params.keyword || '').trim().toLowerCase()
+    const users = [
+      demoAdminUser,
+      ...demoWidgetTopics.filter((topic) => topic.user_id != null).map((topic) => ({
+        id: topic.user_id,
+        username: topic.username,
+        display_name: topic.display_name,
+        is_active: true,
+        is_admin: false,
+        roles: [{ id: 2, role_key: 'user', name: '普通用户', is_builtin: true }]
+      }))
+    ]
+    const items = users.filter((user) => [user.username, user.display_name].some((value) => value.toLowerCase().includes(keyword)))
+    const page = Math.max(1, Number(params.page) || 1)
+    const pageSize = Math.max(1, Number(params.page_size) || 50)
+    const start = (page - 1) * pageSize
+    return createResponse(config, { items: items.slice(start, start + pageSize), total: items.length, page, page_size: pageSize })
   }
 
   if (method === 'get' && pathname === '/v1/dataagent/roles') {
     return createResponse(config, {
       items: [
-        { id: 1, role_key: 'admin', name: '管理员', description: '系统管理员', is_builtin: true, member_count: 1, agent_ids: [], permissions: demoAdminPermissions, menus: demoAdminMenus },
-        { id: 2, role_key: 'user', name: '普通用户', description: '默认用户角色', is_builtin: true, member_count: 1, agent_ids: [], permissions: demoAdminMenus, menus: demoAdminMenus }
+        { id: 1, role_key: 'admin', name: '管理员', description: '系统管理员', is_builtin: true, member_count: 1, agent_ids: [] },
+        { id: 2, role_key: 'user', name: '普通用户', description: '默认用户角色', is_builtin: true, member_count: 1, agent_ids: [] }
       ]
     })
-  }
-
-  if (method === 'get' && pathname === '/v1/dataagent/roles/permissions') {
-    return createResponse(config, { items: demoAdminPermissions.map((key) => ({ key, label: key, kind: key.startsWith('menu:') ? 'menu' : 'admin' })) })
   }
 
   if (method === 'get' && /^\/v1\/dataagent\/agents\/[^/]+\/grants$/.test(pathname)) {

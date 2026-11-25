@@ -4,13 +4,13 @@
       <div>
         <div class="users-view__title">用户管理</div>
         <div class="users-view__subtitle">
-          统一管理平台账号、角色归属与外部身份绑定。账号仅支持停用，不支持物理删除以保留历史会话与审计记录。
+          管理平台账号的状态和所属角色。停用账号会保留历史会话。
         </div>
       </div>
       <div class="users-view__actions">
         <el-input
           v-model="keyword"
-          placeholder="搜索用户名、显示名或邮箱"
+          placeholder="搜索用户名或显示名"
           clearable
           class="users-view__search"
           data-testid="users-search"

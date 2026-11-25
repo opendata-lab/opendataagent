@@ -417,7 +417,7 @@ const isStreaming = computed(() => Boolean(activeTaskId.value))
 const conversationRef = ref(null)
 const pendingMessageId = ref('')
 
-const usesAdminList = computed(() => authStore.hasPermission('topics:audit'))
+const usesAdminList = computed(() => authStore.isAdmin)
 // Sources are metadata. Administrators list everyone's conversations; each row's
 // can_continue decides whether it opens as a chat or read-only, so there is no
 // separate review mode to switch into.
@@ -480,8 +480,7 @@ const filteredTopics = computed(() => {
   })
 })
 
-// User filter options resolved server-side (admin facet) so the dropdown can
-// search the full widget user set, not just users on the loaded session page.
+// Search platform users across all pages of the conversation list.
 const filterUserOptions = ref([])
 const filterUsersLoading = ref(false)
 
@@ -490,7 +489,7 @@ async function fetchFilterUsers(query = '') {
   if (!usesAdminList.value) return
   filterUsersLoading.value = true
   try {
-    const data = await dataagentApi.listAuthUsers({ keyword: String(query || '').trim(), limit: 100 })
+    const data = await dataagentApi.listUsers({ keyword: String(query || '').trim(), page: 1, page_size: 100 })
     const options = (Array.isArray(data?.items) ? data.items : []).map((row) => ({
       value: String(row.id),
       label: row.display_name && row.display_name !== row.username ? `${row.display_name}（${row.username}）` : row.username

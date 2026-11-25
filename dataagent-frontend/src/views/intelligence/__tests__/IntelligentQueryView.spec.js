@@ -42,8 +42,6 @@ const stubs = {
   'el-dropdown-item': { template: '<div><slot /></div>' }
 }
 
-const USER_PERMS = ['menu:chat', 'menu:agents', 'menu:skills', 'menu:mcp', 'menu:mcp_tokens', 'menu:profile']
-const ADMIN_PERMS = [...USER_PERMS, 'feedback:view', 'experience:manage', 'users:manage', 'roles:manage']
 
 const mountView = (route = {}, currentUser = null) => {
   routeState.path = route.path || '/chat'
@@ -53,12 +51,8 @@ const mountView = (route = {}, currentUser = null) => {
   routeState.meta = route.meta || { tab: 'chat-v2' }
   const pinia = createPinia()
   const authStore = useAuthStore(pinia)
-  const resolvedUser = currentUser || { display_name: 'Admin', role: 'admin', permissions: ADMIN_PERMS }
   authStore.enabled = true
-  authStore.currentUser = {
-    ...resolvedUser,
-    permissions: resolvedUser.permissions || (resolvedUser.role === 'admin' ? ADMIN_PERMS : USER_PERMS)
-  }
+  authStore.currentUser = currentUser || { display_name: 'Admin', is_admin: true }
   return mount(IntelligentQueryView, {
     global: { stubs, plugins: [pinia] }
   })
@@ -168,7 +162,7 @@ describe('IntelligentQueryView', () => {
   })
 
   it('shows admin work menus with a pending memory count', async () => {
-    const wrapper = mountView({}, { display_name: 'Admin', role: 'admin' })
+    const wrapper = mountView({}, { display_name: 'Admin', is_admin: true })
     await flushPromises()
     for (const label of ['用户反馈', '知识', '记忆']) expect(wrapper.text()).toContain(label)
     expect(wrapper.find('.pending-count').text()).toBe('3')
@@ -176,7 +170,7 @@ describe('IntelligentQueryView', () => {
   })
 
   it('shows readable menus without a role label for regular users', () => {
-    const wrapper = mountView({}, { display_name: 'Alice', role: 'user' })
+    const wrapper = mountView({}, { display_name: 'Alice', is_admin: false })
 
     // The work is Chat and 智能体; configuration moved behind the gear into
     // /settings, where SettingsLayout decides what a non-admin may see.

@@ -384,7 +384,7 @@ import { useDeferredLoading } from '@/utils/deferredLoading'
 const authStore = useAuthStore()
 // 读对所有登录用户开放，写仍限 admin —— 与 SkillStudio 同一模式。后端写端点
 // 独立校验，这里只负责不展示用不了的入口。
-const canManage = computed(() => authStore.hasPermission('mcp:manage'))
+const canManage = computed(() => authStore.isAdmin)
 
 const loading = ref(false)
 // 首屏用骨架屏，刷新用遮罩：已有数据时不让内容跳走。

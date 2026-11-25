@@ -52,7 +52,7 @@ vi.mock('@/utils/clipboard', () => ({ copyText }))
 
 const dataagentApiMock = vi.hoisted(() => ({
   listAdminTopics: vi.fn(),
-  listAuthUsers: vi.fn(),
+  listUsers: vi.fn(),
   getAdminTopic: vi.fn(),
   getAdminTopicMessages: vi.fn(),
   listAdminTopicFiles: vi.fn()
@@ -175,9 +175,8 @@ const mountChat = ({ withAgent = true, admin = false } = {}) => {
       id: 1,
       username: 'admin',
       display_name: 'Admin',
-      role: 'admin',
-      roles: [{ id: 1, role_key: 'admin', name: '管理员', is_builtin: true }],
-      permissions: ['menu:chat', 'topics:audit']
+      is_admin: true,
+      roles: [{ id: 1, role_key: 'admin', name: '管理员', is_builtin: true }]
     }
   }
   const wrapper = mount(NL2SqlChatV2, {
@@ -276,7 +275,7 @@ describe('NL2SqlChatV2 URL location', () => {
     scrollbarSetScrollTop.mockReset()
 
     dataagentApiMock.listAdminTopics.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 })
-    dataagentApiMock.listAuthUsers.mockResolvedValue({ items: [] })
+    dataagentApiMock.listUsers.mockResolvedValue({ items: [] })
     dataagentApiMock.getAdminTopicMessages.mockResolvedValue({
       topic_id: '', page: 1, page_size: 500, order: 'asc', total: 0, items: []
     })

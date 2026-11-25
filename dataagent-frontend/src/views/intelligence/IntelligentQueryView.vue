@@ -14,19 +14,19 @@
         class="intelligent-query-menu"
         @select="handleMenuSelect"
       >
-        <el-menu-item v-if="authStore.hasPermission('menu:chat')" index="chat-v2">
+        <el-menu-item index="chat-v2">
           <el-icon><MagicStick /></el-icon>
           <span>Chat</span>
         </el-menu-item>
-        <el-menu-item v-if="authStore.hasPermission('menu:agents')" index="agents">
+        <el-menu-item index="agents">
           <el-icon><User /></el-icon>
           <span>智能体</span>
         </el-menu-item>
-        <el-menu-item v-if="authStore.hasPermission('feedback:view')" index="feedback">
+        <el-menu-item v-if="authStore.isAdmin" index="feedback">
           <el-icon><ChatLineSquare /></el-icon>
           <span>用户反馈</span>
         </el-menu-item>
-        <template v-if="authStore.hasPermission('experience:manage')">
+        <template v-if="authStore.isAdmin">
           <el-menu-item index="knowledge"><el-icon><Collection /></el-icon><span>知识</span></el-menu-item>
           <el-menu-item index="memories"><el-icon><Notebook /></el-icon><span>记忆</span><span v-if="pendingMemoryCount" class="pending-count" aria-label="待审核记忆">{{ pendingMemoryCount }}</span></el-menu-item>
         </template>
@@ -104,8 +104,8 @@ const MENU_TO_PATH = {
   memories: '/memories'
 }
 
-watch(() => [authStore.hasPermission('experience:manage'), route.fullPath], () => {
-  if (authStore.hasPermission('experience:manage')) refreshMemoryCount()
+watch(() => [authStore.isAdmin, route.fullPath], () => {
+  if (authStore.isAdmin) refreshMemoryCount()
   else clearMemoryCount()
 }, { immediate: true })
 

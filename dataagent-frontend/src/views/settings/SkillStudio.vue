@@ -137,7 +137,7 @@ import { useDeferredLoading } from '@/utils/deferredLoading'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const canManage = computed(() => authStore.hasPermission('skills:manage'))
+const canManage = computed(() => authStore.isAdmin)
 
 const listLoading = ref(false)
 // 首屏用骨架屏，刷新用遮罩。此前首屏是把 v-loading 打在一个只含分组标题的

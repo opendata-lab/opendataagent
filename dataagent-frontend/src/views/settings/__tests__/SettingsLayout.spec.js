@@ -1,18 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 
-const USER_PERMS = ['menu:chat', 'menu:agents', 'menu:skills', 'menu:mcp', 'menu:mcp_tokens', 'menu:profile']
-const ADMIN_PERMS = [...USER_PERMS, 'models:manage', 'widget:manage', 'users:manage', 'roles:manage']
-
 const logout = vi.fn()
 const authState = {
   enabled: true,
   isAdmin: true,
   currentUser: { display_name: 'tester' },
-  permissions: [...ADMIN_PERMS],
-  hasPermission(key) {
-    return this.permissions.includes(key)
-  },
   logout
 }
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => authState }))
@@ -43,7 +36,6 @@ describe('SettingsLayout', () => {
     authState.isAdmin = true
     authState.enabled = true
     authState.currentUser = { display_name: 'tester' }
-    authState.permissions = [...ADMIN_PERMS]
   })
 
   it('groups an admin settings menu including account management and profile', () => {
@@ -59,9 +51,8 @@ describe('SettingsLayout', () => {
     }
   })
 
-  it('hides admin entries when user only has standard permissions', () => {
+  it('hides admin entries for ordinary users', () => {
     authState.isAdmin = false
-    authState.permissions = [...USER_PERMS]
     const wrapper = mountLayout()
     const text = wrapper.text()
 
@@ -96,7 +87,7 @@ describe('SettingsLayout', () => {
 
   it('shows 未登录 and routes to login when there is no session', async () => {
     authState.currentUser = null
-    authState.permissions = []
+    authState.isAdmin = false
     const wrapper = mountLayout()
 
     const footer = wrapper.find('.settings-footer')

@@ -45,16 +45,6 @@
           @input="nameError = ''"
         />
       </el-form-item>
-      <el-form-item label="有效期">
-        <el-select v-model="createForm.expiry" class="mcp-token-expiry" data-testid="token-expiry-select">
-          <el-option
-            v-for="option in EXPIRY_OPTIONS"
-            :key="option.value"
-            :value="option.value"
-            :label="option.label"
-          />
-        </el-select>
-      </el-form-item>
       <el-button
         type="primary"
         native-type="submit"
@@ -78,14 +68,7 @@ import { downloadTextFile } from '@/utils/tableExport'
 
 const props = defineProps({ configAgentId: String })
 
-const EXPIRY_OPTIONS = [
-  { value: 30, label: '30 天' },
-  { value: 90, label: '90 天' },
-  { value: 180, label: '180 天' },
-  { value: 'never', label: '永不过期' }
-]
-
-const createForm = reactive({ name: '', expiry: 'never' })
+const createForm = reactive({ name: '' })
 const nameError = ref('')
 const creating = ref(false)
 const createdToken = ref('')
@@ -110,8 +93,7 @@ async function submitCreate() {
   }
   creating.value = true
   try {
-    const expiresInDays = createForm.expiry === 'never' ? null : createForm.expiry
-    const { token } = await dataagentApi.createMcpToken({ name, expires_in_days: expiresInDays })
+    const { token } = await dataagentApi.createMcpToken({ name })
     createdToken.value = token
     await nextTick()
     heading.value?.focus()
@@ -171,10 +153,6 @@ watch(() => props.configAgentId, async (agentId, _, onCleanup) => {
   color: #0f172a;
   font-size: 24px;
   line-height: 1.3;
-}
-
-.mcp-token-expiry {
-  width: 100%;
 }
 
 .mcp-token-notice {

@@ -21,7 +21,7 @@ const messageBoxMocks = vi.hoisted(() => ({
   alert: vi.fn()
 }))
 
-const authState = vi.hoisted(() => ({ isAdmin: true, hasPermission(k) { return this.isAdmin || k.startsWith('menu:') } }))
+const authState = vi.hoisted(() => ({ isAdmin: true }))
 
 vi.mock('@/api/dataagent', () => ({
   dataagentApi: apiMocks

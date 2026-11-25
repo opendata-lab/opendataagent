@@ -1,22 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const USER_PERMS = ['menu:chat', 'menu:agents', 'menu:skills', 'menu:mcp', 'menu:mcp_tokens', 'menu:profile']
-const ADMIN_PERMS = [
-  ...USER_PERMS,
-  'agents:manage', 'skills:manage', 'mcp:manage', 'models:manage',
-  'widget:manage', 'feedback:view', 'experience:manage', 'topics:audit',
-  'evals:manage', 'mcp_tokens:manage_all', 'users:manage', 'roles:manage'
-]
-
 const authState = vi.hoisted(() => ({
   enabled: true,
   currentUser: null,
   isAdmin: false,
-  permissions: [],
-  hasPermission(key) {
-    if (!key) return Boolean(this.currentUser)
-    return Boolean(this.currentUser) && this.permissions.includes(key)
-  },
   bootstrap: vi.fn(async () => {})
 }))
 
@@ -57,13 +44,11 @@ const navigate = async (location) => {
 const signInAsUser = () => {
   authState.currentUser = { id: 2, username: 'alice', display_name: 'alice' }
   authState.isAdmin = false
-  authState.permissions = [...USER_PERMS]
 }
 
 const signInAsAdmin = () => {
   authState.currentUser = { id: 1, username: 'admin', display_name: 'admin' }
   authState.isAdmin = true
-  authState.permissions = [...ADMIN_PERMS]
 }
 
 describe('auth router guard', () => {
@@ -71,7 +56,6 @@ describe('auth router guard', () => {
     authState.enabled = true
     authState.currentUser = null
     authState.isAdmin = false
-    authState.permissions = []
     authState.bootstrap.mockClear()
   })
 
@@ -97,7 +81,7 @@ describe('auth router guard', () => {
     expect(route.path).toBe('/chat')
   })
 
-  it.each(['/settings/models', '/settings/users', '/settings/roles', '/feedback', '/knowledge', '/memories'])(
+  it.each(['/settings/models', '/settings/users', '/settings/roles', '/settings/widget-access', '/settings/evaluations', '/settings/evaluation-results', '/feedback', '/knowledge', '/memories'])(
     'blocks regular users from privileged route %s',
     async (path) => {
       signInAsUser()
@@ -125,7 +109,7 @@ describe('auth router guard', () => {
     expect(route.path).toBe(path)
   })
 
-  it('applies permission guard after a legacy route redirect', async () => {
+  it('applies admin guard after a legacy route redirect', async () => {
     signInAsUser()
     const route = await navigate('/intelligent-query/models')
     expect(route.path).toBe('/chat')

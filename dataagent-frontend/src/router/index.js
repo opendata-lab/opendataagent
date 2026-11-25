@@ -90,39 +90,39 @@ export const routes = [
         path: 'chat',
         name: 'IntelligentQueryChat',
         component: () => import('@/views/intelligence/NL2SqlChatV2.vue'),
-        meta: { tab: 'chat-v2', title: '智能问数', permission: 'menu:chat' }
+        meta: { tab: 'chat-v2', title: '智能问数' }
       },
       {
         path: 'feedback',
         name: 'UserFeedback',
         component: () => import('@/views/settings/FeedbackView.vue'),
-        meta: { tab: 'feedback', title: '用户反馈', permission: 'feedback:view' }
+        meta: { tab: 'feedback', title: '用户反馈', adminOnly: true }
       },
       {
         path: 'knowledge',
         name: 'KnowledgeLibrary',
         component: () => import('@/views/settings/KnowledgeMemoryView.vue'),
         props: { kind: 'knowledge' },
-        meta: { tab: 'knowledge', title: '知识', permission: 'experience:manage' }
+        meta: { tab: 'knowledge', title: '知识', adminOnly: true }
       },
       {
         path: 'memories',
         name: 'MemoryLibrary',
         component: () => import('@/views/settings/KnowledgeMemoryView.vue'),
         props: { kind: 'memory' },
-        meta: { tab: 'memories', title: '记忆', permission: 'experience:manage' }
+        meta: { tab: 'memories', title: '记忆', adminOnly: true }
       },
       {
         path: 'agents',
         name: 'IntelligentQueryAgents',
         component: () => import('@/views/intelligence/AgentStudio.vue'),
-        meta: { tab: 'agents', title: '智能体', permission: 'menu:agents' }
+        meta: { tab: 'agents', title: '智能体' }
       },
       {
         path: 'agents/:agentId',
         name: 'IntelligentQueryAgentDetail',
         component: () => import('@/views/intelligence/AgentDetailView.vue'),
-        meta: { tab: 'agents', title: '智能体工作台', agentWorkbench: true, permission: 'menu:agents' }
+        meta: { tab: 'agents', title: '智能体工作台', agentWorkbench: true }
       }
     ]
   },
@@ -138,13 +138,13 @@ export const routes = [
         path: 'skills',
         name: 'IntelligentQuerySkills',
         component: () => import('@/views/settings/SkillStudio.vue'),
-        meta: { tab: 'skills', title: 'Skills', permission: 'menu:skills' }
+        meta: { tab: 'skills', title: 'Skills' }
       },
       {
         path: 'skills/:folder',
         name: 'IntelligentQuerySkillDetail',
         component: () => import('@/views/settings/SkillDetailView.vue'),
-        meta: { tab: 'skills', title: 'Skill 详情', permission: 'menu:skills' }
+        meta: { tab: 'skills', title: 'Skill 详情' }
       },
       {
         path: 'mcp',
@@ -152,74 +152,74 @@ export const routes = [
         component: () => import('@/views/settings/McpConfig.vue'),
         // 与 skills 同样对登录用户开放只读视图；写操作由页面内 canManage 与
         // 后端权限依赖双重收口，非 admin 读到的凭证字段已脱敏。
-        meta: { tab: 'mcp', title: 'MCP 服务', permission: 'menu:mcp' }
+        meta: { tab: 'mcp', title: 'MCP 服务' }
       },
       {
         path: 'mcp-tokens',
         name: 'McpTokens',
         component: () => import('@/views/settings/McpTokensView.vue'),
-        meta: { tab: 'mcp-tokens', title: '访问令牌', permission: 'menu:mcp_tokens' }
+        meta: { tab: 'mcp-tokens', title: '访问令牌' }
       },
       {
         path: 'mcp-tokens/new',
         name: 'McpTokenCreate',
         component: () => import('@/views/settings/McpTokenCreateView.vue'),
         props: (route) => ({ configAgentId: normalizeAgentId(route.query.agent_id) }),
-        meta: { tab: 'mcp-tokens', title: '新建访问令牌', permission: 'menu:mcp_tokens' }
+        meta: { tab: 'mcp-tokens', title: '新建访问令牌' }
       },
       {
         path: 'profile',
         name: 'UserProfile',
         component: () => import('@/views/settings/ProfileView.vue'),
-        meta: { tab: 'profile', title: '个人资料', permission: 'menu:profile' }
+        meta: { tab: 'profile', title: '个人资料' }
       },
       {
         path: 'users',
         name: 'UserManagement',
         component: () => import('@/views/settings/UsersView.vue'),
-        meta: { tab: 'users', title: '用户管理', permission: 'users:manage' }
+        meta: { tab: 'users', title: '用户管理', adminOnly: true }
       },
       {
         path: 'roles',
         name: 'RoleManagement',
         component: () => import('@/views/settings/RolesView.vue'),
-        meta: { tab: 'roles', title: '角色管理', permission: 'roles:manage' }
+        meta: { tab: 'roles', title: '角色管理', adminOnly: true }
       },
       {
         path: 'models',
         name: 'IntelligentQueryModels',
         component: () => import('@/views/settings/DataAgentConfig.vue'),
-        meta: { tab: 'models', title: '模型管理', permission: 'models:manage' }
+        meta: { tab: 'models', title: '模型管理', adminOnly: true }
       },
       {
         path: 'widget-access',
         name: 'IntelligentQueryWidget',
         component: () => import('@/views/settings/WidgetAccessConfig.vue'),
-        meta: { tab: 'widget', title: 'Widget 接入', permission: 'widget:manage' }
+        meta: { tab: 'widget', title: 'Widget 接入', adminOnly: true }
       },
       {
         path: 'evaluations',
         name: 'EvaluationSets',
         component: () => import('@/views/evaluation/EvaluationSetsView.vue'),
-        meta: { tab: 'evaluations', title: '评测集', permission: 'evals:manage' }
+        meta: { tab: 'evaluations', title: '评测集', adminOnly: true }
       },
       {
         path: 'evaluations/:datasetId',
         name: 'EvaluationSetDetail',
         component: () => import('@/views/evaluation/EvaluationSetDetailView.vue'),
-        meta: { tab: 'evaluations', title: '评测集详情', permission: 'evals:manage' }
+        meta: { tab: 'evaluations', title: '评测集详情', adminOnly: true }
       },
       {
         path: 'evaluation-results',
         name: 'EvaluationResults',
         component: () => import('@/views/evaluation/EvaluationResultsView.vue'),
-        meta: { tab: 'eval-results', title: '评测结果', permission: 'evals:manage' }
+        meta: { tab: 'eval-results', title: '评测结果', adminOnly: true }
       },
       {
         path: 'evaluation-results/:runId',
         name: 'EvaluationRunDetail',
         component: () => import('@/views/evaluation/EvaluationRunDetailView.vue'),
-        meta: { tab: 'eval-results', title: '评测运行详情', permission: 'evals:manage' }
+        meta: { tab: 'eval-results', title: '评测运行详情', adminOnly: true }
       }
     ]
   },
@@ -275,9 +275,7 @@ router.beforeEach(async (to) => {
   if (!authStore.currentUser) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
-  const requiredPermission = to.meta?.permission
-  if (requiredPermission && !authStore.hasPermission(requiredPermission)) {
-    if (to.path === '/chat') return true
+  if (to.meta.adminOnly && !authStore.isAdmin) {
     return withAgentContext({ path: '/chat' }, to.query)
   }
   return true

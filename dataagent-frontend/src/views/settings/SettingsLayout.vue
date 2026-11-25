@@ -69,29 +69,29 @@ const GROUPS = [
   {
     title: 'Agent 能力',
     items: [
-      { index: 'skills', label: 'Skills', icon: Collection, path: '/settings/skills', permission: 'menu:skills' },
-      { index: 'mcp', label: 'MCP 服务', icon: Connection, path: '/settings/mcp', permission: 'menu:mcp' },
-      { index: 'models', label: '模型管理', icon: Cpu, path: '/settings/models', permission: 'models:manage' }
+      { index: 'skills', label: 'Skills', icon: Collection, path: '/settings/skills' },
+      { index: 'mcp', label: 'MCP 服务', icon: Connection, path: '/settings/mcp' },
+      { index: 'models', label: '模型管理', icon: Cpu, path: '/settings/models', adminOnly: true }
     ]
   },
   {
     title: '接入',
     items: [
-      { index: 'widget', label: 'Widget 接入', icon: Monitor, path: '/settings/widget-access', permission: 'widget:manage' }
+      { index: 'widget', label: 'Widget 接入', icon: Monitor, path: '/settings/widget-access', adminOnly: true }
     ]
   },
   {
     title: '账号与权限',
     items: [
-      { index: 'users', label: '用户管理', icon: Avatar, path: '/settings/users', permission: 'users:manage' },
-      { index: 'roles', label: '角色管理', icon: Lock, path: '/settings/roles', permission: 'roles:manage' }
+      { index: 'users', label: '用户管理', icon: Avatar, path: '/settings/users', adminOnly: true },
+      { index: 'roles', label: '角色管理', icon: Lock, path: '/settings/roles', adminOnly: true }
     ]
   },
   {
     title: '个人',
     items: [
-      { index: 'profile', label: '个人资料', icon: User, path: '/settings/profile', permission: 'menu:profile' },
-      { index: 'mcp-tokens', label: '访问令牌', icon: Key, path: '/settings/mcp-tokens', permission: 'menu:mcp_tokens' }
+      { index: 'profile', label: '个人资料', icon: User, path: '/settings/profile' },
+      { index: 'mcp-tokens', label: '访问令牌', icon: Key, path: '/settings/mcp-tokens' }
     ]
   }
 ]
@@ -99,7 +99,7 @@ const GROUPS = [
 const visibleGroups = computed(() =>
   GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => authStore.hasPermission(item.permission))
+    items: group.items.filter((item) => !item.adminOnly || authStore.isAdmin)
   })).filter((group) => group.items.length > 0)
 )
 

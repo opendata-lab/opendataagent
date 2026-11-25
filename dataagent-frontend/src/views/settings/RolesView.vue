@@ -4,7 +4,7 @@
       <div>
         <div class="roles-view__title">角色管理</div>
         <div class="roles-view__subtitle">
-          内置角色（管理员、普通用户）承载静态菜单与管理权限；自定义角色用于按团队或岗位向智能体批量授权。
+          自定义角色用于批量授予智能体访问权限。
         </div>
       </div>
       <div class="roles-view__actions">
@@ -37,9 +37,8 @@
           <span v-else>{{ (row.agent_ids || []).length }} 个</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="290" fixed="right">
+      <el-table-column label="操作" width="235" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="openPermissionsDialog(row)">权限说明</el-button>
           <el-button
             v-if="row.role_key !== 'admin'"
             link
@@ -108,40 +107,6 @@
         <el-button @click="editVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="submitEdit">保存</el-button>
       </template>
-    </el-dialog>
-
-    <!-- 静态权限说明（只读） -->
-    <el-dialog
-      v-model="permissionsVisible"
-      :title="`静态权限说明 · ${activeRole?.name || ''}`"
-      width="560px"
-      destroy-on-close
-    >
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        title="菜单与管理权限为代码内置静态集合（只读），不支持动态勾选。自定义角色不携带额外管理权限，仅用于智能体授权。"
-        class="dialog-alert"
-      />
-      <div class="perm-section">
-        <div class="perm-section__title">可见菜单</div>
-        <div class="tag-list">
-          <el-tag v-for="key in activeRole?.menus || []" :key="key" size="small" type="success">
-            {{ permissionLabel(key) }}
-          </el-tag>
-          <span v-if="!(activeRole?.menus && activeRole.menus.length)" class="muted">无额外静态菜单（继承用户已分配的其他角色）</span>
-        </div>
-      </div>
-      <div class="perm-section">
-        <div class="perm-section__title">权限键列表</div>
-        <div class="tag-list">
-          <el-tag v-for="key in activeRole?.permissions || []" :key="key" size="small" type="info">
-            {{ permissionLabel(key) }}（{{ key }}）
-          </el-tag>
-          <span v-if="!(activeRole?.permissions && activeRole.permissions.length)" class="muted">无静态权限键</span>
-        </div>
-      </div>
     </el-dialog>
 
     <!-- 角色成员管理 -->
@@ -214,7 +179,6 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
 
 const roles = ref([])
-const permissionCatalog = ref([])
 const allUsers = ref([])
 const allAgents = ref([])
 const loading = ref(false)
@@ -227,27 +191,17 @@ const createForm = reactive({ role_key: '', name: '', description: '' })
 const editVisible = ref(false)
 const editForm = reactive({ id: null, role_key: '', name: '', description: '' })
 
-const permissionsVisible = ref(false)
 const membersVisible = ref(false)
 const selectedMemberIds = ref([])
 
 const agentsVisible = ref(false)
 const selectedAgentIds = ref([])
 
-const permissionLabel = (key) => {
-  const found = permissionCatalog.value.find((item) => item.key === key)
-  return found?.label || key
-}
-
 async function loadAll() {
   loading.value = true
   try {
-    const [rolesRes, permRes] = await Promise.all([
-      dataagentApi.listRoles(),
-      dataagentApi.listRolePermissions().catch(() => ({ items: [] }))
-    ])
+    const rolesRes = await dataagentApi.listRoles()
     roles.value = Array.isArray(rolesRes?.items) ? rolesRes.items : (Array.isArray(rolesRes) ? rolesRes : [])
-    permissionCatalog.value = Array.isArray(permRes?.items) ? permRes.items : []
   } catch {
     roles.value = []
   } finally {
@@ -330,11 +284,6 @@ async function confirmDeleteRole(row) {
   } catch (error) {
     if (!error?.__odwNotified) ElMessage.error(error?.message || '删除角色失败')
   }
-}
-
-function openPermissionsDialog(row) {
-  activeRole.value = row
-  permissionsVisible.value = true
 }
 
 async function openMembersDialog(row) {
@@ -441,15 +390,6 @@ onMounted(loadAll)
   margin: 0 0 12px;
   font-size: 13px;
   color: #64748b;
-}
-.perm-section {
-  margin-bottom: 14px;
-}
-.perm-section__title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #334155;
-  margin-bottom: 8px;
 }
 .tag-list {
   display: flex;
