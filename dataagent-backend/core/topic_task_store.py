@@ -621,7 +621,8 @@ class TopicTaskStore(SessionCheckpointStore):
             conn.commit()
         finally:
             conn.close()
-        return self.get_topic(topic_id, context=normalized_context) or {}
+        # Re-read with the caller's context: None (internal callers) is unscoped.
+        return self.get_topic(topic_id, context=context) or {}
 
     def list_topics(
         self,
