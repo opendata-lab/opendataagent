@@ -125,28 +125,47 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint pyth
 
 ## 登录配置
 
-`deploy/docker/dataagent/` 整体只读挂载进 backend（`/app/docker/dataagent`），并加入 `sys.path`。
+DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/` 整体只读挂载进 backend（`/app/docker/dataagent`），并加入 `sys.path`。用户、密码（Argon2id）、外部身份绑定、角色及助手授权全部存库管理（`da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant`）。
 
 | 文件 | 说明 |
 | --- | --- |
-| `dataagent_config.py` | 自带基础配置（默认 `AUTH_ENABLED=False`，不要直接改）；末尾加载同目录用户覆盖 |
+| `dataagent_config.py` | 自带基础配置（不要直接改）；末尾加载同目录用户覆盖 |
 | `dataagent_config_docker.py.example` | 用户覆盖示例（认证 + `DATAAGENT_SETTINGS`）；复制为 `dataagent_config_docker.py` 后填写 |
-| `custom_sso_user_info.py.example` | OAuth UserInfo 归一化钩子示例；复制为 `custom_sso_user_info.py` 并在覆盖配置里挂 `OAUTH_USER_INFO` |
+| `custom_sso_user_info.py.example` | OAuth UserInfo 归一化钩子示例（仅返回身份与资料字段，不下发角色） |
 
-启用步骤：
+全新部署：
 
 1. `cd deploy/docker/dataagent && cp dataagent_config_docker.py.example dataagent_config_docker.py`
-2. 填写 `SECRET_KEY`（`secrets.token_urlsafe(32)`）、`LOCAL_ADMINS`（bcrypt 哈希）、单项 `OAUTH_PROVIDERS`
-   （Superset/FAB `remote_app` 形态）、`ADMIN_USERS`（`provider:sub`），置 `AUTH_ENABLED = True`。
-   OAuth 的 `redirect_uri` 注册为 `https://<dataagent-host>/oauth-authorized/<provider_name>`，
-   并从自定义模块导入 `OAUTH_USER_INFO(provider, token_response, oauth_remotes)`。
-3. 重启 `dataagent-backend`。
+2. 填写 `SECRET_KEY`（`secrets.token_urlsafe(32)`）、`DEFAULT_USER_PASSWORD`（普通用户的初始密码，用于后台建号、重置密码及外部可信登录首次自动注册；管理员账号不使用），按需配置单项 `OAUTH_PROVIDERS`（`redirect_uri` 为 `https://<dataagent-host>/oauth-authorized/<provider_name>`）及 `OAUTH_USER_INFO`。
+3. 运行数据库迁移 `alembic upgrade head` 后，执行 CLI 创建初始管理员账号：
+   ```bash
+   python -m core.accounts create-user --username admin --password '<强密码>' --admin
+   ```
+4. 重启 `dataagent-backend`。
 
-配置文件缺失、不可读、语法错误或启用却缺合法 `SECRET_KEY` 时服务启动失败，不会静默降级为无认证。
-认证关闭时匿名聊天没有已验证的用户身份，不能经 MCP 访问需要用户身份的数据。
+平台分管理员和普通用户两级。管理员由上述命令设置，自定义角色只用于助手授权。个人资料显示用户名、显示名、本次登录方式与所属角色，并支持修改密码。OAuth 必须配置 `DEFAULT_USER_PASSWORD`，按 `OAUTH_USER_INFO` 返回的登录用户名绑定同名账号或登记普通账号。
 
-宿主内嵌 widget 时，会话不经 DataAgent 登录：DataAgent 采信宿主通过 `X-DataAgent-User-Id`（widget 的 `userId`）上报的用户，
-用它区分会话与历史记录，并作为 MCP 的 `X-Agent-User-Id` 上报（OpenDataWorks 只记审计，不据此授权）。这个值来自宿主页面，只在可信宿主、可信网络中使用，并保证 8900 端口不对外暴露。
+从旧版本升级：
+
+1. 运行 `scripts/backup-db.sh`，在 `deploy/backups/` 生成数据库备份 `dataagent-<时间>.sql.gz` 和配置备份 `config-<时间>.tar.gz`（`.env` 与 `docker/dataagent/*.py`）。数据库备份由 backend 镜像内的 `mysqldump` 完成，宿主机不需要 MySQL 客户端。
+2. 在 `dataagent_config_docker.py` 中补充 `DEFAULT_USER_PASSWORD`（`LOCAL_ADMINS` / `ADMIN_USERS` 不再使用，可删除）。
+3. 换新镜像并执行 `scripts/start.sh`。backend 启动时 Alembic 迁移 `20261123_000042` 只建表：用户、外部身份、角色、助手授权，重建个人 MCP 访问令牌表（旧令牌作废，升级后重新申请），不改动旧数据。
+4. 运行 `scripts/migrate-accounts.sh`（执行 `scripts/migrate-accounts.sql`，可重复执行）：
+   - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<用户名>` / `<来源>:<标识>`）建普通账号和外部身份，不设密码；`local:admin` 直接对应同名的 `admin` 账号。来源和标识不区分大小写，`SSO:u123` 与 `SSO:U123` 是同一用户；
+   - 按外部身份回填旧会话归属，把已发布的 `allowed_users` 转为助手授权，助手配置和草稿只保留可见模式；
+   - 「仅登录用户」改为「全部用户」；
+   - 末尾列出账号数、已归属的旧会话、无归属会话和授权数，以及因用户名冲突没能建账号的旧用户。
+5. 设置管理员（原来的密码可以继续用，例如 `admin123`）：
+   ```bash
+   docker compose -f deploy/docker-compose.yml exec dataagent-backend python -m core.accounts create-user --username admin --password '<密码>' --admin
+   ```
+   第 4、5 步顺序不限。核对第 4 步的结果后再开放访问；在此之前普通用户看不到自己的旧会话，「指定范围」助手也暂时不可用。
+
+该迁移不支持降级。需要回退时运行 `scripts/restore-db.sh deploy/backups/dataagent-<时间>.sql.gz`（会先清空库内全部表再导入），把 `deploy/.env` 的 `ODA_*_IMAGE` 改回旧版本，必要时从 `config-<时间>.tar.gz` 解压回旧配置，再执行 `scripts/start.sh`。
+
+缺合法 `SECRET_KEY`、显式置 `AUTH_ENABLED = False`、文件不可读或语法错误时服务启动失败（fail-closed）。
+
+宿主系统内嵌 Widget 不再使用访问密钥，也不接受匿名访客或同源复用平台登录：在后台「设置 → Widget 接入」登记 `Website ID` 与浏览器允许来源（`allowed_origins`）。当站点已登记，且请求不带 `Origin` 头（例如 OntoFoundry BFF 服务端调用）或 `Origin` 命中该站点的允许来源列表（例如 OpenDataWorks 门户浏览器直连）时，DataAgent 信任请求头 `X-DataAgent-User-Id` 中的纯用户名并对应同名平台账号（含 `admin`）；缺少用户名返回 `401 WIDGET_LOGIN_REQUIRED`，未登记站点或未放行来源返回 `403`。Widget 凭据限于运行及助手目录，平台账号、管理、评测和令牌接口需要平台登录。每个会话只属于发起它的用户，不支持多人共享会话。**风险提示**：无密钥模式下任何能访问 DataAgent API 的调用方都可为已登记站点宣称任意用户名，仅适用于可信内网部署，务必保证 8900 端口不对外暴露。
 
 ## 单助手 MCP 发布
 
@@ -154,7 +173,7 @@ docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint pyth
 2. 入口代理保留完整 `Host`（含非默认端口）并传递 `X-Forwarded-Proto`，在同域下将 `/api/v1/remote-agents/` 和 `/api/v1/dataagent/` 转发给后端，并限制对后端 8900 端口的访问。HTTP 会明文传输令牌，仅用于内网或可信网络。公网部署使用 HTTPS。
 3. 在已发布的助手详情页打开「MCP 访问」开关（立即生效）。能查看这个助手的登录用户均可点击「复制配置」。登录用户从用户菜单「访问令牌」创建令牌，趁弹窗显示时复制，并将配置中的 `headers.Authorization` 设为 `Bearer dak_…`。将配置粘贴到客户端的 MCP 设置。
 
-MCP 会话属于令牌所有者，可在网页上看到并续聊。运行采用无人值守模式，跳过需要用户确认的操作。助手默认关闭「MCP 访问」，关闭开关会立即停用该地址。服务在每次调用时检查令牌是否有效及助手是否可见。令牌过期后重新申请，并更新客户端配置。MCP 客户端可带令牌下载文件。直接点击下载链接时，使用同一地址的 DataAgent 网页登录态。用目标客户端验收 Bearer 连接、令牌撤销和会话隔离。[MCP 接口与工具](../docs/handbook/api.md#单助手-mcp)
+MCP 会话属于令牌所有者，可在网页上看到并续聊。运行采用无人值守模式，跳过需要用户确认的操作。助手默认关闭「MCP 访问」，关闭开关会立即停用该地址。服务在每次调用时检查令牌是否有效及助手是否可见。个人令牌无有效期和数量上限，每位用户只可列出和撤销自己的令牌。MCP 客户端可带令牌下载文件。直接点击下载链接时，使用同一地址的 DataAgent 网页登录态。用目标客户端验收 Bearer 连接、令牌撤销和会话隔离。[MCP 接口与工具](../docs/handbook/api.md#单助手-mcp)
 
 默认 `ask` 使用 Streamable HTTP 的 SSE 响应，等待上限为 15 分钟。代理须逐段转发，默认 MCP location 的读写超时为 1860 秒。外部代理和客户端的长请求上限需覆盖等待时间并预留网络余量。ZCode CLI 的 `timeoutMs` 见其[配置说明](https://github.com/zai-org/ZCode/blob/main/apps/zcode-cli/docs/usage/07-mcp.md)，桌面版本长调用以实际验收为准。需要立即返回时用 `background: true`，再以 `get_run` 读取结果。
 

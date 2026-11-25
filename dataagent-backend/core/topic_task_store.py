@@ -13,7 +13,6 @@ import pymysql
 
 from config import get_settings
 from core.agent_record_compat import normalize_tool_output
-from core.auth import is_auth_enabled
 from core.task_status import to_downstream_status
 from core.agent_profile_service import (
     DEFAULT_AGENT_ID,
@@ -430,68 +429,62 @@ class TopicTaskStore(SessionCheckpointStore):
         if not self._ready:
             self.init_schema()
 
-    def _normalize_context(self, context: dict[str, Any] | None = None) -> dict[str, str]:
+    def _normalize_context(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         ctx = context or {}
         requested_source = str(ctx.get("source") or "").strip().lower()
         widget = requested_source == "widget"
-        auth_user_id = str(ctx.get("auth_user_id") or "").strip()
-        external_user_id = str(ctx.get("external_user_id") or "").strip() if widget and not auth_user_id else ""
-        normalized = {
+        raw_uid = ctx.get("user_id")
+        user_id = (
+            raw_uid
+            if isinstance(raw_uid, int) and not isinstance(raw_uid, bool) and raw_uid > 0
+            else None
+        )
+        return {
             # 'remote' marks a conversation started from the published MCP endpoint;
             # it is otherwise an ordinary signed-in conversation.
             "source": "widget" if widget else ("remote" if requested_source == "remote" else "web"),
             "website_id": str(ctx.get("website_id") or "").strip() if widget else "",
-            "external_user_id": external_user_id,
-            "visitor_id": str(ctx.get("visitor_id") or "").strip() if widget and not (auth_user_id or external_user_id) else "",
+            "user_id": user_id,
+            "is_admin": bool(ctx.get("is_admin")),
+            "system_digest": bool(ctx.get("system_digest")),
         }
-        if auth_user_id:
-            normalized["auth_user_id"] = auth_user_id
-            normalized["auth_display_name"] = str(ctx.get("auth_display_name") or "").strip()
-            role = str(ctx.get("auth_role") or "").strip().lower()
-            normalized["auth_role"] = role if role in {"admin", "user"} else "user"
-        return normalized
 
-    def _topic_context_predicate(self, context: dict[str, Any] | None = None, *, alias: str = "t") -> tuple[str, list[str]]:
+    def _topic_context_predicate(
+        self, context: dict[str, Any] | None = None, *, alias: str = "t"
+    ) -> tuple[str, list[Any]]:
         if context is None:
             return "1 = 1", []
 
         normalized = self._normalize_context(context)
-        prefix = f"{alias}." if alias else ""
-        auth_user_id = normalized.get("auth_user_id") or ""
-        # Keep the indexed comparison, then require an exact stable ID even
-        # under the default case-insensitive MySQL collation.
-        owner = (
-            f"{prefix}auth_user_id = %s AND CAST({prefix}auth_user_id AS BINARY) = CAST(%s AS BINARY)"
-        )
-        owner_params = [auth_user_id, auth_user_id]
-        regular_topic = f"{prefix}is_agent_preview = 0"
-        if normalized["source"] != "widget":
-            if not is_auth_enabled():
-                return f"COALESCE({prefix}source, 'web') = %s", ["web"]
-            if auth_user_id:
-                # A signed-in user's own conversations from every entry point.
-                sources = ["web", "widget", "remote"]
-                source_in = f"{prefix}source IN (%s, %s, %s)"
-                scope = regular_topic
-                if normalized.get("auth_role") == "admin":
-                    # Workbench previews are writable by the administrator who created them.
-                    scope = f"({regular_topic} OR {prefix}source = %s)"
-                    return f"{source_in} AND {owner} AND {scope}", [*sources, *owner_params, "web"]
-                return f"{source_in} AND {owner} AND {scope}", [*sources, *owner_params]
-            return f"{prefix}source = %s AND {prefix}auth_user_id = '' AND {prefix}is_agent_preview = 0", ["web"]
+        if normalized["system_digest"]:
+            return "1 = 1", []
 
-        if auth_user_id:
+        prefix = f"{alias}." if alias else ""
+        regular_topic = f"{prefix}is_agent_preview = 0"
+
+        user_id = normalized["user_id"]
+        if user_id is None:
+            return "1 = 0", []
+
+        if normalized["source"] != "widget":
+            sources = ["web", "widget", "remote"]
+            source_in = f"{prefix}source IN (%s, %s, %s)"
+            if normalized["is_admin"]:
+                scope = f"({regular_topic} OR {prefix}source = %s)"
+                return (
+                    f"{source_in} AND {prefix}user_id = %s AND {scope}",
+                    [*sources, user_id, "web"],
+                )
             return (
-                f"({prefix}source IN (%s, %s) OR ({prefix}source = %s AND {prefix}website_id = %s)) AND {owner} AND {regular_topic}",
-                ["web", "remote", "widget", normalized["website_id"], *owner_params],
+                f"{source_in} AND {prefix}user_id = %s AND {regular_topic}",
+                [*sources, user_id],
             )
 
-        legacy = f"{prefix}source = %s AND {prefix}website_id = %s AND {prefix}auth_user_id = ''"
-        if normalized["external_user_id"]:
-            return f"{legacy} AND {prefix}external_user_id = %s", ["widget", normalized["website_id"], normalized["external_user_id"]]
+        # Personal widget: user's web + remote topics + personal widget topics for this site.
         return (
-            f"{legacy} AND {prefix}external_user_id = '' AND {prefix}visitor_id = %s",
-            ["widget", normalized["website_id"], normalized["visitor_id"]],
+            f"({prefix}source IN (%s, %s) OR ({prefix}source = %s AND {prefix}website_id = %s)) "
+            f"AND {prefix}user_id = %s AND {regular_topic}",
+            ["web", "remote", "widget", normalized["website_id"], user_id],
         )
 
     def _next_topic_seq(self, cur, topic_id: str) -> int:
@@ -550,8 +543,9 @@ class TopicTaskStore(SessionCheckpointStore):
                 event_type,
                 normalized_context["source"],
                 normalized_context["website_id"],
-                normalized_context["external_user_id"],
-                normalized_context["visitor_id"],
+                normalized_context["user_id"],
+                "",
+                "",
                 str((event or {}).get("agent_id") or "").strip()[:64],
                 (str((event or {}).get("topic_id") or "").strip()[:64] or None),
                 (str((event or {}).get("task_id") or "").strip()[:64] or None),
@@ -567,9 +561,9 @@ class TopicTaskStore(SessionCheckpointStore):
                 cur.executemany(
                     """
                     INSERT INTO da_agent_widget_event (
-                        event_type, source, website_id, external_user_id, visitor_id,
+                        event_type, source, website_id, user_id, external_user_id, visitor_id,
                         agent_id, topic_id, task_id, message_id, payload_json, client_ts
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     rows,
                 )
@@ -605,9 +599,9 @@ class TopicTaskStore(SessionCheckpointStore):
                         topic_id, title, chat_topic_id, chat_conversation_id,
                         current_task_id, current_task_status, last_message_seq,
                         agent_id, agent_snapshot_json, permission_mode,
-                        source, website_id, external_user_id, visitor_id,
+                        source, website_id, user_id, external_user_id, visitor_id,
                         auth_user_id, auth_username, is_agent_preview
-                    ) VALUES (%s, %s, %s, %s, NULL, NULL, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, NULL, NULL, 0, %s, %s, %s, %s, %s, %s, %s, '', '', '', %s)
                     """,
                     (
                         topic_id,
@@ -619,17 +613,16 @@ class TopicTaskStore(SessionCheckpointStore):
                         resolved_permission_mode,
                         normalized_context["source"],
                         normalized_context["website_id"],
-                        normalized_context["external_user_id"],
-                        normalized_context["visitor_id"],
-                        normalized_context.get("auth_user_id") or "",
-                        normalized_context.get("auth_display_name") or "",
+                        normalized_context["user_id"],
+                        "",
                         1 if is_agent_preview else 0,
                     ),
                 )
             conn.commit()
         finally:
             conn.close()
-        return self.get_topic(topic_id, context=normalized_context) or {}
+        # Re-read with the caller's context: None (internal callers) is unscoped.
+        return self.get_topic(topic_id, context=context) or {}
 
     def list_topics(
         self,
@@ -653,12 +646,14 @@ class TopicTaskStore(SessionCheckpointStore):
                     f"""
                     SELECT t.topic_id, t.title, t.chat_topic_id, t.chat_conversation_id,
                            t.current_task_id, t.current_task_status, t.source, t.website_id,
+                           t.user_id, u.username AS user_username, u.display_name AS user_display_name,
                            t.external_user_id, t.visitor_id, t.auth_user_id, t.auth_username, t.agent_id, t.agent_snapshot_json,
                            t.permission_mode, t.is_agent_preview,
                            t.created_at, t.updated_at,
                            COALESCE(stats.message_count, 0) AS message_count,
                            COALESCE(stats.last_message_preview, '') AS last_message_preview
                     FROM da_agent_topic t
+                    LEFT JOIN da_user u ON u.id = t.user_id
                     LEFT JOIN (
                         SELECT topic_id,
                                COUNT(*) AS message_count,
@@ -689,11 +684,8 @@ class TopicTaskStore(SessionCheckpointStore):
     def admin_list_topics(
         self,
         *,
-        source: str = "widget",
-        website_id: str | None = None,
-        external_user_id: str | None = None,
-        visitor_id: str | None = None,
-        auth_user_id: str | None = None,
+        source: str = "",
+        user_id: int | None = None,
         agent_id: str | None = None,
         keyword: str | None = None,
         start: str | None = None,
@@ -702,8 +694,8 @@ class TopicTaskStore(SessionCheckpointStore):
         page_size: int = 20,
     ) -> dict[str, Any]:
         """Admin-only paginated read across topics, bypassing the per-user
-        context isolation used by `list_topics`. Defaults to widget-sourced
-        topics. All filters are explicit and additive so the isolation
+        context isolation used by `list_topics`. Filters by source and platform
+        user (plus assistant, title keyword and time). All filters are explicit and additive so the isolation
         semantics in `_topic_context_predicate` are never reused or weakened.
         """
         self._ensure_ready()
@@ -715,17 +707,14 @@ class TopicTaskStore(SessionCheckpointStore):
             filters.append("t.source = %s")
             params.append(safe_source)
 
-        for column, value in (
-            ("website_id", website_id),
-            ("external_user_id", external_user_id),
-            ("visitor_id", visitor_id),
-            ("auth_user_id", auth_user_id),
-            ("agent_id", agent_id),
-        ):
-            safe_value = str(value or "").strip()
-            if safe_value:
-                filters.append(f"t.{column} = %s")
-                params.append(safe_value)
+        if user_id is not None:
+            filters.append("t.user_id = %s")
+            params.append(int(user_id))
+
+        safe_agent = str(agent_id or "").strip()
+        if safe_agent:
+            filters.append("t.agent_id = %s")
+            params.append(safe_agent)
 
         safe_keyword = str(keyword or "").strip()
         if safe_keyword:
@@ -758,12 +747,14 @@ class TopicTaskStore(SessionCheckpointStore):
                     f"""
                     SELECT t.topic_id, t.title, t.chat_topic_id, t.chat_conversation_id,
                            t.current_task_id, t.current_task_status, t.source, t.website_id,
+                           t.user_id, u.username AS user_username, u.display_name AS user_display_name,
                            t.external_user_id, t.visitor_id, t.auth_user_id, t.auth_username, t.agent_id, t.agent_snapshot_json,
                            t.permission_mode, t.is_agent_preview,
                            t.created_at, t.updated_at,
                            COALESCE(stats.message_count, 0) AS message_count,
                            COALESCE(stats.last_message_preview, '') AS last_message_preview
                     FROM da_agent_topic t
+                    LEFT JOIN da_user u ON u.id = t.user_id
                     LEFT JOIN (
                         SELECT topic_id,
                                COUNT(*) AS message_count,
@@ -793,146 +784,6 @@ class TopicTaskStore(SessionCheckpointStore):
             "page_size": safe_page_size,
         }
 
-    def admin_list_widget_users(
-        self,
-        *,
-        source: str = "widget",
-        website_id: str | None = None,
-        keyword: str | None = None,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        """Distinct widget users for the admin user filter. Each user is a
-        logged-in `external_user_id` or, when absent, an anonymous
-        `visitor_id`; the two namespaces are kept apart via `kind` so the
-        composite key matches the frontend's `ext:`/`vis:` filter value.
-        Returns the conversation count per user, most recently active first.
-        """
-        self._ensure_ready()
-        filters: list[str] = []
-        params: list[Any] = []
-
-        safe_source = str(source or "").strip().lower()
-        if safe_source:
-            filters.append("t.source = %s")
-            params.append(safe_source)
-
-        safe_website = str(website_id or "").strip()
-        if safe_website:
-            filters.append("t.website_id = %s")
-            params.append(safe_website)
-
-        # Only rows that actually carry a user identity.
-        filters.append(
-            "(NULLIF(t.external_user_id, '') IS NOT NULL OR NULLIF(t.visitor_id, '') IS NOT NULL)"
-        )
-
-        safe_keyword = str(keyword or "").strip()
-        if safe_keyword:
-            filters.append("(t.external_user_id LIKE %s OR t.visitor_id LIKE %s)")
-            params.append(f"%{safe_keyword}%")
-            params.append(f"%{safe_keyword}%")
-
-        where_sql = " AND ".join(filters) if filters else "1 = 1"
-        safe_limit = max(1, min(500, int(limit or 100)))
-
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT
-                        CASE WHEN NULLIF(t.external_user_id, '') IS NOT NULL
-                             THEN 'ext' ELSE 'vis' END AS kind,
-                        CASE WHEN NULLIF(t.external_user_id, '') IS NOT NULL
-                             THEN t.external_user_id ELSE t.visitor_id END AS user_id,
-                        COUNT(*) AS topic_count,
-                        MAX(t.updated_at) AS last_active_at
-                    FROM da_agent_topic t
-                    WHERE {where_sql}
-                    GROUP BY kind, user_id
-                    ORDER BY last_active_at DESC, topic_count DESC
-                    LIMIT %s
-                    """,
-                    [*params, safe_limit],
-                )
-                rows = cur.fetchall() or []
-        finally:
-            conn.close()
-
-        users: list[dict[str, Any]] = []
-        for row in rows:
-            user_id = str(row.get("user_id") or "").strip()
-            if not user_id:
-                continue
-            users.append(
-                {
-                    "kind": "ext" if str(row.get("kind") or "") == "ext" else "vis",
-                    "user_id": user_id,
-                    "topic_count": int(row.get("topic_count") or 0),
-                }
-            )
-        return users
-
-    def admin_list_auth_users(
-        self,
-        *,
-        keyword: str | None = None,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        """Distinct authenticated users derived from topic ownership
-        (``auth_user_id`` / ``auth_username``), powering the agent visibility
-        allow-list picker. Supports server-side keyword search over both the
-        stable id and the display name, most recently active first."""
-        self._ensure_ready()
-        filters: list[str] = ["NULLIF(t.auth_user_id, '') IS NOT NULL"]
-        params: list[Any] = []
-
-        safe_keyword = str(keyword or "").strip()
-        if safe_keyword:
-            filters.append("(t.auth_user_id LIKE %s OR t.auth_username LIKE %s)")
-            params.append(f"%{safe_keyword}%")
-            params.append(f"%{safe_keyword}%")
-
-        where_sql = " AND ".join(filters)
-        safe_limit = max(1, min(500, int(limit or 100)))
-
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT
-                        t.auth_user_id AS user_id,
-                        MAX(NULLIF(t.auth_username, '')) AS display_name,
-                        COUNT(*) AS topic_count,
-                        MAX(t.updated_at) AS last_active_at
-                    FROM da_agent_topic t
-                    WHERE {where_sql}
-                    GROUP BY t.auth_user_id
-                    ORDER BY last_active_at DESC, topic_count DESC
-                    LIMIT %s
-                    """,
-                    [*params, safe_limit],
-                )
-                rows = cur.fetchall() or []
-        finally:
-            conn.close()
-
-        users: list[dict[str, Any]] = []
-        for row in rows:
-            user_id = str(row.get("user_id") or "").strip()
-            if not user_id:
-                continue
-            users.append(
-                {
-                    "user_id": user_id,
-                    "display_name": str(row.get("display_name") or ""),
-                    "topic_count": int(row.get("topic_count") or 0),
-                    "last_active_at": _to_iso(row.get("last_active_at")),
-                }
-            )
-        return users
-
     def get_topic(self, topic_id: str, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
         self._ensure_ready()
         context_sql, context_params = self._topic_context_predicate(context, alias="t")
@@ -943,12 +794,14 @@ class TopicTaskStore(SessionCheckpointStore):
                     f"""
                     SELECT t.topic_id, t.title, t.chat_topic_id, t.chat_conversation_id,
                            t.current_task_id, t.current_task_status, t.source, t.website_id,
+                           t.user_id, u.username AS user_username, u.display_name AS user_display_name,
                            t.external_user_id, t.visitor_id, t.auth_user_id, t.auth_username, t.agent_id, t.agent_snapshot_json,
                            t.permission_mode, t.is_agent_preview,
                            t.created_at, t.updated_at,
                            COALESCE(stats.message_count, 0) AS message_count,
                            COALESCE(stats.last_message_preview, '') AS last_message_preview
                     FROM da_agent_topic t
+                    LEFT JOIN da_user u ON u.id = t.user_id
                     LEFT JOIN (
                         SELECT topic_id,
                                COUNT(*) AS message_count,
@@ -1362,6 +1215,7 @@ class TopicTaskStore(SessionCheckpointStore):
         joins = """
             FROM da_agent_message m
             JOIN da_agent_topic t ON t.topic_id = m.topic_id
+            LEFT JOIN da_user u ON u.id = t.user_id
             LEFT JOIN da_agent_task k ON k.task_id = m.task_id
         """
         conn = self._connect(database=self._schema_name())
@@ -1376,11 +1230,13 @@ class TopicTaskStore(SessionCheckpointStore):
                     SELECT m.message_id, m.topic_id, m.task_id, m.feedback,
                            COALESCE(m.feedback_at, m.updated_at) AS feedback_at,
                            LEFT(m.content, 300) AS answer,
-                           t.title, t.source, t.website_id, t.auth_user_id, t.auth_username, t.external_user_id,
+                           t.title, t.source, t.website_id,
+                           t.user_id, u.username AS user_username, u.display_name AS user_display_name,
+                           t.auth_user_id, t.auth_username, t.external_user_id,
                            COALESCE(NULLIF(k.agent_id, ''), t.agent_id) AS agent_id,
-                           (SELECT LEFT(u.content, 300) FROM da_agent_message u
-                             WHERE u.task_id = m.task_id AND u.sender_type = 'user'
-                             ORDER BY u.seq_id ASC, u.created_at ASC LIMIT 1) AS question
+                           (SELECT LEFT(u2.content, 300) FROM da_agent_message u2
+                             WHERE u2.task_id = m.task_id AND u2.sender_type = 'user'
+                             ORDER BY u2.seq_id ASC, u2.created_at ASC LIMIT 1) AS question
                     {joins}
                     WHERE {list_where}
                     ORDER BY feedback_at DESC, m.message_id DESC
@@ -1391,24 +1247,36 @@ class TopicTaskStore(SessionCheckpointStore):
                 rows = cur.fetchall() or []
         finally:
             conn.close()
-        items = [
-            {
-                "message_id": str(row.get("message_id") or ""),
-                "topic_id": str(row.get("topic_id") or ""),
-                "task_id": str(row.get("task_id") or "") or None,
-                "agent_id": str(row.get("agent_id") or ""),
-                "feedback": str(row.get("feedback") or ""),
-                "feedback_at": _to_iso(row.get("feedback_at")),
-                "question": str(row.get("question") or ""),
-                "answer": str(row.get("answer") or ""),
-                "topic_title": str(row.get("title") or ""),
-                "source": str(row.get("source") or "web"),
-                "website_id": str(row.get("website_id") or "") or None,
-                "user_id": str(row.get("auth_user_id") or row.get("external_user_id") or "") or None,
-                "user_display_name": str(row.get("auth_username") or "").strip() or None,
-            }
-            for row in rows
-        ]
+        items = []
+        for row in rows:
+            raw_uid = row.get("user_id")
+            uid = int(raw_uid) if raw_uid is not None else None
+            display = (
+                str(row.get("user_display_name") or "").strip()
+                or str(row.get("user_username") or "").strip()
+                or str(row.get("auth_username") or "").strip()
+                or str(row.get("auth_user_id") or "").strip()
+                or str(row.get("external_user_id") or "").strip()
+                or None
+            )
+            items.append(
+                {
+                    "message_id": str(row.get("message_id") or ""),
+                    "topic_id": str(row.get("topic_id") or ""),
+                    "task_id": str(row.get("task_id") or "") or None,
+                    "agent_id": str(row.get("agent_id") or ""),
+                    "feedback": str(row.get("feedback") or ""),
+                    "feedback_at": _to_iso(row.get("feedback_at")),
+                    "question": str(row.get("question") or ""),
+                    "answer": str(row.get("answer") or ""),
+                    "topic_title": str(row.get("title") or ""),
+                    "source": str(row.get("source") or "web"),
+                    "website_id": str(row.get("website_id") or "") or None,
+                    "user_id": uid,
+                    "legacy_user_id": str(row.get("auth_user_id") or row.get("external_user_id") or "") or None,
+                    "user_display_name": display,
+                }
+            )
         return {
             "items": items,
             "total": total,
@@ -3301,6 +3169,14 @@ class TopicTaskStore(SessionCheckpointStore):
 
     def _normalize_topic_row(self, row: dict[str, Any], *, include_messages: bool) -> dict[str, Any]:
         snapshot = normalize_agent_snapshot(row.get("agent_snapshot_json") or row.get("agent_snapshot") or default_agent_payload())
+        raw_uid = row.get("user_id")
+        user_id = int(raw_uid) if raw_uid is not None else None
+        username = str(row.get("user_username") or "").strip()
+        resolved_display = (
+            str(row.get("user_display_name") or "").strip()
+            or username
+            or str(row.get("auth_username") or "").strip()
+        )
         topic = {
             "topic_id": str(row.get("topic_id") or ""),
             "title": str(row.get("title") or "新话题"),
@@ -3315,11 +3191,13 @@ class TopicTaskStore(SessionCheckpointStore):
             "current_task_status": str(row.get("current_task_status") or "") or None,
             "source": str(row.get("source") or "web"),
             "website_id": str(row.get("website_id") or ""),
+            "user_id": user_id,
+            "username": username,
+            "display_name": resolved_display,
             "external_user_id": str(row.get("external_user_id") or ""),
             "visitor_id": str(row.get("visitor_id") or ""),
             "auth_user_id": str(row.get("auth_user_id") or ""),
-            # auth_username is the legacy physical column; expose domain semantics.
-            "auth_display_name": str(row.get("auth_username") or ""),
+            "auth_display_name": resolved_display,
             "message_count": int(row.get("message_count") or 0),
             "last_message_preview": str(row.get("last_message_preview") or ""),
             "created_at": _to_iso(row.get("created_at")),

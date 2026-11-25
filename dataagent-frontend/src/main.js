@@ -19,7 +19,6 @@ app.use(router)
 export function handleUnauthorized() {
   import('./stores/auth').then(({ useAuthStore }) => {
     const authStore = useAuthStore()
-    if (!authStore.enabled) return
     authStore.currentUser = null
     const current = router.currentRoute.value
     if (current.name !== 'Login') {

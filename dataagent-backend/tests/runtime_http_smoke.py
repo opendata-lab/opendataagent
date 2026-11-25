@@ -25,6 +25,9 @@ AGENTS='/api/v1/dataagent'
 SUFFIX=uuid.uuid4().hex[:10]
 PROVIDER='smoke-'+SUFFIX
 MCP='smoke-mcp-'+SUFFIX
+SMOKE_USER='smoke_'+SUFFIX
+SMOKE_PASS='SmokePass!'+SUFFIX
+SMOKE_SECRET='smoke-test-secret-key-0123456789abcdef-0123456789'
 LOGS=Path(tempfile.mkdtemp(prefix='dataagent-http-smoke-',dir='/tmp'))
 STATE=LOGS/'writes.json'
 processes=[]
@@ -69,12 +72,18 @@ def start_backend():
     env.pop('DATAAGENT_CONFIG',None)
     env.update(MYSQL_HOST='127.0.0.1',MYSQL_PORT='3326',MYSQL_USER='dataagent',MYSQL_PASSWORD='dataagent123',
         SESSION_MYSQL_DATABASE=os.environ.get('DATAAGENT_SMOKE_SCHEMA','dataagent'),REDIS_HOST='127.0.0.1',REDIS_PORT='6379',
+        DATAAGENT_SECRET_KEY=SMOKE_SECRET,DATAAGENT_DEFAULT_USER_PASSWORD=SMOKE_PASS,
         SKILLS_ROOT_DIR=str(ROOT/'.claude/skills'),DATAAGENT_HOST_ROOT=str(ROOT),
         DATAAGENT_RUNTIME_PI_DIR=str(ROOT/'dataagent-runtime-pi'),DATAAGENT_SANDBOX_IMAGE='oda-sandbox:test',
         DATAAGENT_NODE_BIN=os.environ.get('DATAAGENT_NODE_BIN',str(Path.home()/'.nvm/versions/node/v22.22.0/bin/node')),
         AGENT_TIMEOUT_SECONDS='60',AGENT_BASH_TIMEOUT_SECONDS='2',DATAAGENT_RUN_IDLE_TIMEOUT_SECONDS='5')
     backend=spawn('backend',[sys.executable,'-m','uvicorn','main:app','--host','127.0.0.1','--port',PORT],env)
     wait_http(BASE+API+'/health')
+    subprocess.run(
+        [sys.executable,'-m','core.accounts','create-user','--username',SMOKE_USER,'--password',SMOKE_PASS,'--admin'],
+        cwd=BACKEND,env=env,check=True,
+    )
+    request('POST',API+'/auth/login',json={'username':SMOKE_USER,'password':SMOKE_PASS})
 
 
 def records(task_id): return request('GET',API+f'/tasks/{task_id}/sdk-events?limit=500')['records']

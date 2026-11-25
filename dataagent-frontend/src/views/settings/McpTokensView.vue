@@ -4,18 +4,10 @@
       <div>
         <div class="mcp-tokens__title">访问令牌</div>
         <div class="mcp-tokens__subtitle">
-          用于本地 MCP 客户端通过 Bearer Token 访问已开启 MCP 的智能体，每个用户最多 10 个有效令牌。仅展示有效和最近 30 天内失效的令牌。
+          用于本地 MCP 客户端通过 Bearer Token 访问已开启 MCP 的智能体。
         </div>
       </div>
       <div class="mcp-tokens__actions">
-        <el-radio-group
-          v-if="isAdmin"
-          v-model="scope"
-          data-testid="scope-switch"
-        >
-          <el-radio-button value="mine">我的</el-radio-button>
-          <el-radio-button value="all">全部用户</el-radio-button>
-        </el-radio-group>
         <el-button :icon="Refresh" @click="loadTokens">刷新</el-button>
         <el-button
           type="primary"
@@ -37,16 +29,6 @@
       empty-text="暂无访问令牌"
     >
       <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-      <el-table-column
-        v-if="isAdmin && scope === 'all'"
-        label="用户"
-        min-width="150"
-        show-overflow-tooltip
-      >
-        <template #default="{ row }">
-          {{ row.display_name || row.user_id || '—' }}
-        </template>
-      </el-table-column>
       <el-table-column label="令牌前缀" width="150">
         <template #default="{ row }">
           <code class="token-prefix">{{ formatPrefix(row.token_prefix) }}</code>
@@ -57,9 +39,6 @@
       </el-table-column>
       <el-table-column label="最后使用" width="170">
         <template #default="{ row }">{{ row.last_used_at ? formatTime(row.last_used_at) : '尚未使用' }}</template>
-      </el-table-column>
-      <el-table-column label="过期时间" width="170">
-        <template #default="{ row }">{{ row.expires_at ? formatTime(row.expires_at) : '永不过期' }}</template>
       </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
@@ -89,23 +68,17 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
-import { useAuthStore } from '@/stores/auth'
 
 const STATUS_META = {
   active: { label: '有效', type: 'success' },
-  expired: { label: '已过期', type: 'warning' },
   revoked: { label: '已撤销', type: 'info' }
 }
 
-const authStore = useAuthStore()
-const isAdmin = computed(() => authStore.isAdmin)
-
-const scope = ref('mine')
 const tokens = ref([])
 const loading = ref(false)
 const revokingId = ref(null)
@@ -127,8 +100,7 @@ async function loadTokens() {
   const seq = ++loadSeq
   loading.value = true
   try {
-    const requestScope = isAdmin.value ? scope.value : 'mine'
-    const data = await dataagentApi.listMcpTokens(requestScope)
+    const data = await dataagentApi.listMcpTokens()
     if (seq !== loadSeq) return
     tokens.value = Array.isArray(data?.items) ? data.items : []
   } catch (error) {
@@ -174,16 +146,6 @@ async function confirmRevoke(row) {
     revokingId.value = null
   }
 }
-
-watch(scope, () => {
-  loadTokens()
-})
-
-watch(isAdmin, (admin) => {
-  if (!admin && scope.value !== 'mine') {
-    scope.value = 'mine'
-  }
-})
 
 onMounted(loadTokens)
 </script>

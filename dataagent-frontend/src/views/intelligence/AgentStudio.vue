@@ -72,7 +72,7 @@ const creating = ref(false)
 const isBuiltinAgent = (agent) => Boolean(agent?.is_builtin || agent?.is_default)
 
 // 全部可见（默认）不加标签，仅受限模式提示可见范围。
-const VISIBILITY_TAG_LABELS = { authenticated: '仅登录用户', selected: '指定用户' }
+const VISIBILITY_TAG_LABELS = { selected: '指定用户' }
 const visibilityTag = (agent) => VISIBILITY_TAG_LABELS[String(agent?.visibility_mode || '')] || ''
 
 const loadAgents = async () => {

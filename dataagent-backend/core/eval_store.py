@@ -53,12 +53,17 @@ class EvalStore:
     # ---- datasets ----
 
     def list_datasets(self, *, status: str = "") -> list[dict[str, Any]]:
-        sql = "SELECT * FROM eval_dataset"
+        sql = """
+            SELECT d.*,
+                   COALESCE(NULLIF(u.display_name, ''), NULLIF(u.username, ''), d.created_by) AS created_by
+            FROM eval_dataset d
+            LEFT JOIN da_user u ON u.id = d.user_id
+        """
         params: list[Any] = []
         if status:
-            sql += " WHERE status = %s"
+            sql += " WHERE d.status = %s"
             params.append(status)
-        sql += " ORDER BY updated_at DESC"
+        sql += " ORDER BY d.updated_at DESC"
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
@@ -67,24 +72,35 @@ class EvalStore:
     def get_dataset(self, dataset_id: str) -> dict[str, Any] | None:
         with self._conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM eval_dataset WHERE dataset_id = %s", (dataset_id,))
+                cur.execute(
+                    """
+                    SELECT d.*,
+                           COALESCE(NULLIF(u.display_name, ''), NULLIF(u.username, ''), d.created_by) AS created_by
+                    FROM eval_dataset d
+                    LEFT JOIN da_user u ON u.id = d.user_id
+                    WHERE d.dataset_id = %s
+                    """,
+                    (dataset_id,),
+                )
                 return cur.fetchone()
 
     def create_dataset(self, dataset_id: str, name: str, *, description: str = "",
                        category: str = "", suite_tags: list[str] | None = None,
                        case_count: int = 0, dataset_hash: str = "",
-                       created_by: str = "") -> dict[str, Any]:
+                       user_id: int | None = None, created_by: str = "") -> dict[str, Any]:
         now = _now_str()
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """INSERT INTO eval_dataset
                        (dataset_id, name, description, category, suite_tags,
-                        case_count, dataset_hash, created_by, created_at, updated_at)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        case_count, dataset_hash, user_id, created_by, created_at, updated_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (dataset_id, name, description, category,
                      json.dumps(suite_tags or [], ensure_ascii=False),
-                     case_count, dataset_hash, created_by, now, now),
+                     case_count, dataset_hash,
+                     int(user_id) if user_id is not None else None,
+                     created_by, now, now),
                 )
         return self.get_dataset(dataset_id)  # type: ignore[return-value]
 

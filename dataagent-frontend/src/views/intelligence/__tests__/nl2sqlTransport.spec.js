@@ -285,7 +285,7 @@ describe('it talks to the client that actually exists', () => {
   })
 
   it('reads a file through fetch so the runtime headers apply', async () => {
-    // A bare URL cannot carry the site and access-key headers, which is why
+    // A bare URL cannot carry the Widget headers, which is why
     // the chat surfaces already download via Blob rather than an <a href>.
     const api = makeApi()
     const transport = createNl2SqlTransport(api, TOPIC)

@@ -44,6 +44,8 @@ const mountRenderer = (tool, props = {}) => shallowMount(ToolOutputRenderer, {
   props: { tool, ...props },
   global: {
     stubs: {
+      // LimitedText renders the command and output text the assertions read.
+      LimitedText: false,
       ElScrollbar: {
         template: '<div class="el-scrollbar-stub"><slot /></div>'
       }
@@ -166,6 +168,8 @@ describe('ToolOutputRenderer', () => {
       output: 'processing...'
     })
 
+    // Traces start collapsed; the summary expands them.
+    await wrapper.find('.shell-trace-summary').trigger('click')
     expect(wrapper.text()).toContain('生成占比图表')
     expect(wrapper.text()).toContain('$ python scripts/build_chart_spec.py --chart-type pie')
     expect(wrapper.text()).toContain('processing...')
@@ -187,6 +191,8 @@ describe('ToolOutputRenderer', () => {
     })
 
     expect(wrapper.text()).toContain('已运行命令')
+    // An expanded trace stays open when the call settles; the summary collapses it.
+    await wrapper.find('.shell-trace-summary').trigger('click')
     expect(wrapper.find('.shell-trace-panel').exists()).toBe(false)
   })
 
@@ -225,6 +231,8 @@ describe('ToolOutputRenderer', () => {
 
     expect(wrapper.text()).toContain('正在读取')
     expect(wrapper.text()).toContain('/tmp/reference/00-skill-map.md')
+    // Traces start collapsed; the summary expands them.
+    await wrapper.find('.shell-trace-summary').trigger('click')
     expect(wrapper.find('.shell-trace-panel').exists()).toBe(true)
     expect(wrapper.text()).toContain('skill map')
 
@@ -242,6 +250,8 @@ describe('ToolOutputRenderer', () => {
     })
 
     expect(wrapper.text()).toContain('已读取')
+    // An expanded trace stays open when the call settles; the summary collapses it.
+    await wrapper.find('.shell-trace-summary').trigger('click')
     expect(wrapper.find('.shell-trace-panel').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('skill map')
   })
@@ -291,6 +301,9 @@ describe('ToolOutputRenderer', () => {
     })
 
     expect(wrapper.text()).toContain('正在读取')
+    expect(wrapper.find('.shell-trace-panel').exists()).toBe(false)
+    // Traces start collapsed; the summary expands them.
+    await wrapper.find('.shell-trace-summary').trigger('click')
     expect(wrapper.find('.shell-trace-panel').exists()).toBe(true)
   })
 
@@ -387,6 +400,8 @@ describe('ToolOutputRenderer', () => {
 
     expect(wrapper.text()).toContain('加载技能（dataagent-nl2sql）')
     expect(wrapper.text()).toContain('正在运行命令')
+    // Traces start collapsed; the summary expands them.
+    await wrapper.find('.shell-trace-summary').trigger('click')
     expect(wrapper.text()).toContain('$ python scripts/run_sql.py --question trend')
   })
 
@@ -429,7 +444,7 @@ describe('ToolOutputRenderer', () => {
     expect(wrapper.find('.tool-markdown-toggle').text()).toContain('收起')
   })
 
-  it('collapses generic tool output after completion and auto-expands while running', async () => {
+  it('expands generic tool output on demand while running and collapses on demand after completion', async () => {
     const wrapper = mountRenderer({
       name: 'SQLQuery',
       status: 'streaming',
@@ -441,6 +456,8 @@ describe('ToolOutputRenderer', () => {
       }
     })
 
+    expect(wrapper.find('.tool-output-panel').exists()).toBe(false)
+    await wrapper.find('.tool-output-head').trigger('click')
     expect(wrapper.find('.tool-output-panel').exists()).toBe(true)
     expect(wrapper.find('.tool-output-body-scroll').exists()).toBe(true)
 
@@ -457,6 +474,7 @@ describe('ToolOutputRenderer', () => {
       }
     })
 
+    await wrapper.find('.tool-output-head').trigger('click')
     expect(wrapper.find('.tool-output-panel').exists()).toBe(false)
     expect(wrapper.find('.tool-output-head.is-interactive').exists()).toBe(true)
   })
@@ -564,6 +582,7 @@ describe('ToolOutputRenderer', () => {
         duration_ms: 12
       }
     })
+    await wrapper.find('.tool-output-head').trigger('click')
 
     const sqlPanel = wrapper.findComponent({ name: 'SqlCodePanel' })
     expect(sqlPanel.exists()).toBe(true)
@@ -594,6 +613,8 @@ describe('ToolOutputRenderer', () => {
       },
       { fileUrlResolver: resolver }
     )
+    // An export renders as a structured card (not a flat trace), so its download link is reachable.
+    await wrapper.find('.tool-output-head').trigger('click')
 
     const link = wrapper.find('.tool-export-download')
     expect(link.exists()).toBe(true)

@@ -24,9 +24,6 @@ logger = logging.getLogger(__name__)
 
 DIGEST_AGENT_ID = "agent_experience_digest"
 DIGEST_SKILL = "experience-digest"
-# Digest conversations belong to this user: no ordinary user lists them, and
-# admins see every main-site conversation anyway.
-DIGEST_USER_ID = "system:experience-digest"
 CANDIDATES_FILE = "output/experience_candidates.json"
 
 MAX_TASKS_PER_DIGEST = 30
@@ -55,7 +52,7 @@ def digest_agent_payload() -> dict[str, Any]:
         "is_default": False,
         "is_builtin": True,
         # Admins always see every agent; nobody else needs this one.
-        "visibility": {"mode": "selected", "allowed_users": [], "allowed_groups": []},
+        "visibility": {"mode": "selected"},
     }
 
 
@@ -68,6 +65,13 @@ def digest_title(agent_name: str, agent_id: str, day: date) -> str:
 
 def _row_to_item(row: dict[str, Any]) -> dict[str, Any]:
     source = _safe_json_load(row.get("source_task_ids_json"))
+    raw_uid = row.get("user_id")
+    user_id = int(raw_uid) if raw_uid is not None else None
+    resolved_updater = (
+        str(row.get("user_display_name") or "").strip()
+        or str(row.get("user_username") or "").strip()
+        or str(row.get("updated_by") or "")
+    )
     return {
         "experience_id": str(row["experience_id"]),
         "kind": str(row["kind"]),
@@ -80,7 +84,8 @@ def _row_to_item(row: dict[str, Any]) -> dict[str, Any]:
         "source_task_ids": [str(item) for item in source] if isinstance(source, list) else [],
         "digest_topic_id": str(row.get("digest_topic_id") or "") or None,
         "status": str(row.get("status") or "pending"),
-        "updated_by": str(row.get("updated_by") or ""),
+        "user_id": user_id,
+        "updated_by": resolved_updater,
         "created_at": _to_iso(row.get("created_at")),
         "updated_at": _to_iso(row.get("updated_at")),
     }
@@ -95,19 +100,19 @@ def _connect():
 def list_experiences(*, kind: str = "", keyword: str = "", status: str = "", scope: str = "", agent_id: str = "", page: int = 1, page_size: int = 20) -> dict[str, Any]:
     where, params = ["1 = 1"], []
     if kind:
-        where.append("kind = %s")
+        where.append("e.kind = %s")
         params.append(kind)
     if keyword:
-        where.append("(LOCATE(%s, title) > 0 OR LOCATE(%s, when_text) > 0)")
+        where.append("(LOCATE(%s, e.title) > 0 OR LOCATE(%s, e.when_text) > 0)")
         params.extend([keyword, keyword])
     if status:
-        where.append("status = %s")
+        where.append("e.status = %s")
         params.append(status)
     if scope:
-        where.append("scope = %s")
+        where.append("e.scope = %s")
         params.append(scope)
     if agent_id:
-        where.append("agent_id = %s")
+        where.append("e.agent_id = %s")
         params.append(agent_id)
     page = max(1, int(page or 1))
     page_size = min(100, max(1, int(page_size or 20)))
@@ -115,10 +120,17 @@ def list_experiences(*, kind: str = "", keyword: str = "", status: str = "", sco
     conn = _connect()
     try:
         with conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) AS n FROM da_agent_experience WHERE {clause}", params)
+            cur.execute(f"SELECT COUNT(*) AS n FROM da_agent_experience e WHERE {clause}", params)
             total = int((cur.fetchone() or {}).get("n") or 0)
             cur.execute(
-                f"SELECT * FROM da_agent_experience WHERE {clause} ORDER BY updated_at DESC, experience_id DESC LIMIT %s OFFSET %s",
+                f"""
+                SELECT e.*, u.username AS user_username, u.display_name AS user_display_name
+                FROM da_agent_experience e
+                LEFT JOIN da_user u ON u.id = e.user_id
+                WHERE {clause}
+                ORDER BY e.updated_at DESC, e.experience_id DESC
+                LIMIT %s OFFSET %s
+                """,
                 [*params, page_size, (page - 1) * page_size],
             )
             rows = cur.fetchall() or []
@@ -166,7 +178,15 @@ def get_experience(experience_id: str) -> dict[str, Any] | None:
     conn = _connect()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM da_agent_experience WHERE experience_id = %s", (experience_id,))
+            cur.execute(
+                """
+                SELECT e.*, u.username AS user_username, u.display_name AS user_display_name
+                FROM da_agent_experience e
+                LEFT JOIN da_user u ON u.id = e.user_id
+                WHERE e.experience_id = %s
+                """,
+                (experience_id,),
+            )
             row = cur.fetchone()
     finally:
         conn.close()
@@ -210,8 +230,9 @@ def _check_inject_mode(mode: str) -> str:
 
 
 def create_experience(*, kind: str, title: str, when_text: str, body: str, scope: str,
-                      agent_id: str | None, updated_by: str, inject_mode: str = "on_demand",
-                      status: str = "active", source_task_ids: list[str] | None = None,
+                      agent_id: str | None, user_id: int | None = None, updated_by: str = "",
+                      inject_mode: str = "on_demand", status: str = "active",
+                      source_task_ids: list[str] | None = None,
                       digest_topic_id: str | None = None) -> dict[str, Any]:
     scope, agent_id = _check_scope(scope, agent_id)
     _check_status(kind, status)
@@ -227,11 +248,12 @@ def create_experience(*, kind: str, title: str, when_text: str, body: str, scope
                 """
                 INSERT INTO da_agent_experience
                     (experience_id, kind, title, when_text, inject_mode, scope, agent_id, content,
-                     source_task_ids_json, digest_topic_id, status, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     source_task_ids_json, digest_topic_id, status, user_id, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (experience_id, kind, title, when_text, inject_mode, scope, agent_id, body,
-                 json.dumps(source_task_ids or [], ensure_ascii=False), digest_topic_id, status, updated_by),
+                 json.dumps(source_task_ids or [], ensure_ascii=False), digest_topic_id, status,
+                 int(user_id) if user_id is not None else None, updated_by),
             )
         conn.commit()
     finally:
@@ -239,7 +261,7 @@ def create_experience(*, kind: str, title: str, when_text: str, body: str, scope
     return get_experience(experience_id) or {}
 
 
-def update_experience(experience_id: str, *, updated_by: str, **changes: Any) -> dict[str, Any] | None:
+def update_experience(experience_id: str, *, user_id: int | None = None, updated_by: str = "", **changes: Any) -> dict[str, Any] | None:
     current = get_experience(experience_id)
     if not current:
         return None
@@ -260,10 +282,11 @@ def update_experience(experience_id: str, *, updated_by: str, **changes: Any) ->
                 """
                 UPDATE da_agent_experience
                 SET status = %s, scope = %s, agent_id = %s, content = %s, title = %s,
-                    when_text = %s, inject_mode = %s, updated_by = %s, updated_at = CURRENT_TIMESTAMP
+                    when_text = %s, inject_mode = %s, user_id = %s, updated_by = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE experience_id = %s
                 """,
-                (next_item["status"], scope, agent_id, body, title, when_text, inject_mode, updated_by, experience_id),
+                (next_item["status"], scope, agent_id, body, title, when_text, inject_mode,
+                 int(user_id) if user_id is not None else None, updated_by, experience_id),
             )
         conn.commit()
     finally:
@@ -419,12 +442,12 @@ def build_session_records(agent_id: str, day: date) -> tuple[str, int]:
                   AND k.task_status IN ('finished', 'error')
                   AND k.finished_at >= %s AND k.finished_at < %s
                   AND t.is_agent_preview = 0
-                  AND t.auth_user_id <> %s
+                  AND t.agent_id <> %s
                 ORDER BY (COALESCE(a.feedback, '') = 'dislike') DESC, (k.task_status = 'error') DESC,
                          (COALESCE(a.feedback, '') = 'like') DESC, k.finished_at DESC
                 LIMIT %s
                 """,
-                (agent_id, start, end, DIGEST_USER_ID, MAX_TASKS_PER_DIGEST),
+                (agent_id, start, end, DIGEST_AGENT_ID, MAX_TASKS_PER_DIGEST),
             )
             tasks = cur.fetchall() or []
     finally:
@@ -471,9 +494,9 @@ def agents_with_tasks(day: date) -> list[str]:
                 SELECT DISTINCT COALESCE(NULLIF(k.agent_id, ''), t.agent_id) AS agent_id
                 FROM da_agent_task k JOIN da_agent_topic t ON t.topic_id = k.topic_id
                 WHERE k.task_status IN ('finished', 'error') AND k.finished_at >= %s AND k.finished_at < %s
-                  AND t.is_agent_preview = 0 AND t.auth_user_id <> %s
+                  AND t.is_agent_preview = 0 AND t.agent_id <> %s
                 """,
-                (start, start + timedelta(days=1), DIGEST_USER_ID),
+                (start, start + timedelta(days=1), DIGEST_AGENT_ID),
             )
             return [str(row["agent_id"]) for row in cur.fetchall() or [] if row.get("agent_id") and row["agent_id"] != DIGEST_AGENT_ID]
     finally:
@@ -484,7 +507,10 @@ def digest_exists(title: str) -> bool:
     conn = _connect()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM da_agent_topic WHERE auth_user_id = %s AND title = %s LIMIT 1", (DIGEST_USER_ID, title))
+            cur.execute(
+                "SELECT 1 FROM da_agent_topic WHERE agent_id = %s AND user_id IS NULL AND title = %s LIMIT 1",
+                (DIGEST_AGENT_ID, title),
+            )
             return cur.fetchone() is not None
     finally:
         conn.close()
@@ -525,7 +551,7 @@ async def _start_digest(store, digest_agent: dict[str, Any], agent_id: str, day:
     if not count:
         return None
     topic = store.create_topic(title=title, agent_snapshot=digest_agent,
-                               context={"source": "web", "auth_user_id": DIGEST_USER_ID})
+                               context={"source": "web", "user_id": None, "system_digest": True})
     filename = f"sessions-{day.isoformat()}.md"
     save_upload(topic["topic_id"], filename, records.encode("utf-8"))
     await submit_message_task(
@@ -582,7 +608,7 @@ def collect_candidates(topic_id: str, task_id: str) -> int:
         try:
             create_experience(
                 kind="memory", title=item.get("title"), when_text=item.get("when"), body=content,
-                scope="agent", agent_id=target, updated_by=DIGEST_USER_ID, inject_mode="on_demand",
+                scope="agent", agent_id=target, user_id=None, updated_by="", inject_mode="on_demand",
                 status="pending", digest_topic_id=topic_id,
                 source_task_ids=[str(s) for s in sources][:20] if isinstance(sources, list) else [],
             )

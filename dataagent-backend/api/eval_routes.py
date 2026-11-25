@@ -8,7 +8,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
-from core.auth import require_admin
+from core.accounts import current_user_id, require_admin
 from core.eval_contract import canonical_bytes, dataset_hash, parse_jsonl, validate
 from core.eval_dataset_service import export_dataset, import_dataset
 from core.eval_store import get_eval_store
@@ -40,7 +40,7 @@ async def list_datasets(status: str = Query("", description="Filter by status"))
 
 
 @router.post("/datasets", response_model=EvalDatasetSummary, status_code=201)
-async def create_dataset(request: EvalDatasetCreateRequest):
+async def create_dataset(request: EvalDatasetCreateRequest, user_id: int = Depends(current_user_id)):
     store = get_eval_store()
     dataset_id = f"ds-{uuid.uuid4().hex[:12]}"
     return store.create_dataset(
@@ -49,6 +49,7 @@ async def create_dataset(request: EvalDatasetCreateRequest):
         description=request.description,
         category=request.category,
         suite_tags=request.suite_tags,
+        user_id=user_id,
     )
 
 
@@ -78,11 +79,11 @@ async def delete_dataset(dataset_id: str):
 # ---- Dataset import/export ----
 
 @router.post("/datasets/imports", response_model=EvalImportResponse)
-async def import_dataset_jsonl(file: UploadFile = File(...)):
+async def import_dataset_jsonl(file: UploadFile = File(...), user_id: int = Depends(current_user_id)):
     content = await file.read()
     name = (file.filename or "imported").removesuffix(".jsonl").removesuffix(".json")
     try:
-        ds = import_dataset(name, content)
+        ds = import_dataset(name, content, user_id=user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return EvalImportResponse(

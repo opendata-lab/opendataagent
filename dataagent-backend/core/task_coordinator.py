@@ -12,6 +12,7 @@ from typing import Any
 import redis.asyncio as redis
 
 from config import get_settings
+from core.accounts import AgentAccessDeniedError, get_account_store, require_agent_access
 from core.experience import DIGEST_AGENT_ID, candidates_changed, collect_candidates, db_now, run_daily_digest
 from core.logging_config import task_id_var, topic_id_var
 from core.task_control import PARKED_TASK_STATUSES, CancelReason
@@ -23,10 +24,30 @@ from core.topic_task_store import TopicTaskStore, get_topic_task_store
 logger = logging.getLogger(__name__)
 
 
-def _execution_user_id(topic: dict) -> str:
-    # DataAgent 自己登录的会话用 auth_user_id；宿主内嵌的 widget 会话没有 DataAgent 登录，
-    # 采信宿主上报的 external_user_id（宿主负责它是 local:<用户名> 或 <来源>:<sub>）。
-    return str(topic.get("auth_user_id") or topic.get("external_user_id") or "")
+def _execution_user_id(topic: dict) -> int | None:
+    raw = (topic or {}).get("user_id")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return None
+
+
+def _verify_topic_execution_access(topic: dict, agent_id: str) -> int | None:
+    """Enforce active account + agent access for user-owned topics before execution."""
+    resolved_agent_id = str(agent_id or (topic or {}).get("agent_id") or "").strip()
+    uid = _execution_user_id(topic)
+    if resolved_agent_id == DIGEST_AGENT_ID and uid is None:
+        return None
+    if uid is None:
+        raise AgentAccessDeniedError("会话缺少有效用户归属，无法执行任务")
+    if (topic or {}).get("is_agent_preview"):
+        # Draft previews run the topic's draft snapshot, which may have no
+        # published profile yet; the owner must still be able to manage agents.
+        user = get_account_store().get_user(uid)
+        if user is None or not user.is_active or not user.is_admin:
+            raise AgentAccessDeniedError("账号不存在、已停用或无助手管理权限")
+        return uid
+    require_agent_access(uid, resolved_agent_id)
+    return uid
 
 
 class TaskCoordinator:
@@ -195,6 +216,8 @@ class TaskCoordinator:
                     return
 
                 topic_id = str(task.get("topic_id") or "")
+                topic = self.store.get_topic(topic_id) or {}
+                exec_user_id = _verify_topic_execution_access(topic, str(task.get("agent_id") or ""))
                 logger.info(
                     "task.run.start task_id=%s topic_id=%s provider=%s model=%s agent_id=%s timeout=%s sql_read_timeout=%s",
                     task_id,
@@ -230,7 +253,7 @@ class TaskCoordinator:
                         sql_read_timeout_seconds=int(task.get("sql_read_timeout_seconds") or 0),
                         sql_write_timeout_seconds=int(task.get("sql_write_timeout_seconds") or 0),
                         agent_snapshot=task.get("agent_snapshot"),
-                        auth_user_id=_execution_user_id(self.store.get_topic(topic_id) or {}),
+                        user_id=exec_user_id,
                         # Deliberately read the topic's current permission mode at
                         # execution time (latest-mode-wins), not a submission-time
                         # snapshot: a single-user topic should honor the user's most
@@ -590,6 +613,8 @@ class TaskCoordinator:
                 fired_at=fired_at,
                 next_run_at=next_run_at,
             )
+            schedule_topic = self.store.get_topic(str(schedule.get("topic_id") or "")) or {}
+            _verify_topic_execution_access(schedule_topic, str(schedule_topic.get("agent_id") or ""))
             logger.info(
                 "task.schedule.queue_created schedule_id=%s schedule_log_id=%s queue_id=%s next_run_at=%s",
                 schedule_id,

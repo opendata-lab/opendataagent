@@ -12,7 +12,9 @@ from core.eval_contract import canonical_bytes, dataset_hash, parse_jsonl, valid
 from core.eval_store import get_eval_store
 
 
-def import_dataset(name: str, data: bytes, *, created_by: str = "") -> dict[str, Any]:
+def import_dataset(
+    name: str, data: bytes, *, user_id: int | None = None, created_by: str = ""
+) -> dict[str, Any]:
     """Parse JSONL bytes, validate, persist dataset + cases. Returns dataset row."""
     rows = parse_jsonl(data)
     if not rows:
@@ -28,6 +30,7 @@ def import_dataset(name: str, data: bytes, *, created_by: str = "") -> dict[str,
         name=name,
         case_count=result["case_count"],
         dataset_hash=result["dataset_hash"],
+        user_id=user_id,
         created_by=created_by,
     )
     store.replace_cases(dataset_id, rows, result["dataset_hash"])

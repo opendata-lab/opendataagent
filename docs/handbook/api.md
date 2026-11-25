@@ -1,6 +1,24 @@
 # 会话 API
 
-Base URL：`http://<DataAgent 主机>:8900/api/v1/nl2sql`。启用认证后，请求需带登录会话（见部署指南的“登录配置”）。
+Base URL：`http://<DataAgent 主机>:8900/api/v1/nl2sql`。DataAgent 始终启用统一账号认证：平台业务接口需先调用 `POST /auth/login` 获取 `da_session` Cookie（或携带 `Authorization: Bearer <session_jwt>`）；仅 `/health`、`/auth/config`、`/auth/login`、`/auth/logout` 与 OAuth 入口可未登录访问。
+
+Widget 接入（仅限可信内网，不设访问密钥）通过请求头 `X-DataAgent-Client: widget`、`X-DataAgent-Website-Id: <website-id>` 与 `X-DataAgent-User-Id: <纯用户名>` 访问会话运行和助手目录接口：站点须已在管理后台「Widget 接入白名单」登记，且请求不带 `Origin` 头（服务端 BFF 调用）或 `Origin` 位于该站点的 `allowed_origins` 中。未登记站点或未放行 `Origin` 返回 `403`，缺少用户名返回 `401 WIDGET_LOGIN_REQUIRED`。Widget 凭据不能访问 `/api/v1/dataagent/*` 账号/角色/授权/令牌或管理与评测路由（返回 `403`）。
+
+## 账号、角色、资料与助手授权（`/api/v1/dataagent`）
+
+| 方法 | 路径 | 登录要求 | 说明 |
+| --- | --- | --- | --- |
+| `GET` / `PUT` | `/profile` | 平台登录 | 查看用户名、显示名、登录方式（`password` / `oauth`）与角色，或修改显示名 |
+| `PUT` | `/profile/password` | 平台登录 | 修改本人密码 |
+| `GET` / `POST` | `/users` | 管理员 | 列出 / 新建用户（使用系统默认初始密码） |
+| `GET` / `PUT` | `/users/{user_id}` | 管理员 | 查看 / 编辑用户、角色或启用停用（不提供物理删除） |
+| `POST` | `/users/{user_id}/reset-password` | 管理员 | 将普通用户密码恢复为系统默认初始密码 |
+| `GET` / `POST` / `PUT` / `DELETE` | `/roles[/{role_id}]` | 管理员 | 列出 / 管理自定义角色（内置 `admin` / `user` 不可删） |
+| `GET` / `PUT` | `/roles/{role_id}/users` | 管理员 | 查看 / 批量设置角色成员 |
+| `PUT` | `/roles/{role_id}/agents` | 管理员 | 批量设置该角色可访问的助手列表 |
+| `GET` / `PUT` | `/agents/{agent_id}/grants` | 管理员 | 读取 / 覆盖指定助手的授权用户与角色（独立于草稿保存与发布） |
+
+管理员会话审计使用 `GET /api/v1/nl2sql-admin/topics`。可按 `user_id` 和 `source` 筛选，用户下拉框使用 `GET /api/v1/dataagent/users?keyword=…&page=1&page_size=100`。
 
 ## 健康检查
 
@@ -73,19 +91,19 @@ POST /tasks/deliver-message
 
 登录 DataAgent 后，从用户菜单「访问令牌」新建令牌并复制。进入已开启「MCP 访问」的助手详情页「复制配置」，将令牌填入客户端配置的 `headers.Authorization`，值为 `Bearer dak_…`。客户端通过 Streamable HTTP 连接 `<scheme>://<host>/api/v1/remote-agents/<agent_id>/mcp`，协议和域名与打开详情页时一致。
 
-每次请求都会检查令牌状态和助手可见性。令牌缺失、无效、过期或已撤销时，返回 `401` 和 `WWW-Authenticate: Bearer realm="DataAgent MCP"`。令牌过期后重新申请，并更新客户端配置。
+每次请求都会检查令牌状态和助手可见性。令牌缺失、无效或已撤销时，返回 `401` 和 `WWW-Authenticate: Bearer realm="DataAgent MCP"`。个人令牌无有效期和数量上限。
 
 ### 管理 MCP 访问令牌
 
-以下接口需要网页登录会话。创建和撤销还需要与页面一致的 `Origin`（协议、主机和端口）。平台登录关闭时返回 `404`。
+以下接口需要网页登录会话。创建和撤销还需要与页面一致的 `Origin`（协议、主机和端口）。列表和撤销只作用于当前账号的令牌。
 
 | 接口 | 请求与响应 |
 | --- | --- |
-| `GET /api/v1/dataagent/mcp-tokens?scope=mine\|all` | 返回 `{items: [...]}`，按创建时间倒序列出有效和最近 30 天内失效的令牌。默认 `mine`，`all` 仅管理员可用。 |
-| `POST /api/v1/dataagent/mcp-tokens` | 提交 `{name, expires_in_days}`。名称必填，最长 64 字，有效期为 30、90、180 天或 `null`（永不过期），默认 90 天。成功返回 `201` 和 `{item, token}`，完整令牌仅在此时显示。名称或有效期无效返回 `422`，每人已有 10 个有效令牌时返回 `409`。 |
-| `DELETE /api/v1/dataagent/mcp-tokens/{token_id}` | 本人或管理员可撤销，返回 `200` 和 `{item}`。再次撤销返回同一记录。 |
+| `GET /api/v1/dataagent/mcp-tokens` | 返回 `{items: [...]}`，按创建时间倒序列出本人的有效令牌及最近 30 天内撤销的令牌。 |
+| `POST /api/v1/dataagent/mcp-tokens` | 提交 `{name}`。名称必填，最长 64 字。成功返回 `201` 和 `{item, token}`，完整令牌仅在此时显示。名称无效返回 `422`。 |
+| `DELETE /api/v1/dataagent/mcp-tokens/{token_id}` | 撤销本人的令牌，返回 `200` 和 `{item}`。再次撤销返回同一记录。令牌不属于当前账号时返回 `404`。 |
 
-令牌记录字段为 `id`、`name`、`token_prefix`、`user_id`、`display_name`、`created_at`、`last_used_at`、`expires_at`、`revoked_at`、`status`。时间为 ISO 8601 UTC，状态为 `active`、`expired` 或 `revoked`。
+令牌记录字段为 `id`、`name`、`token_prefix`、`user_id`、`created_at`、`last_used_at`、`revoked_at`、`status`。时间为 ISO 8601 UTC，状态为 `active` 或 `revoked`。
 
 ### 助手工具
 

@@ -18,7 +18,7 @@ DataAgent 提供嵌入式智能问数 Widget，通过单个 `<script>` 标签即
 ></script>
 ```
 
-Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入由父应用提供当前用户 ID；匿名访问默认关闭，公开演示需要同时在站点设置和脚本中开启。
+Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入由父应用提供当前登录的纯用户名 `data-user-id`；DataAgent 不支持匿名访客，缺少用户名时显示登录提示。
 
 ## 配置属性
 
@@ -37,16 +37,20 @@ Widget 会自动初始化并在页面右下角显示悬浮按钮。生产接入�
 | `data-project-name` | 否 | `智能问数` | 面板标题栏显示名称 |
 | `data-project-color` | 否 | `#4A90A4` | 主题色（十六进制） |
 | `data-container-id` | 否 | — | 内嵌模式下容器元素 ID（内嵌模式必填） |
-| `data-user-id` | 否 | — | 宿主上报的当前用户，用于关联会话和历史记录，并作为 `X-Agent-User-Id` 上报给 MCP（OpenDataWorks 只记审计，不据此授权）；宿主需保证格式为 `local:<用户名>` 或 `<来源>:<sub>` |
-| `data-login-url` | 否 | — | 未提供用户身份时的登录跳转地址 |
-| `data-allow-anonymous` | 否 | `false` | 客户端匿名开关，还需在管理端为该站点开启匿名访问 |
+| `data-user-id` | 否 | — | 宿主页面当前登录的纯用户名（不含 `local:` 等前缀）；为空时 Widget 显示登录提示，后端返回 `401 WIDGET_LOGIN_REQUIRED` |
+| `data-login-url` | 否 | — | 未登录时的登录跳转地址 |
 | `data-fullscreen-url` | 否 | — | 全屏按钮打开的完整页面地址，支持宿主相对路由和 HTTP(S) 地址 |
 
 ## 与平台继续同一条会话
 
-如果 Widget 和 DataAgent 平台通过同一浏览器来源访问同一个 DataAgent 后端，并启用了平台登录，可配置 `data-use-platform-session="true"`（JavaScript API 使用 `usePlatformSession: true`）。API 使用平台登录会话，不需要传 `data-user-id`；没有有效登录时提示登录。配置现有的 Widget 站点白名单，并把 `data-api-base-url` 指向同源 API。独立登录的第三方站点继续使用原接入方式。
+DataAgent 始终要求已验证的用户账号，不支持匿名访客或同源复用平台登录，且不再使用站点访问密钥。在管理后台「设置 → Widget 接入」登记站点 `Website ID` 与浏览器允许来源（`allowed_origins`）：
 
-平台和 Widget 历史会显示当前账号有权继续的会话。悬浮 Widget 默认可以全屏打开平台 Chat，并带上当前助手和会话；自定义 `onFullscreen` 仍可覆盖该动作。现有匿名历史和原先仅靠宿主用户 ID 的历史继续按原方式访问，它们不会自动合并到平台账户。
+- **浏览器直连宿主（如 OpenDataWorks 门户）**：门户来源须在站点的 `allowed_origins` 中，前端直接通过 `data-user-id`（请求头 `X-DataAgent-User-Id`）传递当前登录的纯用户名。
+- **服务端代理宿主（如 OntoFoundry BFF）**：后端请求不带 `Origin` 头，只需登记站点 `Website ID`，并在 `X-DataAgent-User-Id` 中发送会话发起人的纯用户名。
+
+DataAgent 将 `X-DataAgent-User-Id` 直接对应到同名平台账号（含 `admin`），首次访问自动绑定或注册普通账号。Widget 凭据仅限运行和助手目录接口，不能访问账号、管理、评测和 MCP 令牌等平台接口（返回 `403`）。未登记站点或未放行 `Origin` 返回 `403`，缺少用户时返回 `401 WIDGET_LOGIN_REQUIRED`。**安全边界**：无密钥模式下任何能访问 DataAgent API 的调用方都可对已登记站点宣称任意用户名，仅限可信内网使用，并确保后端端口不对外暴露。
+
+平台网页、Widget 与单助手 MCP 共享同一整数 `da_user.id`，历史会话可跨入口连续查看与续聊；悬浮 Widget 默认可全屏打开平台 Chat 并带上当前助手与会话。每个会话只属于发起它的用户，不支持多人共享会话；历史上按共享会话键创建、没有 `user_id` 的旧话题仅管理员可在审计中查看。
 
 ## 显示模式
 
@@ -312,15 +316,14 @@ Widget 请求会携带以下特殊请求头：
 
 - `X-DataAgent-Client: widget`
 - `X-DataAgent-Website-Id: <website-id>`
-- `X-DataAgent-User-Id: <user-id>` 或 `X-DataAgent-Visitor-Id: <visitor-id>`
+- `X-DataAgent-User-Id: <纯用户名>`（每个请求必带，不含 `local:` 等前缀）
 
-允许接入的站点白名单在管理后台「智能问数 → Widget 接入」设置页配置，确保只有受信任的站点可以接入：
+允许接入的站点白名单在管理后台「设置 → Widget 接入」配置（不再使用访问密钥）：
 
-- **Website ID**：与嵌入脚本的 `data-website-id` 完全一致
-- **允许来源（Origin）**：嵌入页面的来源，例如 `https://app.example.com`；填 `*` 放行所有来源（仅建议测试环境）
-- **项目名称 / 主题色**：展示在 Widget 上的标题与配色
+- **Website ID**：与嵌入脚本的 `data-website-id`（或 `X-DataAgent-Website-Id`）完全一致
+- **允许来源（Origin）**：浏览器直连宿主的页面来源列表（如 `https://portal.example.com`）；服务端代理调用不带 `Origin` 头，留空也可放行
 
-白名单持久化在 `da_agent_settings`，保存后即时生效、无需重启服务（不再使用环境变量配置）。
+Widget 标题和配色由宿主的嵌入参数控制。站点配置持久化在 `da_agent_settings`，保存后即时生效、无需重启服务（不再使用环境变量配置）。
 
 ## 浏览器兼容性
 

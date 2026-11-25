@@ -2,25 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import hashlib
-import hmac
 import json
 from typing import Any, AsyncIterator
 
 import anyio
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.topic_file_response import topic_file_response
 from config import get_settings
-from core.agent_profile_service import DEFAULT_AGENT_ID, build_agent_snapshot, get_agent_profile
+from core.accounts import (
+    AccountContext,
+    AgentAccessDeniedError,
+    User,
+    current_account_context,
+    require_agent_access,
+)
+from core.agent_profile_service import DEFAULT_AGENT_ID, build_agent_snapshot
 from core.provider_runtime import normalize_api_format
 from core import live_events
 from core.task_status import TERMINAL_TASK_STATUSES
-from core.agent_visibility import agent_visible_to
-from core.auth import AuthIdentity, is_auth_enabled, resolve_identity
 from core.followup_suggestions import generate_followup_suggestions
-from core.skill_admin_service import current_settings_payload, resolved_chat_settings_payload
+from core.skill_admin_service import resolved_chat_settings_payload
 from core.permission_gate import normalize_permission_decision
 from core.task_coordinator import get_task_coordinator
 from core.task_submission_service import compute_next_run_at, current_utc_naive, submit_message_task
@@ -81,13 +84,6 @@ def _encode_sse(event: dict[str, Any]) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
-def _clean_header(value: str | None, max_length: int = 255) -> str:
-    text = str(value or "").strip()
-    if len(text) > max_length:
-        return text[:max_length]
-    return text
-
-
 def _message_answer_text(message: dict[str, Any]) -> str:
     blocks = message.get("blocks")
     if isinstance(blocks, list):
@@ -134,140 +130,6 @@ def _previous_user_question(messages: list[dict[str, Any]], assistant_message: d
     return ""
 
 
-def _allowed_widget_sites() -> list[dict]:
-    # The widget allowlist is managed from the settings page and persisted in
-    # da_agent_settings. `current_settings_payload` returns the effective
-    # whitelist; there is no env-var source.
-    try:
-        payload = current_settings_payload()
-    except Exception:
-        logger.warning("Failed to load widget allowed sites from settings store", exc_info=True)
-        payload = {}
-    sites = payload.get("widget_allowed_sites")
-    if not isinstance(sites, list):
-        return []
-    return [item for item in sites if isinstance(item, dict)]
-
-
-def _origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
-    normalized_origin = str(origin or "").strip().rstrip("/")
-    normalized_allowed = [str(item or "").strip().rstrip("/") for item in allowed_origins]
-    if "*" in normalized_allowed:
-        return True
-    if not normalized_origin:
-        # 同源请求 / 非浏览器客户端不会发送 Origin 头，放行
-        return True
-    return normalized_origin in normalized_allowed
-
-
-def _request_context(request: Request) -> dict[str, str]:
-    client = _clean_header(request.headers.get("X-DataAgent-Client"), 32).lower()
-    if client != "widget":
-        # 两个现有前端均消费 DataAgent 自己验证的会话，不从前端身份头取用户。
-        if is_auth_enabled():
-            identity = resolve_identity(request)
-            if identity is None:
-                raise HTTPException(status_code=401, detail="Not authenticated")
-            return {
-                "source": "web",
-                "website_id": "",
-                "external_user_id": "",
-                "visitor_id": "",
-                "auth_user_id": identity.user_id,
-                "auth_display_name": identity.display_name,
-                "auth_role": identity.role,
-            }
-        return {
-            "source": "web",
-            "website_id": "",
-            "external_user_id": "",
-            "visitor_id": "",
-        }
-
-    website_id = _clean_header(request.headers.get("X-DataAgent-Website-Id"), 128)
-    external_user_id = _clean_header(request.headers.get("X-DataAgent-User-Id"), 255)
-    visitor_id = _clean_header(request.headers.get("X-DataAgent-Visitor-Id"), 128)
-    if not website_id:
-        raise HTTPException(status_code=400, detail="X-DataAgent-Website-Id is required")
-
-    matched_site = None
-    for site in _allowed_widget_sites():
-        if str(site.get("website_id") or "").strip() == website_id:
-            matched_site = site
-            break
-    if not matched_site:
-        allowed_ids = [str(s.get("website_id") or "") for s in _allowed_widget_sites()]
-        logger.warning(f"Widget site rejected: website_id={website_id!r} allowed={allowed_ids!r}")
-        raise HTTPException(status_code=403, detail="Widget site is not allowed")
-
-    # Server-side callers authenticate with a key instead of an Origin. A browser
-    # always sends Origin; a backend never does, and `_origin_allowed` lets an
-    # absent Origin through — so without this branch any process that can reach
-    # DataAgent and guesses a website_id could open sessions.
-    server_side = matched_site.get("server_side")
-    if isinstance(server_side, dict) and server_side.get("enabled") is True:
-        expected = str(server_side.get("access_key_hash") or "")
-        presented = _clean_header(request.headers.get("X-DataAgent-Access-Key"), 128)
-        if not expected or not presented or not hmac.compare_digest(
-            hashlib.sha256(presented.encode("utf-8")).hexdigest(), expected
-        ):
-            logger.warning(f"Widget access key rejected: website_id={website_id!r}")
-            raise HTTPException(status_code=403, detail="Widget access key is invalid")
-        # Origin is deliberately not checked here: the caller has proven itself
-        # with a secret, and enforcing an allowlist it structurally cannot
-        # satisfy would only look like security.
-    else:
-        allowed_origins = matched_site.get("allowed_origins") or []
-        if not isinstance(allowed_origins, list):
-            logger.warning(f"Widget config error: allowed_origins is not a list: {allowed_origins!r}")
-            allowed_origins = []
-        req_origin = request.headers.get("Origin") or ""
-        if not _origin_allowed(req_origin, allowed_origins):
-            logger.warning(f"Widget origin rejected: origin={req_origin!r} allowed={allowed_origins!r}")
-            raise HTTPException(status_code=403, detail="Widget origin is not allowed")
-
-    if request.headers.get("X-DataAgent-Widget-Identity") == "platform":
-        origin = request.headers.get("Origin", "").rstrip("/")
-        fetch_site = request.headers.get("Sec-Fetch-Site", "")
-        request_origin = f"{request.url.scheme}://{request.url.netloc}"
-        if (isinstance(server_side, dict) and server_side.get("enabled") is True) or (
-            fetch_site not in {"", "same-origin", "none"}
-            or (origin and fetch_site != "same-origin" and origin != request_origin)
-        ):
-            raise HTTPException(status_code=403, detail="Widget platform session requires a same-origin browser")
-        identity = resolve_identity(request)
-        if identity is None:
-            raise HTTPException(status_code=401, detail={
-                "code": "WIDGET_LOGIN_REQUIRED",
-                "message": "请先登录后使用智能问数",
-            })
-        return {
-            "source": "widget",
-            "website_id": website_id,
-            "external_user_id": "",
-            "visitor_id": "",
-            "auth_user_id": identity.user_id,
-            "auth_display_name": identity.display_name,
-            "auth_role": identity.role,
-        }
-
-    if not external_user_id and (not visitor_id or matched_site.get("allow_anonymous") is not True):
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "code": "WIDGET_LOGIN_REQUIRED",
-                "message": "请先登录后使用智能问数",
-            },
-        )
-
-    return {
-        "source": "widget",
-        "website_id": website_id,
-        "external_user_id": external_user_id,
-        "visitor_id": "" if external_user_id else visitor_id,
-    }
-
-
 @router.get("/health")
 async def api_health():
     cfg = get_settings()
@@ -282,7 +144,7 @@ async def api_health():
 
 
 @router.get("/runtime-config", response_model=RuntimeConfigResponse)
-def api_runtime_config():
+def api_runtime_config(_ctx: AccountContext = Depends(current_account_context)):
     payload = resolved_chat_settings_payload()
     providers = []
     for item in payload.get("providers") or []:
@@ -311,26 +173,27 @@ def api_runtime_config():
 
 @router.post("/widget-events", response_model=WidgetEventIngestResponse)
 def api_widget_events(payload: WidgetEventBatchRequest, http_request: Request):
-    context = _request_context(http_request)
+    ctx = current_account_context(http_request)
     store = _get_store()
     events = [item.model_dump() for item in payload.events]
-    accepted = store.record_widget_events(events, context)
+    accepted = store.record_widget_events(events, ctx.to_store_context())
     return WidgetEventIngestResponse(accepted=accepted)
 
 
 @topic_router.post("", response_model=TopicDetail)
 def api_create_topic(http_request: Request, request: CreateTopicRequest | None = None):
     store = _get_store()
-    context = _request_context(http_request)
+    ctx = current_account_context(http_request)
+    user = _require_writable_user(ctx)
     payload = request or CreateTopicRequest()
-    if context.get("source") == "widget" and not str(payload.agent_id or "").strip():
+    if ctx.source == "widget" and not str(payload.agent_id or "").strip():
         raise HTTPException(status_code=400, detail="agent_id is required for widget requests")
-    profile = _require_agent_profile(payload.agent_id, context=context)
+    profile = _require_agent_profile(payload.agent_id, user)
     topic = store.create_topic(
         title=str(payload.title or "").strip() or "新话题",
         agent_snapshot=build_agent_snapshot(profile),
         permission_mode=payload.permission_mode,
-        context=context,
+        context=ctx.to_store_context(),
     )
     return TopicDetail.model_validate(topic)
 
@@ -338,19 +201,21 @@ def api_create_topic(http_request: Request, request: CreateTopicRequest | None =
 @topic_router.get("", response_model=list[TopicSummary])
 def api_list_topics(request: Request, agent_id: str | None = Query(default=None)):
     store = _get_store()
-    topics = store.list_topics(include_messages=False, context=_request_context(request), agent_id=agent_id)
+    ctx = current_account_context(request)
+    topics = store.list_topics(include_messages=False, context=ctx.to_store_context(), agent_id=agent_id)
     return [TopicSummary.model_validate(item) for item in topics]
 
 
 @topic_router.get("/{topic_id}", response_model=TopicDetail)
 def api_get_topic(topic_id: str, request: Request):
-    topic = _require_topic(topic_id, _request_context(request))
+    ctx = current_account_context(request)
+    topic = _require_topic(topic_id, ctx.to_store_context())
     return TopicDetail.model_validate(topic)
 
 
 @topic_router.put("/{topic_id}", response_model=TopicDetail)
 def api_update_topic(topic_id: str, payload: UpdateTopicRequest, request: Request):
-    context = _request_context(request)
+    ctx = current_account_context(request)
     title: str | None = None
     if payload.title is not None:
         title = str(payload.title).strip()
@@ -359,12 +224,12 @@ def api_update_topic(topic_id: str, payload: UpdateTopicRequest, request: Reques
     permission_mode = payload.permission_mode
     if title is None and permission_mode is None:
         raise HTTPException(status_code=400, detail="title or permission_mode is required")
-    _require_topic(topic_id, context)
+    _require_writable_topic(topic_id, ctx)
     topic = _get_store().update_topic(
         topic_id,
         title=title,
         permission_mode=permission_mode,
-        context=context,
+        context=ctx.to_store_context(),
     )
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
@@ -373,10 +238,10 @@ def api_update_topic(topic_id: str, payload: UpdateTopicRequest, request: Reques
 
 @topic_router.delete("/{topic_id}")
 def api_delete_topic(topic_id: str, request: Request):
-    context = _request_context(request)
+    ctx = current_account_context(request)
     store = _get_store()
-    _require_topic(topic_id, context)
-    store.delete_topic(topic_id, context=context)
+    _require_writable_topic(topic_id, ctx)
+    store.delete_topic(topic_id, context=ctx.to_store_context())
     return JSONResponse({"status": "ok"})
 
 
@@ -388,15 +253,16 @@ def api_list_topic_messages(
     page_size: int = Query(default=200, ge=1, le=500),
     order: str = Query(default="asc", pattern="^(asc|desc)$"),
 ):
-    context = _request_context(request)
-    _require_topic(topic_id, context)
-    payload = _get_store().list_topic_messages_page(topic_id=topic_id, page=page, page_size=page_size, order=order, context=context)
+    ctx = current_account_context(request)
+    store_ctx = ctx.to_store_context()
+    _require_topic(topic_id, store_ctx)
+    payload = _get_store().list_topic_messages_page(topic_id=topic_id, page=page, page_size=page_size, order=order, context=store_ctx)
     return TopicMessagePageResponse.model_validate(payload)
 
 
 @topic_router.post("/{topic_id}/files", response_model=WorkspaceFile)
 async def api_upload_topic_file(topic_id: str, request: Request, file: UploadFile = File(...)):
-    _require_topic(topic_id, _request_context(request))
+    _require_writable_topic(topic_id, current_account_context(request))
     data = await file.read()
     cap = int(get_settings().dataagent_upload_max_bytes or 0)
     if cap and len(data) > cap:
@@ -410,7 +276,7 @@ async def api_upload_topic_file(topic_id: str, request: Request, file: UploadFil
 
 @topic_router.get("/{topic_id}/files", response_model=WorkspaceFileListResponse)
 def api_list_topic_files(topic_id: str, request: Request):
-    _require_topic(topic_id, _request_context(request))
+    _require_topic(topic_id, current_account_context(request).to_store_context())
     return WorkspaceFileListResponse(files=[WorkspaceFile.model_validate(item) for item in list_files(topic_id)])
 
 
@@ -421,7 +287,7 @@ def api_download_topic_file(
     request: Request,
     download: int = Query(default=0),
 ):
-    _require_topic(topic_id, _request_context(request))
+    _require_topic(topic_id, current_account_context(request).to_store_context())
     return topic_file_response(topic_id, rel_path, download=bool(download))
 
 
@@ -432,21 +298,22 @@ def api_update_message_feedback(
     payload: UpdateMessageFeedbackRequest,
     request: Request,
 ):
-    context = _request_context(request)
-    _require_topic(topic_id, context)
+    ctx = current_account_context(request)
+    store_ctx = ctx.to_store_context()
+    _require_writable_topic(topic_id, ctx)
 
     feedback = str(payload.feedback or "").strip().lower()
     if feedback not in {"", "like", "dislike"}:
         raise HTTPException(status_code=400, detail="feedback must be like, dislike, or empty")
 
     store = _get_store()
-    message = store.get_message(message_id, context=context)
+    message = store.get_message(message_id, context=store_ctx)
     if not message or str(message.get("topic_id") or "") != topic_id or not message.get("show_in_ui", True):
         raise HTTPException(status_code=404, detail="Message not found")
     if str(message.get("sender_type") or "") != "assistant":
         raise HTTPException(status_code=400, detail="feedback is only supported for assistant messages")
 
-    updated = store.update_message_feedback(topic_id=topic_id, message_id=message_id, feedback=feedback, context=context)
+    updated = store.update_message_feedback(topic_id=topic_id, message_id=message_id, feedback=feedback, context=store_ctx)
     if not updated:
         raise HTTPException(status_code=404, detail="Message not found")
     return TopicMessage.model_validate(updated)
@@ -454,10 +321,11 @@ def api_update_message_feedback(
 
 @topic_router.post("/{topic_id}/messages/{message_id}/followup-suggestions", response_model=FollowupSuggestionsResponse)
 async def api_generate_followup_suggestions(topic_id: str, message_id: str, request: Request):
-    context = _request_context(request)
-    _require_topic(topic_id, context)
+    ctx = current_account_context(request)
+    store_ctx = ctx.to_store_context()
+    _require_topic(topic_id, store_ctx)
     store = _get_store()
-    message = store.get_message(message_id, context=context)
+    message = store.get_message(message_id, context=store_ctx)
     if not message or str(message.get("topic_id") or "") != topic_id or not bool(message.get("show_in_ui", True)):
         raise HTTPException(status_code=404, detail="Message not found")
     if str(message.get("sender_type") or "") != "assistant":
@@ -471,7 +339,7 @@ async def api_generate_followup_suggestions(topic_id: str, message_id: str, requ
 
     topic_messages = store.list_topic_messages(topic_id)
     previous_question = _previous_user_question(topic_messages, message)
-    task = store.get_task(str(message.get("task_id") or ""), context=context) if message.get("task_id") else {}
+    task = store.get_task(str(message.get("task_id") or ""), context=store_ctx) if message.get("task_id") else {}
     generated = await generate_followup_suggestions(
         previous_question=previous_question,
         answer_text=answer_text,
@@ -492,21 +360,19 @@ async def api_generate_followup_suggestions(topic_id: str, message_id: str, requ
 
 @task_router.post("/deliver-message", response_model=TaskSubmissionResponse)
 async def api_deliver_message(payload: DeliverMessageRequest, request: Request):
-    context = _request_context(request)
+    ctx = current_account_context(request)
     topic_id = str(payload.topic_id or "").strip()
     content = str(payload.content or "").strip()
     if not topic_id:
         raise HTTPException(status_code=400, detail="topic_id is required")
     if not content:
         raise HTTPException(status_code=400, detail="content is required")
-    _require_topic(topic_id, context)
-    # Permission mode is a session-level choice; applying it here updates the
-    # topic's latest selection so the next task runs under it.
+    _require_writable_topic(topic_id, ctx, check_agent_access=True)
     if payload.permission_mode is not None:
         _get_store().update_topic(
             topic_id,
             permission_mode=payload.permission_mode,
-            context=context,
+            context=ctx.to_store_context(),
         )
     try:
         submitted = await submit_message_task(
@@ -526,11 +392,11 @@ async def api_deliver_message(payload: DeliverMessageRequest, request: Request):
 
 @task_router.post("", response_model=TaskSubmissionResponse)
 async def api_create_task(payload: CreateTaskRequest, request: Request):
-    context = _request_context(request)
+    ctx = current_account_context(request)
     topic_id = str(payload.topic_id or "").strip()
     if not topic_id:
         raise HTTPException(status_code=400, detail="topic_id is required")
-    _require_topic(topic_id, context)
+    _require_writable_topic(topic_id, ctx, check_agent_access=True)
     try:
         submitted = await submit_message_task(
             topic_id=topic_id,
@@ -541,7 +407,6 @@ async def api_create_task(payload: CreateTaskRequest, request: Request):
             database_hint=payload.database,
             debug=bool(payload.debug),
             agent_id=payload.agent_id,
-            source_queue_id=payload.source_queue_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -551,7 +416,7 @@ async def api_create_task(payload: CreateTaskRequest, request: Request):
 @task_router.get("/{task_id}", response_model=TaskStatusResponse)
 def api_get_task(task_id: str, request: Request):
     store = _get_store()
-    task = store.get_task(task_id, context=_request_context(request))
+    task = store.get_task(task_id, context=current_account_context(request).to_store_context())
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return TaskStatusResponse.model_validate(task)
@@ -559,11 +424,8 @@ def api_get_task(task_id: str, request: Request):
 
 @task_router.get("/{task_id}/message", response_model=TopicMessage)
 def api_get_task_message(task_id: str, request: Request):
-    """The run's persisted assistant message. Lets the live stream path pick up
-    post-run fields (generated-file attachments) without re-fetching the whole
-    topic message page."""
     store = _get_store()
-    task = store.get_task(task_id, context=_request_context(request))
+    task = store.get_task(task_id, context=current_account_context(request).to_store_context())
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     message = store.get_assistant_message(task_id)
@@ -580,8 +442,8 @@ def api_list_sdk_events(
     limit: int = Query(default=200, ge=1, le=500),
 ):
     store = _get_store()
-    context = _request_context(request)
-    task = store.get_task(task_id, context=context)
+    store_ctx = current_account_context(request).to_store_context()
+    task = store.get_task(task_id, context=store_ctx)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     records = store.list_sdk_records(task_id=task_id, after_id=after_id, limit=limit + 1)
@@ -601,8 +463,8 @@ def api_list_sdk_events(
 @task_router.get("/{task_id}/sdk-events/stream")
 async def api_stream_sdk_events(task_id: str, request: Request, after_id: int = Query(default=0, ge=0)):
     store = _get_store()
-    context = _request_context(request)
-    task = store.get_task(task_id, context=context)
+    store_ctx = current_account_context(request).to_store_context()
+    task = store.get_task(task_id, context=store_ctx)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     logger.info(
@@ -613,7 +475,7 @@ async def api_stream_sdk_events(task_id: str, request: Request, after_id: int = 
         str(task.get("task_status") or ""),
     )
     return StreamingResponse(
-        _stream_sdk_events(task_id=task_id, after_id=after_id, context=context),
+        _stream_sdk_events(task_id=task_id, after_id=after_id, context=store_ctx),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -761,12 +623,18 @@ async def _stream_sdk_events(task_id: str, after_id: int, context: dict[str, str
 @task_router.post("/{task_id}/cancel", response_model=CancelTaskResponse)
 async def api_cancel_task(task_id: str, request: Request):
     store = _get_store()
-    context = _request_context(request)
-    task = store.request_task_cancel(task_id, context=context)
+    ctx = current_account_context(request)
+    _require_writable_user(ctx)
+    store_ctx = ctx.to_store_context()
+    existing = store.get_task(task_id, context=store_ctx)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Task not found")
+    _require_writable_topic(str(existing.get("topic_id") or ""), ctx)
+    task = store.request_task_cancel(task_id, context=store_ctx)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     await get_task_coordinator().request_cancel(task_id)
-    task = store.get_task(task_id, context=context) or task
+    task = store.get_task(task_id, context=store_ctx) or task
     return CancelTaskResponse.model_validate(task)
 
 
@@ -781,10 +649,13 @@ async def api_submit_permission_decision(task_id: str, payload: PermissionDecisi
 def _record_permission_decision(task_id: str, payload: PermissionDecisionRequest, request: Request):
     appended = False
     store = _get_store()
-    context = _request_context(request)
-    task = store.get_task(task_id, context=context)
+    ctx = current_account_context(request)
+    _require_writable_user(ctx)
+    store_ctx = ctx.to_store_context()
+    task = store.get_task(task_id, context=store_ctx)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    _require_writable_topic(str(task.get("topic_id") or ""), ctx)
     request_id = str(payload.request_id or "").strip()
     if not request_id:
         raise HTTPException(status_code=400, detail="request_id is required")
@@ -829,10 +700,13 @@ async def api_submit_question_answer(task_id: str, payload: QuestionAnswerReques
 def _record_question_answer(task_id: str, payload: QuestionAnswerRequest, request: Request):
     appended = False
     store = _get_store()
-    context = _request_context(request)
-    task = store.get_task(task_id, context=context)
+    ctx = current_account_context(request)
+    _require_writable_user(ctx)
+    store_ctx = ctx.to_store_context()
+    task = store.get_task(task_id, context=store_ctx)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    _require_writable_topic(str(task.get("topic_id") or ""), ctx)
     request_id = str(payload.request_id or "").strip()
     if not request_id:
         raise HTTPException(status_code=400, detail="request_id is required")
@@ -860,10 +734,10 @@ def _record_question_answer(task_id: str, payload: QuestionAnswerRequest, reques
 
 @queue_router.post("/queries", response_model=MessageQueuePageResponse)
 def api_query_message_queues(payload: MessageQueueQueryRequest, request: Request):
-    context = _request_context(request)
+    store_ctx = current_account_context(request).to_store_context()
     if payload.topic_id:
-        _require_topic(str(payload.topic_id), context)
-    page = _get_store().query_message_queues(topic_id=payload.topic_id, page=payload.page, page_size=payload.page_size, context=context)
+        _require_topic(str(payload.topic_id), store_ctx)
+    page = _get_store().query_message_queues(topic_id=payload.topic_id, page=payload.page, page_size=payload.page_size, context=store_ctx)
     return MessageQueuePageResponse.model_validate(
         {
             "page": int(page.get("page") or payload.page),
@@ -876,11 +750,11 @@ def api_query_message_queues(payload: MessageQueueQueryRequest, request: Request
 
 @queue_router.post("", response_model=MessageQueueRecord)
 def api_create_message_queue(payload: MessageQueueUpsertRequest, request: Request):
-    context = _request_context(request)
+    ctx = current_account_context(request)
     topic_id = str(payload.topic_id or "").strip()
     if not topic_id:
         raise HTTPException(status_code=400, detail="topic_id is required")
-    _require_topic(topic_id, context)
+    _require_writable_topic(topic_id, ctx, check_agent_access=True)
     created = _get_store().create_message_queue(
         topic_id=topic_id,
         message_type=str(payload.message_type or "").strip() or "text",
@@ -891,10 +765,11 @@ def api_create_message_queue(payload: MessageQueueUpsertRequest, request: Reques
 
 @queue_router.put("/{queue_id}", response_model=MessageQueueRecord)
 def api_update_message_queue(queue_id: str, payload: MessageQueueUpsertRequest, request: Request):
-    context = _request_context(request)
+    ctx = current_account_context(request)
+    store_ctx = ctx.to_store_context()
     store = _get_store()
-    _require_topic(str(payload.topic_id or "").strip(), context)
-    if not store.get_message_queue(queue_id, context=context):
+    _require_writable_topic(str(payload.topic_id or "").strip(), ctx, check_agent_access=True)
+    if not store.get_message_queue(queue_id, context=store_ctx):
         raise HTTPException(status_code=404, detail="Queue message not found")
     updated = store.update_message_queue(
         queue_id=queue_id,
@@ -910,9 +785,13 @@ def api_update_message_queue(queue_id: str, payload: MessageQueueUpsertRequest, 
 @queue_router.delete("/{queue_id}")
 def api_delete_message_queue(queue_id: str, request: Request):
     store = _get_store()
-    context = _request_context(request)
-    if not store.get_message_queue(queue_id, context=context):
+    ctx = current_account_context(request)
+    _require_writable_user(ctx)
+    store_ctx = ctx.to_store_context()
+    existing = store.get_message_queue(queue_id, context=store_ctx)
+    if not existing:
         raise HTTPException(status_code=404, detail="Queue message not found")
+    _require_writable_topic(str(existing.get("topic_id") or ""), ctx)
     deleted = store.delete_message_queue(queue_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Queue message not found")
@@ -922,10 +801,12 @@ def api_delete_message_queue(queue_id: str, request: Request):
 @queue_router.post("/{queue_id}/consume", response_model=TaskSubmissionResponse)
 async def api_consume_message_queue(queue_id: str, request: Request):
     store = _get_store()
-    context = _request_context(request)
-    queue = store.get_message_queue(queue_id, context=context)
+    ctx = current_account_context(request)
+    store_ctx = ctx.to_store_context()
+    queue = store.get_message_queue(queue_id, context=store_ctx)
     if not queue:
         raise HTTPException(status_code=404, detail="Queue message not found")
+    _require_writable_topic(str(queue.get("topic_id") or ""), ctx, check_agent_access=True)
     if str(queue.get("status") or "") == "running":
         raise HTTPException(status_code=409, detail="Queue message is already running")
     try:
@@ -945,10 +826,10 @@ async def api_consume_message_queue(queue_id: str, request: Request):
 
 @schedule_router.post("/queries", response_model=MessageSchedulePageResponse)
 def api_query_message_schedules(payload: MessageScheduleQueryRequest, request: Request):
-    context = _request_context(request)
+    store_ctx = current_account_context(request).to_store_context()
     if payload.topic_id:
-        _require_topic(str(payload.topic_id), context)
-    page = _get_store().query_message_schedules(topic_id=payload.topic_id, page=payload.page, page_size=payload.page_size, context=context)
+        _require_topic(str(payload.topic_id), store_ctx)
+    page = _get_store().query_message_schedules(topic_id=payload.topic_id, page=payload.page, page_size=payload.page_size, context=store_ctx)
     return MessageSchedulePageResponse.model_validate(
         {
             "page": int(page.get("page") or payload.page),
@@ -961,11 +842,11 @@ def api_query_message_schedules(payload: MessageScheduleQueryRequest, request: R
 
 @schedule_router.post("", response_model=MessageScheduleRecord)
 def api_create_message_schedule(payload: MessageScheduleUpsertRequest, request: Request):
-    context = _request_context(request)
+    ctx = current_account_context(request)
     topic_id = str(payload.topic_id or "").strip()
     if not topic_id:
         raise HTTPException(status_code=400, detail="topic_id is required")
-    _require_topic(topic_id, context)
+    _require_writable_topic(topic_id, ctx, check_agent_access=True)
     try:
         next_run_at = compute_next_run_at(payload.cron_expr, payload.timezone) if payload.enabled else None
     except Exception as exc:
@@ -985,11 +866,12 @@ def api_create_message_schedule(payload: MessageScheduleUpsertRequest, request: 
 
 @schedule_router.put("/{schedule_id}", response_model=MessageScheduleRecord)
 def api_update_message_schedule(schedule_id: str, payload: MessageScheduleUpsertRequest, request: Request):
-    context = _request_context(request)
+    ctx = current_account_context(request)
+    store_ctx = ctx.to_store_context()
     store = _get_store()
     topic_id = str(payload.topic_id or "").strip()
-    _require_topic(topic_id, context)
-    if not store.get_message_schedule(schedule_id, context=context):
+    _require_writable_topic(topic_id, ctx, check_agent_access=True)
+    if not store.get_message_schedule(schedule_id, context=store_ctx):
         raise HTTPException(status_code=404, detail="Message schedule not found")
     try:
         next_run_at = compute_next_run_at(payload.cron_expr, payload.timezone) if payload.enabled else None
@@ -1014,9 +896,13 @@ def api_update_message_schedule(schedule_id: str, payload: MessageScheduleUpsert
 @schedule_router.delete("/{schedule_id}")
 def api_delete_message_schedule(schedule_id: str, request: Request):
     store = _get_store()
-    context = _request_context(request)
-    if not store.get_message_schedule(schedule_id, context=context):
+    ctx = current_account_context(request)
+    _require_writable_user(ctx)
+    store_ctx = ctx.to_store_context()
+    existing = store.get_message_schedule(schedule_id, context=store_ctx)
+    if not existing:
         raise HTTPException(status_code=404, detail="Message schedule not found")
+    _require_writable_topic(str(existing.get("topic_id") or ""), ctx)
     deleted = store.delete_message_schedule(schedule_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Message schedule not found")
@@ -1025,7 +911,7 @@ def api_delete_message_schedule(schedule_id: str, request: Request):
 
 @schedule_router.get("/{schedule_id}", response_model=MessageScheduleRecord)
 def api_get_message_schedule(schedule_id: str, request: Request):
-    schedule = _get_store().get_message_schedule(schedule_id, context=_request_context(request))
+    schedule = _get_store().get_message_schedule(schedule_id, context=current_account_context(request).to_store_context())
     if not schedule:
         raise HTTPException(status_code=404, detail="Message schedule not found")
     return MessageScheduleRecord.model_validate(schedule)
@@ -1034,7 +920,7 @@ def api_get_message_schedule(schedule_id: str, request: Request):
 @schedule_router.post("/{schedule_id}/logs", response_model=MessageScheduleLogPageResponse)
 def api_list_message_schedule_logs(schedule_id: str, payload: MessageScheduleLogsQueryRequest, request: Request):
     store = _get_store()
-    schedule = store.get_message_schedule(schedule_id, context=_request_context(request))
+    schedule = store.get_message_schedule(schedule_id, context=current_account_context(request).to_store_context())
     if not schedule:
         raise HTTPException(status_code=404, detail="Message schedule not found")
     page_payload = store.list_message_schedule_logs(
@@ -1053,8 +939,6 @@ def api_list_message_schedule_logs(schedule_id: str, payload: MessageScheduleLog
     )
 
 
-
-
 router.include_router(topic_router)
 router.include_router(task_router)
 router.include_router(queue_router)
@@ -1067,7 +951,13 @@ def _get_store():
     return store
 
 
-def _require_topic(topic_id: str, context: dict[str, str] | None = None) -> dict:
+def _require_writable_user(ctx: AccountContext) -> User:
+    if ctx.user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return ctx.user
+
+
+def _require_topic(topic_id: str, context: dict[str, Any] | None = None) -> dict:
     store = _get_store()
     topic = store.get_topic(topic_id, context=context)
     if not topic:
@@ -1075,26 +965,21 @@ def _require_topic(topic_id: str, context: dict[str, str] | None = None) -> dict
     return topic
 
 
-def _context_identity(context: dict | None) -> AuthIdentity | None:
-    """从 ``_request_context`` 结果还原认证身份。
-
-    平台和复用已验证平台登录的 Widget 携带身份；其他接入返回 None。
-    """
-    auth_user_id = str((context or {}).get("auth_user_id") or "").strip()
-    if not auth_user_id:
-        return None
-    return AuthIdentity(
-        user_id=auth_user_id,
-        display_name=str((context or {}).get("auth_display_name") or ""),
-        role=str((context or {}).get("auth_role") or "user"),
-        provider="",
-    )
+def _require_writable_topic(
+    topic_id: str,
+    ctx: AccountContext,
+    *,
+    check_agent_access: bool = False,
+) -> dict:
+    user = _require_writable_user(ctx)
+    topic = _require_topic(topic_id, ctx.to_store_context())
+    if check_agent_access:
+        _require_agent_profile(str(topic.get("agent_id") or ""), user)
+    return topic
 
 
-def _require_agent_profile(agent_id: str | None = None, context: dict | None = None) -> dict:
-    profile = get_agent_profile(str(agent_id or "").strip() or DEFAULT_AGENT_ID)
-    # 可见范围在话题创建时强制（快照冻结点）；不可见与不存在返回同一文案，
-    # 防助手存在性探测。已有话题按快照继续，不追溯拦截。
-    if not profile or not agent_visible_to(profile, _context_identity(context)):
-        raise HTTPException(status_code=400, detail="agent not found")
-    return profile
+def _require_agent_profile(agent_id: str | None, user: User) -> dict:
+    try:
+        return require_agent_access(user.id, str(agent_id or "").strip() or DEFAULT_AGENT_ID)
+    except AgentAccessDeniedError as exc:
+        raise HTTPException(status_code=400, detail="agent not found") from exc

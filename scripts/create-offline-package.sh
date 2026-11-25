@@ -129,12 +129,13 @@ tar -C "$REPO_ROOT/deploy" \
     --exclude='.env' \
     --exclude='docker-images/*.tar' \
     --exclude='logs' \
+    --exclude='backups' \
     --exclude='__pycache__' \
     -cf - . | tar -C "$PACKAGED_DEPLOY_DIR" -xf -
 
 # 2. 复制部署控制脚本（评测脚本走独立的评测离线包）
 log "Copying deployment scripts to package scripts/"
-for script in start.sh stop.sh restart.sh dump-logs.sh load-images.sh load-package-and-start.sh migrate-from-opendataworks.sh; do
+for script in start.sh stop.sh restart.sh dump-logs.sh load-images.sh load-package-and-start.sh migrate-from-opendataworks.sh backup-db.sh restore-db.sh migrate-accounts.sh migrate-accounts.sql; do
     cp "$REPO_ROOT/scripts/$script" "$PACKAGED_SCRIPTS_DIR/"
 done
 tar -C "$REPO_ROOT/scripts" -cf - lib | tar -C "$PACKAGED_SCRIPTS_DIR" -xf -

@@ -4,7 +4,7 @@
       <div class="page-header-main">
         <h2 class="page-title">Widget 接入白名单</h2>
         <p class="page-desc">
-          管理允许嵌入智能问数 Widget 的站点。只有列入白名单的 <code>website_id</code> 且来源域名匹配的请求才会被后端接受。
+          登记允许接入 Widget 的站点和浏览器来源（Origin）。请求来自已登记站点、且来源在白名单内或不带 Origin（宿主后端直接调用）时，<code>X-DataAgent-User-Id</code> 中的用户名即对应 DataAgent 同名账号。仅适用于可信内网。
         </p>
       </div>
       <div class="page-header-actions">
@@ -43,7 +43,7 @@
                 <template #label>
                   <span class="field-label">
                     Website ID
-                    <el-tooltip content="站点唯一标识，需与嵌入脚本的 data-website-id 完全一致。" placement="top">
+                    <el-tooltip content="站点唯一标识，需与嵌入脚本的 data-website-id 或 X-DataAgent-Website-Id 完全一致。" placement="top">
                       <el-icon><QuestionFilled /></el-icon>
                     </el-tooltip>
                   </span>
@@ -51,36 +51,7 @@
                 <el-input v-model="site.website_id" placeholder="例如 web-prod" />
               </el-form-item>
             </el-col>
-            <el-col :xs="24" :md="12">
-              <el-form-item>
-                <template #label><span class="field-label">项目名称</span></template>
-                <el-input v-model="site.project_name" placeholder="展示在 Widget 标题，可留空" />
-              </el-form-item>
-            </el-col>
           </el-row>
-
-          <el-form-item>
-            <template #label><span class="field-label">主题色</span></template>
-            <div class="color-row">
-              <el-color-picker v-model="site.project_color" />
-              <el-input v-model="site.project_color" class="color-input" placeholder="#4A90A4" />
-            </div>
-          </el-form-item>
-
-          <el-form-item>
-            <template #label>
-              <span class="field-label">
-                匿名访问
-                <el-tooltip content="关闭后，接入方必须提供用户身份；未登录用户只能看到登录提示。" placement="top">
-                  <el-icon><QuestionFilled /></el-icon>
-                </el-tooltip>
-              </span>
-            </template>
-            <div class="anonymous-row">
-              <el-switch v-model="site.allow_anonymous" />
-              <span class="anonymous-state">{{ site.allow_anonymous ? '允许匿名访客使用' : '必须登录后使用' }}</span>
-            </div>
-          </el-form-item>
 
           <el-form-item>
             <template #label>
@@ -88,8 +59,7 @@
                 允许来源（Origin）
                 <el-tooltip placement="top">
                   <template #content>
-                    浏览器嵌入页面的来源，例如 https://app.example.com。<br>
-                    填写 <code>*</code> 表示放行所有来源（仅建议测试环境使用）。
+                    浏览器嵌入页面的来源，例如 https://app.example.com。
                   </template>
                   <el-icon><QuestionFilled /></el-icon>
                 </el-tooltip>
@@ -99,14 +69,14 @@
               <div v-for="(_, oi) in site.allowed_origins" :key="oi" class="origin-row">
                 <el-input
                   v-model="site.allowed_origins[oi]"
-                  placeholder="https://app.example.com 或 *"
+                  placeholder="https://app.example.com"
                   @keyup.enter="addOrigin(site)"
                 />
                 <el-button text :icon="Close" class="origin-remove" @click="removeOrigin(site, oi)" />
               </div>
               <el-button class="origin-add" :icon="Plus" @click="addOrigin(site)">添加来源</el-button>
               <div v-if="!site.allowed_origins.length" class="origin-hint">
-                未配置来源时，仅放行同源或非浏览器（无 Origin 头）的请求。
+                未配置来源时只接受宿主后端（不带 Origin）的请求；浏览器直接嵌入需填写宿主页面来源。
               </div>
             </div>
           </el-form-item>
@@ -133,17 +103,11 @@ const nextKey = () => `site_${++keySeq}`
 const normalizeSite = (raw = {}) => ({
   _key: nextKey(),
   website_id: String(raw.website_id || ''),
-  project_name: String(raw.project_name || ''),
-  project_color: String(raw.project_color || ''),
-  allow_anonymous: raw.allow_anonymous === true,
   allowed_origins: Array.isArray(raw.allowed_origins) ? raw.allowed_origins.map((item) => String(item || '')) : []
 })
 
 const toPayloadSite = (site) => ({
   website_id: String(site.website_id || '').trim(),
-  project_name: String(site.project_name || '').trim(),
-  project_color: String(site.project_color || '').trim(),
-  allow_anonymous: site.allow_anonymous === true,
   allowed_origins: (site.allowed_origins || [])
     .map((item) => String(item || '').trim())
     .filter((item, index, arr) => item && arr.indexOf(item) === index)
@@ -371,32 +335,12 @@ onMounted(loadSettings)
   margin-bottom: 16px;
 }
 
-.color-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.color-input {
-  width: 160px;
-}
-
-.anonymous-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.anonymous-state {
-  font-size: 13px;
-  color: #53677e;
-}
-
 .origin-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
+  max-width: 560px;
 }
 
 .origin-row {
@@ -406,8 +350,7 @@ onMounted(loadSettings)
 }
 
 .origin-remove {
-  flex: none;
-  color: #98a6b8;
+  color: #71839a;
 }
 
 .origin-remove:hover {

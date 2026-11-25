@@ -86,7 +86,7 @@
                 <option value="remote">MCP</option>
               </select>
             </div>
-            <div v-if="usesAdminList && filterSource === 'widget'" class="v2-filter-group">
+            <div v-if="usesAdminList" class="v2-filter-group">
               <div class="v2-filter-label">用户</div>
               <el-select
                 v-model="filterUser"
@@ -95,16 +95,14 @@
                 filterable
                 remote
                 reserve-keyword
-                :remote-method="fetchWidgetUsers"
-                :loading="widgetUsersLoading"
+                :teleported="false"
+                :remote-method="fetchFilterUsers"
+                :loading="filterUsersLoading"
                 placeholder="全部用户"
                 class="v2-filter-select"
                 @visible-change="handleUserSelectVisible"
               >
-                <el-option v-for="u in widgetUserOptions" :key="u.value" :label="u.label" :value="u.value">
-                  <span class="v2-user-opt-label">{{ u.label }}</span>
-                  <span v-if="u.count" class="v2-user-opt-count">{{ u.count }}</span>
-                </el-option>
+                <el-option v-for="u in filterUserOptions" :key="u.value" :label="u.label" :value="u.value" />
               </el-select>
             </div>
             <div class="v2-filter-group">
@@ -386,7 +384,6 @@ const api = createNl2SqlApiClient({
   timeout: 300000,
   defaultHeaders: DATAAGENT_CLIENT_HEADERS,
   onUnauthorized: () => {
-    if (!authStore.enabled) return
     authStore.currentUser = null
     if (route.name !== 'Login') {
       router.push({ path: '/login', query: { redirect: route.fullPath } })
@@ -421,8 +418,7 @@ const isStreaming = computed(() => Boolean(activeTaskId.value))
 const conversationRef = ref(null)
 const pendingMessageId = ref('')
 
-// With login off everyone shares one pool through the ordinary listing.
-const usesAdminList = computed(() => authStore.enabled && authStore.isAdmin)
+const usesAdminList = computed(() => authStore.isAdmin)
 // Sources are metadata. Administrators list everyone's conversations; each row's
 // can_continue decides whether it opens as a chat or read-only, so there is no
 // separate review mode to switch into.
@@ -485,42 +481,35 @@ const filteredTopics = computed(() => {
   })
 })
 
-// User filter options resolved server-side (admin facet) so the dropdown can
-// search the full widget user set, not just users on the loaded session page.
-const widgetUserOptions = ref([])
-const widgetUsersLoading = ref(false)
+// Search platform users across all pages of the conversation list.
+const filterUserOptions = ref([])
+const filterUsersLoading = ref(false)
 
-function userOptionFromRow(row) {
-  const id = String(row?.user_id || '').trim()
-  const kind = row?.kind === 'ext' ? 'ext' : 'vis'
-  return {
-    value: kind + ':' + id,
-    label: (kind === 'ext' ? '用户 ' : '访客 ') + id,
-    count: Number(row?.topic_count || 0),
-  }
-}
-
-async function fetchWidgetUsers(query = '') {
-  if (!usesAdminList.value || filterSource.value !== 'widget') return
-  widgetUsersLoading.value = true
+// Administrators filter the conversation list by platform user (da_user).
+async function fetchFilterUsers(query = '') {
+  if (!usesAdminList.value) return
+  filterUsersLoading.value = true
   try {
-    const data = await dataagentApi.listWidgetUsers({ keyword: String(query || '').trim(), limit: 100 })
-    const options = (Array.isArray(data?.items) ? data.items : []).map(userOptionFromRow)
+    const data = await dataagentApi.listUsers({ keyword: String(query || '').trim(), page: 1, page_size: 100 })
+    const options = (Array.isArray(data?.items) ? data.items : []).map((row) => ({
+      value: String(row.id),
+      label: row.display_name && row.display_name !== row.username ? `${row.display_name}（${row.username}）` : row.username
+    }))
     // Keep the active selection visible even if it falls outside this result set.
     if (filterUser.value && !options.some((o) => o.value === filterUser.value)) {
-      const prev = widgetUserOptions.value.find((o) => o.value === filterUser.value)
+      const prev = filterUserOptions.value.find((o) => o.value === filterUser.value)
       if (prev) options.unshift(prev)
     }
-    widgetUserOptions.value = options
+    filterUserOptions.value = options
   } catch {
-    widgetUserOptions.value = []
+    filterUserOptions.value = []
   } finally {
-    widgetUsersLoading.value = false
+    filterUsersLoading.value = false
   }
 }
 
 function handleUserSelectVisible(visible) {
-  if (visible && usesAdminList.value) fetchWidgetUsers('')
+  if (visible && usesAdminList.value) fetchFilterUsers('')
 }
 
 const activeTopic = computed(() => topics.value.find((t) => t.topic_id === activeTopicId.value) || null)
@@ -782,10 +771,7 @@ async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true }
     const params = { page: 1, page_size: 50, source: filterSource.value }
     const agentId = currentAgentFilterId()
     if (agentId) params.agent_id = agentId
-    if (params.source === 'widget') {
-      if (filterUser.value.startsWith('ext:')) params.external_user_id = filterUser.value.slice(4)
-      else if (filterUser.value.startsWith('vis:')) params.visitor_id = filterUser.value.slice(4)
-    }
+    if (filterUser.value) params.user_id = Number(filterUser.value)
     const data = await dataagentApi.listAdminTopics(params)
     if (seq !== adminListSequence) return
     topics.value = (Array.isArray(data?.items) ? data.items : []).map(normalizeTopic).filter((topic) => topic.topic_id)
@@ -807,8 +793,10 @@ async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true }
 }
 
 function topicOwnerLabel(topic) {
-  return topic?.auth_display_name || topic?.auth_user_id || topic?.external_user_id
-    || (topic?.visitor_id ? `访客 ${String(topic.visitor_id).slice(0, 8)}` : '匿名用户')
+  return topic?.user_display_name || topic?.username || topic?.auth_display_name
+    || (topic?.user_id != null ? `#${topic.user_id}` : '')
+    || topic?.auth_user_id || topic?.external_user_id
+    || (topic?.visitor_id ? `访客 ${String(topic.visitor_id).slice(0, 8)}` : '未知用户')
 }
 
 async function ensureTopicListed(topicId) {
@@ -872,15 +860,11 @@ const suggestions = computed(() => {
 function handleSourceChange(source) {
   if (source === filterSource.value) return
   filterSource.value = source
-  filterUser.value = ''
-  if (usesAdminList.value) {
-    loadAdminTopics({ selectDefault: false })
-    if (source === 'widget') fetchWidgetUsers('')
-  }
+  if (usesAdminList.value) loadAdminTopics({ selectDefault: false })
 }
 
 watch(filterUser, () => {
-  if (usesAdminList.value && filterSource.value === 'widget') loadAdminTopics({ selectDefault: false })
+  if (usesAdminList.value) loadAdminTopics({ selectDefault: false })
 })
 
 function resetFilters() {
@@ -1666,8 +1650,6 @@ watch(
 .v2-filter-radios { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .v2-filter-radios :deep(.el-radio) { margin-right: 0; height: 26px; }
 .v2-filter-select { width: 100%; }
-.v2-user-opt-label { margin-right: 8px; }
-.v2-user-opt-count { float: right; color: var(--el-text-color-secondary, #909399); font-size: 12px; }
 
 .v2-filter-actions { display: flex; justify-content: flex-end; border-top: 1px solid #eef1f5; padding-top: 10px; }
 

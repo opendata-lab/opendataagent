@@ -22,21 +22,25 @@
           <el-icon><User /></el-icon>
           <span>智能体</span>
         </el-menu-item>
+        <el-menu-item v-if="authStore.isAdmin" index="feedback">
+          <el-icon><ChatLineSquare /></el-icon>
+          <span>用户反馈</span>
+        </el-menu-item>
         <template v-if="authStore.isAdmin">
-          <el-menu-item index="feedback"><el-icon><ChatLineSquare /></el-icon><span>用户反馈</span></el-menu-item>
           <el-menu-item index="knowledge"><el-icon><Collection /></el-icon><span>知识</span></el-menu-item>
           <el-menu-item index="memories"><el-icon><Notebook /></el-icon><span>记忆</span><span v-if="pendingMemoryCount" class="pending-count" aria-label="待审核记忆">{{ pendingMemoryCount }}</span></el-menu-item>
         </template>
       </el-menu>
       <div class="intelligent-query-footer">
-        <div v-if="authStore.enabled && authStore.currentUser" class="intelligent-query-user">
+        <div v-if="authStore.currentUser" class="intelligent-query-user">
           <el-dropdown trigger="click" @command="handleUserCommand">
             <span class="intelligent-query-user__trigger">
               <el-icon><User /></el-icon>
-              <span class="intelligent-query-user__name">{{ authStore.currentUser.display_name }}</span>
+              <span class="intelligent-query-user__name">{{ authStore.currentUser.display_name || authStore.currentUser.username }}</span>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item command="profile">个人资料</el-dropdown-item>
                 <el-dropdown-item command="mcp-tokens">访问令牌</el-dropdown-item>
                 <el-dropdown-item command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
@@ -76,6 +80,10 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const handleUserCommand = async (command) => {
+  if (command === 'profile') {
+    router.push('/settings/profile')
+    return
+  }
   if (command === 'mcp-tokens') {
     router.push('/settings/mcp-tokens')
     return

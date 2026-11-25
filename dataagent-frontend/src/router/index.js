@@ -151,7 +151,7 @@ export const routes = [
         name: 'IntelligentQueryMcp',
         component: () => import('@/views/settings/McpConfig.vue'),
         // 与 skills 同样对登录用户开放只读视图；写操作由页面内 canManage 与
-        // 后端 admin 路由双重收口，非 admin 读到的凭证字段已脱敏。
+        // 后端权限依赖双重收口，非 admin 读到的凭证字段已脱敏。
         meta: { tab: 'mcp', title: 'MCP 服务' }
       },
       {
@@ -166,6 +166,24 @@ export const routes = [
         component: () => import('@/views/settings/McpTokenCreateView.vue'),
         props: (route) => ({ configAgentId: normalizeAgentId(route.query.agent_id) }),
         meta: { tab: 'mcp-tokens', title: '新建访问令牌' }
+      },
+      {
+        path: 'profile',
+        name: 'UserProfile',
+        component: () => import('@/views/settings/ProfileView.vue'),
+        meta: { tab: 'profile', title: '个人资料' }
+      },
+      {
+        path: 'users',
+        name: 'UserManagement',
+        component: () => import('@/views/settings/UsersView.vue'),
+        meta: { tab: 'users', title: '用户管理', adminOnly: true }
+      },
+      {
+        path: 'roles',
+        name: 'RoleManagement',
+        component: () => import('@/views/settings/RolesView.vue'),
+        meta: { tab: 'roles', title: '角色管理', adminOnly: true }
       },
       {
         path: 'models',
@@ -237,14 +255,13 @@ const router = createRouter({
   routes
 })
 
-// 认证守卫：auth 未启用（后端未挂配置）时完全透明，行为与历史版本一致。
+// 统一账号认证与静态权限守卫
 router.beforeEach(async (to) => {
   // 懒加载避免 router → store → api 的启动期循环依赖。
   const { sanitizeRedirectPath, useAuthStore } = await import('@/stores/auth')
   const authStore = useAuthStore()
   await authStore.bootstrap()
 
-  if (!authStore.enabled) return true
   if (to.meta?.public) {
     // 已登录再访问 /login：直接回应用。
     if (to.name === 'Login' && authStore.currentUser) {
@@ -258,7 +275,7 @@ router.beforeEach(async (to) => {
   if (!authStore.currentUser) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
-  if (to.meta?.adminOnly && !authStore.isAdmin) {
+  if (to.meta.adminOnly && !authStore.isAdmin) {
     return withAgentContext({ path: '/chat' }, to.query)
   }
   return true

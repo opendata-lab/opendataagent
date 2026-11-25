@@ -76,12 +76,14 @@ const OAUTH_ERROR_MESSAGES = {
   oauth_user_info_failed: 'OAuth 登录失败：用户信息处理未成功，请重试或联系管理员',
   oauth_denied: 'OAuth 登录已取消或被身份提供方拒绝',
   oauth_missing_user_id: 'OAuth 登录失败：身份服务未返回用户标识',
+  account_disabled: '您的账号已被停用，请联系管理员',
+  identity_conflict: '外部身份与现有账号存在冲突，请联系管理员绑定或排查',
   access_denied: 'OAuth 登录已取消'
 }
 
 onMounted(async () => {
   await authStore.bootstrap()
-  if (!authStore.enabled || authStore.currentUser) {
+  if (authStore.currentUser) {
     router.replace(redirectTarget())
     return
   }

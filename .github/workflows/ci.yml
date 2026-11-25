@@ -118,6 +118,8 @@ jobs:
           export SKILLS_ROOT_DIR="$GITHUB_WORKSPACE/.claude/skills"
           export DATAAGENT_HOST_ROOT="$GITHUB_WORKSPACE"
           export DATAAGENT_SANDBOX_IMAGE=oda-sandbox:test
+          export DATAAGENT_SECRET_KEY=ci-cancel-smoke-secret-key-0123456789abcdef
+          export DATAAGENT_DEFAULT_USER_PASSWORD=ci-cancel-smoke-default-27
           (cd dataagent-backend && exec python -m uvicorn main:app --host 127.0.0.1 --port 8900) > /tmp/cancel-backend.log 2>&1 &
           backend_pid=$!
           trap 'kill "$backend_pid" 2>/dev/null || true' EXIT

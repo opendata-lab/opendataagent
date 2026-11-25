@@ -67,7 +67,7 @@ describe('DataAgent page routing', () => {
     expect(route.name).toBe(name)
   })
 
-  it('puts admin libraries under the main layout and removes the old experience page', () => {
+  it('puts admin libraries under the main layout with admin-only metadata', () => {
     const router = buildRouter()
     for (const path of ['/feedback', '/knowledge', '/memories']) {
       const matched = router.resolve(path).matched
@@ -76,6 +76,9 @@ describe('DataAgent page routing', () => {
     }
     expect(router.resolve('/settings/experiences').matched).toHaveLength(0)
     expect(router.resolve('/settings/evaluations').matched.at(-1).meta.adminOnly).toBe(true)
+    expect(router.resolve('/settings/users').matched.at(-1).meta.adminOnly).toBe(true)
+    expect(router.resolve('/settings/roles').matched.at(-1).meta.adminOnly).toBe(true)
+    expect(router.resolve('/settings/profile').matched.at(-1).meta.adminOnly).toBeUndefined()
   })
 
   it('keeps canonical business paths independent from the deployment base', () => {

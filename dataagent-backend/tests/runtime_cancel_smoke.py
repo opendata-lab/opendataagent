@@ -23,6 +23,9 @@ NAME = 'cancel-smoke-' + uuid.uuid4().hex[:10]
 LOGS = Path(tempfile.mkdtemp(prefix=NAME, dir='/tmp'))
 BASE = os.environ.get('DATAAGENT_SMOKE_BASE_URL', 'http://127.0.0.1:8900')
 client = httpx.Client(base_url=BASE, timeout=10)
+# Every route needs a signed-in user: the smoke uses its own local admin.
+SMOKE_USER = os.environ.get('DATAAGENT_SMOKE_USER', 'cancel_smoke_admin')
+SMOKE_PASS = os.environ.get('DATAAGENT_SMOKE_PASSWORD', 'cancel-smoke-pass-27')
 topics = []
 agent = None
 
@@ -41,6 +44,12 @@ def until(check, seconds=10):
             return result
         time.sleep(.1)
     raise AssertionError('Condition not met within cancellation smoke deadline')
+
+
+def login():
+    subprocess.run([sys.executable, '-m', 'core.accounts', 'create-user', '--username', SMOKE_USER,
+        '--password', SMOKE_PASS, '--admin'], cwd=ROOT/'dataagent-backend', check=True, stdout=subprocess.DEVNULL)
+    request('POST', API+'/auth/login', json={'username': SMOKE_USER, 'password': SMOKE_PASS})
 
 
 def records(task):
@@ -145,6 +154,7 @@ if __name__ == '__main__':
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0)
         until(lambda: subprocess.run(['curl', '-sf', BASE + '/api/v1/nl2sql/health'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0)
+        login()
         main()
     finally:
         for topic in topics:

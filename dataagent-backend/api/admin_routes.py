@@ -1,34 +1,48 @@
 from __future__ import annotations
 
 from typing import Any
+
 import anyio
-
-import secrets
-
-import hashlib
-
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
 from api.topic_file_response import topic_file_response
-from core import remote_mcp_policy
-from core.auth import AuthIdentity, is_auth_enabled, require_admin, require_user, resolve_identity
-from core.agent_draft_service import agent_drafts, DraftConflict, check_revision
-from core.task_submission_service import submit_message_task
-from core.agent_profile_service import build_agent_snapshot
-from core.agent_visibility import agent_visible_to, filter_visible_agent_profiles
+from config import get_settings
+from core import experience, remote_mcp_policy
+from core.accounts import (
+    AccountContext,
+    AgentAccessDeniedError,
+    User,
+    current_account_context,
+    current_user,
+    current_user_id,
+    filter_accessible_agents,
+    get_account_store,
+    require_agent_access,
+    require_admin,
+)
+from core.agent_draft_service import DraftConflict, agent_drafts, check_revision
 from core.agent_profile_service import (
     agent_capabilities,
-    create_agent_profile,
-    delete_agent_profile,
+    build_agent_snapshot,
     get_agent_profile,
     list_agent_profiles,
     skill_folders_from_documents,
-    update_agent_profile,
+)
+from core.mcp_admin_service import (
+    annotate_mcp_servers,
+    create_mcp_server,
+    delete_mcp_server,
+    detect_mcp_server,
+    import_mcp_servers,
+    list_mcp_servers,
+    redact_mcp_servers,
+    update_mcp_server,
 )
 from core.skill_admin_service import (
     compare_document_versions,
     current_settings_payload,
+    delete_provider_config,
     detect_model_availability,
     export_skill_as_zip,
     get_document_detail,
@@ -36,59 +50,42 @@ from core.skill_admin_service import (
     list_documents,
     list_provider_configs,
     persist_admin_settings,
-    save_provider_config,
-    delete_provider_config,
     rollback_document,
     save_document_content,
+    save_provider_config,
     uninstall_skill,
     update_skill_runtime,
 )
-from core.mcp_admin_service import (
-    annotate_mcp_servers,
-    create_mcp_server,
-    detect_mcp_server,
-    delete_mcp_server,
-    import_mcp_servers,
-    list_mcp_servers,
-    redact_mcp_servers,
-    update_mcp_server,
-)
 from core.skill_discovery import resolve_skills_root_dir
-from config import get_settings
-from core import experience
-from core.topic_task_store import get_topic_task_store
+from core.task_submission_service import submit_message_task
 from core.topic_files import list_files
+from core.topic_task_store import get_topic_task_store
 from models.schemas import (
-    WidgetAccessKeyResponse,
-    AdminAuthUser,
-    AdminAuthUserList,
+    AdminFeedbackPage,
     AdminSettingsResponse,
     AdminSettingsUpdateRequest,
-    AdminFeedbackPage,
+    AdminWidgetTopicPage,
+    AdminWidgetTopicSummary,
+    AgentCapabilitiesResponse,
+    AgentCatalogProfile,
+    AgentDraftRevisionRequest,
+    AgentPreviewMessageRequest,
+    AgentProfile,
+    AgentProfileCreateRequest,
+    AgentProfileUpdateRequest,
+    AgentReadableProfile,
+    AgentRemoteMcpRequest,
+    AgentSlashCommandsResponse,
     Experience,
     ExperienceCreateRequest,
     ExperiencePage,
     ExperienceUpdateRequest,
-    AdminWidgetTopicPage,
-    AdminWidgetTopicSummary,
-    AdminWidgetUser,
-    AdminWidgetUserList,
-    AgentCapabilitiesResponse,
-    AgentCatalogProfile,
-    AgentProfile,
-    AgentProfileCreateRequest,
-    AgentProfileUpdateRequest,
-    AgentDraftRevisionRequest,
-    AgentRemoteMcpRequest,
-    AgentPreviewMessageRequest,
-    AgentReadableProfile,
-    AgentSlashCommandsResponse,
-    ModelDetectionRequest,
-    ModelDetectionResponse,
     McpServerCreateRequest,
     McpServerDetectionResponse,
     McpServerListResponse,
     McpServerUpdateRequest,
+    ModelDetectionRequest,
+    ModelDetectionResponse,
     ProviderConfig,
     ProviderCreateRequest,
     ProviderListResponse,
@@ -107,33 +104,11 @@ from models.schemas import (
 )
 
 router = APIRouter()
-# 管理面（settings / 会话审计 / agent 与 skill 管理）在 auth 启用时要求 admin 会话；
-# auth 关闭（env 未设置或显式 AUTH_ENABLED=False）时 require_admin no-op 放行，
-# 与无认证时代行为一致。router 级依赖，新增端点自动受保护。
-settings_router = APIRouter(prefix="/api/v1/nl2sql-admin", dependencies=[Depends(require_admin)])
-skills_router = APIRouter(prefix="/api/v1/dataagent", dependencies=[Depends(require_admin)])
-user_router = APIRouter(prefix="/api/v1/dataagent", dependencies=[Depends(require_user)])
-# 聊天页与 widget 依赖的三个只读 agents 端点必须保持公开（匿名嵌入场景）。
-agents_public_router = APIRouter(prefix="/api/v1/dataagent")
-
-
-def _catalog_identity(request: Request) -> AuthIdentity | None:
-    """公开 agents 目录端点的机会性身份解析。
-
-    遵循三分支客户端语义（docs/design/2026-07-01-dataagent-auth-design.md 3.2）：
-    仅 dataagent 独立 SPA 标记消费会话 Cookie/Bearer，widget 与门户嵌入页保持
-    匿名。无效会话降级为匿名而非 401 —— 公开端点保持公开，强制点在可见性过滤。
-    """
-    if not is_auth_enabled():
-        return None
-    client = str(request.headers.get("X-DataAgent-Client") or "").strip().lower()
-    if client != "dataagent":
-        return None
-    return resolve_identity(request)
+settings_router = APIRouter(prefix="/api/v1/nl2sql-admin")
+dataagent_router = APIRouter(prefix="/api/v1/dataagent")
 
 
 def _readable_agent_payload(profile: dict) -> dict:
-    """登录用户读侧只暴露 visibility 的 mode 摘要，allow-list 名单仅 admin 可见。"""
     visibility = profile.get("visibility") or {}
     path = ""
     if profile.get("remote_mcp_enabled") and remote_mcp_policy.enabled():
@@ -145,79 +120,35 @@ def _provider_catalog() -> list[ProviderConfig]:
     return [ProviderConfig.model_validate(item) for item in list_provider_configs(enabled_only=False)]
 
 
-def _mask_widget_sites(sites: list) -> list:
-    """Replace each site's stored digest with a boolean before it leaves.
-
-    The admin UI sends this same shape back when saving, so anything secret in
-    it is one round-trip away from being overwritten with a masked value.
-    """
-    masked = []
-    for site in sites:
-        if not isinstance(site, dict):
-            continue
-        server_side = site.get("server_side") or {}
-        masked.append({
-            **{k: v for k, v in site.items() if k != "server_side"},
-            "server_side": {
-                "enabled": server_side.get("enabled") is True,
-                "key_configured": bool(server_side.get("access_key_hash")),
-            },
-        })
-    return masked
-
-
 def _build_admin_settings_response(updated_at: str = "") -> AdminSettingsResponse:
     payload = current_settings_payload()
     return AdminSettingsResponse(
         provider_id=str(payload.get("provider_id") or ""),
         model=str(payload.get("model") or ""),
         providers=_provider_catalog(),
-        widget_allowed_sites=_mask_widget_sites(payload.get("widget_allowed_sites") or []),
+        widget_allowed_sites=[
+            site for site in (payload.get("widget_allowed_sites") or []) if isinstance(site, dict)
+        ],
         skills_output_dir=str(payload.get("skills_output_dir") or ""),
         skills_root_dir=str(resolve_skills_root_dir()),
         updated_at=updated_at,
     )
 
 
-@settings_router.post("/widget-sites/{website_id}/access-key", response_model=WidgetAccessKeyResponse)
-def api_create_widget_access_key(website_id: str):
-    """Mint a server-side access key for a site and enable server-side access.
-
-    The plaintext is returned here and nowhere else; only its sha256 is kept.
-    Calling this again rotates the key and invalidates the previous one.
-    """
-    secret = secrets.token_urlsafe(32)
-    _update_widget_server_side(
-        website_id,
-        enabled=True,
-        access_key_hash=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
-    )
-    return WidgetAccessKeyResponse(website_id=website_id, access_key=secret)
-
-
-@settings_router.delete("/widget-sites/{website_id}/access-key")
-def api_delete_widget_access_key(website_id: str):
-    """Turn server-side access off and forget the digest."""
-    _update_widget_server_side(website_id, enabled=False, access_key_hash="")
-    return {"ok": True}
-
-
-def _update_widget_server_side(website_id: str, *, enabled: bool, access_key_hash: str) -> None:
-    payload = current_settings_payload()
-    sites = [dict(site) for site in (payload.get("widget_allowed_sites") or []) if isinstance(site, dict)]
-    target = next((s for s in sites if str(s.get("website_id") or "") == website_id), None)
-    if target is None:
-        raise HTTPException(status_code=404, detail="Widget site not found")
-    target["server_side"] = {"enabled": enabled, "access_key_hash": access_key_hash}
-    persist_admin_settings({"widget_allowed_sites": sites})
-
-
-@settings_router.get("/settings", response_model=AdminSettingsResponse)
+@settings_router.get(
+    "/settings",
+    response_model=AdminSettingsResponse,
+    dependencies=[Depends(require_admin)],
+)
 def get_admin_settings():
     return _build_admin_settings_response()
 
 
-@settings_router.put("/settings", response_model=AdminSettingsResponse)
+@settings_router.put(
+    "/settings",
+    response_model=AdminSettingsResponse,
+    dependencies=[Depends(require_admin)],
+)
 def update_admin_settings(request: AdminSettingsUpdateRequest):
     try:
         saved = persist_admin_settings(request.model_dump(exclude_none=True, exclude_unset=True))
@@ -226,7 +157,11 @@ def update_admin_settings(request: AdminSettingsUpdateRequest):
     return _build_admin_settings_response(updated_at=str(saved.get("updated_at") or ""))
 
 
-@settings_router.post("/model-detections", response_model=ModelDetectionResponse)
+@settings_router.post(
+    "/model-detections",
+    response_model=ModelDetectionResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def create_model_detection(request: ModelDetectionRequest):
     try:
         result = await detect_model_availability(request.model_dump(exclude_none=True, exclude_unset=True))
@@ -235,12 +170,19 @@ async def create_model_detection(request: ModelDetectionRequest):
     return ModelDetectionResponse.model_validate(result)
 
 
-@settings_router.get("/providers", response_model=ProviderListResponse)
+@settings_router.get(
+    "/providers",
+    response_model=ProviderListResponse,
+    dependencies=[Depends(require_admin)],
+)
 def get_providers():
     return ProviderListResponse(providers=_provider_catalog())
 
 
-@settings_router.post("/providers")
+@settings_router.post(
+    "/providers",
+    dependencies=[Depends(require_admin)],
+)
 def create_provider(request: ProviderCreateRequest):
     try:
         saved = save_provider_config(request.model_dump(exclude_none=True, exclude_unset=True), create=True)
@@ -249,7 +191,10 @@ def create_provider(request: ProviderCreateRequest):
     return {"provider_id": str(saved.get("provider_id") or "")}
 
 
-@settings_router.put("/providers/{provider_id}")
+@settings_router.put(
+    "/providers/{provider_id}",
+    dependencies=[Depends(require_admin)],
+)
 def update_provider(provider_id: str, request: ProviderUpdateRequest):
     try:
         save_provider_config(
@@ -263,7 +208,10 @@ def update_provider(provider_id: str, request: ProviderUpdateRequest):
     return {"ok": True}
 
 
-@settings_router.delete("/providers/{provider_id}")
+@settings_router.delete(
+    "/providers/{provider_id}",
+    dependencies=[Depends(require_admin)],
+)
 def delete_provider(provider_id: str):
     try:
         delete_provider_config(provider_id)
@@ -274,20 +222,20 @@ def delete_provider(provider_id: str):
     return {"ok": True}
 
 
-@user_router.get("/mcp/servers", response_model=McpServerListResponse)
-def get_mcp_servers(identity: AuthIdentity | None = Depends(require_user)):
-    """读开放给登录用户，写仍限 admin。
+# ---- MCP Servers -----------------------------------------------------------
 
-    非 admin 读到的每一行都经过脱敏：`headers` 与 `env` 只保留键名，`command`
-    与 `args` 置空，凭证是否已配置通过 `headers_set` / `env_set` 表达。
-    """
+@dataagent_router.get("/mcp/servers", response_model=McpServerListResponse)
+def get_mcp_servers(user: User = Depends(current_user)):
     listing = list_mcp_servers()
-    if is_auth_enabled() and not (identity and identity.is_admin):
+    if not user.is_admin:
         return McpServerListResponse.model_validate(redact_mcp_servers(listing))
     return McpServerListResponse.model_validate(annotate_mcp_servers(listing))
 
 
-@skills_router.post("/mcp/servers")
+@dataagent_router.post(
+    "/mcp/servers",
+    dependencies=[Depends(require_admin)],
+)
 def create_mcp_server_endpoint(request: McpServerCreateRequest):
     try:
         server_id = create_mcp_server(request.model_dump(exclude_none=True, exclude_unset=True))
@@ -296,7 +244,10 @@ def create_mcp_server_endpoint(request: McpServerCreateRequest):
     return {"server_id": server_id}
 
 
-@skills_router.patch("/mcp/servers/{server_id}")
+@dataagent_router.patch(
+    "/mcp/servers/{server_id}",
+    dependencies=[Depends(require_admin)],
+)
 def update_mcp_server_endpoint(server_id: str, request: McpServerUpdateRequest):
     try:
         update_mcp_server(server_id, request.model_dump(exclude_none=True, exclude_unset=True))
@@ -307,7 +258,10 @@ def update_mcp_server_endpoint(server_id: str, request: McpServerUpdateRequest):
     return {"ok": True}
 
 
-@skills_router.delete("/mcp/servers/{server_id}")
+@dataagent_router.delete(
+    "/mcp/servers/{server_id}",
+    dependencies=[Depends(require_admin)],
+)
 def delete_mcp_server_endpoint(server_id: str):
     try:
         delete_mcp_server(server_id)
@@ -318,7 +272,11 @@ def delete_mcp_server_endpoint(server_id: str):
     return {"ok": True}
 
 
-@skills_router.post("/mcp/servers/{server_id}/detections", response_model=McpServerDetectionResponse)
+@dataagent_router.post(
+    "/mcp/servers/{server_id}/detections",
+    response_model=McpServerDetectionResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def detect_mcp_server_endpoint(server_id: str):
     try:
         result = await detect_mcp_server(server_id)
@@ -327,7 +285,10 @@ async def detect_mcp_server_endpoint(server_id: str):
     return McpServerDetectionResponse.model_validate(result)
 
 
-@skills_router.post("/mcp/servers/import")
+@dataagent_router.post(
+    "/mcp/servers/import",
+    dependencies=[Depends(require_admin)],
+)
 def import_mcp_servers_endpoint(payload: dict[str, Any] = Body(...)):
     try:
         imported = import_mcp_servers(payload)
@@ -336,7 +297,13 @@ def import_mcp_servers_endpoint(payload: dict[str, Any] = Body(...)):
     return {"imported": imported}
 
 
-@settings_router.get("/feedback", response_model=AdminFeedbackPage)
+# ---- Feedback & Experience -------------------------------------------------
+
+@settings_router.get(
+    "/feedback",
+    response_model=AdminFeedbackPage,
+    dependencies=[Depends(require_admin)],
+)
 def admin_list_feedback(
     agent_id: str | None = Query(default=None),
     feedback: str = Query(default="", pattern="^(|like|dislike)$"),
@@ -345,8 +312,6 @@ def admin_list_feedback(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
-    """Rated answers across all users and sources, newest rating first, with
-    like/dislike counts for the agent and time range. Backs the 用户反馈 menu."""
     payload = get_topic_task_store().list_message_feedback(
         agent_id=agent_id or None,
         feedback=feedback or None,
@@ -358,12 +323,11 @@ def admin_list_feedback(
     return AdminFeedbackPage.model_validate(payload)
 
 
-def _actor(request: Request) -> str:
-    identity = resolve_identity(request) if is_auth_enabled() else None
-    return str(getattr(identity, "user_id", "") or "admin")
-
-
-@settings_router.get("/experiences", response_model=ExperiencePage)
+@settings_router.get(
+    "/experiences",
+    response_model=ExperiencePage,
+    dependencies=[Depends(require_admin)],
+)
 def admin_list_experiences(
     kind: str = Query(default="", pattern="^(|knowledge|memory)$"),
     keyword: str = Query(default="", max_length=160),
@@ -373,10 +337,16 @@ def admin_list_experiences(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
-    """Experience library for review. The two switches are deployment config
-    (DATAAGENT_EXPERIENCE_DIGEST_ENABLED / _INJECTION_ENABLED), shown read-only."""
     settings = get_settings()
-    payload = experience.list_experiences(kind=kind, keyword=keyword, status=status, scope=scope, agent_id=agent_id or "", page=page, page_size=page_size)
+    payload = experience.list_experiences(
+        kind=kind,
+        keyword=keyword,
+        status=status,
+        scope=scope,
+        agent_id=agent_id or "",
+        page=page,
+        page_size=page_size,
+    )
     return ExperiencePage(
         **payload,
         digest_enabled=bool(settings.dataagent_experience_digest_enabled),
@@ -385,32 +355,54 @@ def admin_list_experiences(
     )
 
 
-@settings_router.post("/experiences", response_model=Experience)
-def admin_create_experience(payload: ExperienceCreateRequest, request: Request):
+@settings_router.post(
+    "/experiences",
+    response_model=Experience,
+    dependencies=[Depends(require_admin)],
+)
+def admin_create_experience(payload: ExperienceCreateRequest, user_id: int = Depends(current_user_id)):
     try:
-        return experience.create_experience(**payload.model_dump(), updated_by=_actor(request), status="active")
+        return experience.create_experience(**payload.model_dump(), user_id=user_id, status="active")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@settings_router.get("/experiences/injection-preview")
+@settings_router.get(
+    "/experiences/injection-preview",
+    dependencies=[Depends(require_admin)],
+)
 def admin_injection_preview(agent_id: str = Query(min_length=1)):
-    return {**experience.injection_preview(agent_id),
-            "injection_enabled": bool(get_settings().dataagent_experience_injection_enabled)}
+    return {
+        **experience.injection_preview(agent_id),
+        "injection_enabled": bool(get_settings().dataagent_experience_injection_enabled),
+    }
 
 
-@settings_router.delete("/experiences/{experience_id}")
+@settings_router.delete(
+    "/experiences/{experience_id}",
+    dependencies=[Depends(require_admin)],
+)
 def admin_delete_experience(experience_id: str):
     if not experience.delete_experience(experience_id):
         raise HTTPException(status_code=404, detail="experience not found")
     return {"ok": True}
 
 
-@settings_router.patch("/experiences/{experience_id}", response_model=Experience)
-def admin_update_experience(experience_id: str, payload: ExperienceUpdateRequest, request: Request):
+@settings_router.patch(
+    "/experiences/{experience_id}",
+    response_model=Experience,
+    dependencies=[Depends(require_admin)],
+)
+def admin_update_experience(
+    experience_id: str,
+    payload: ExperienceUpdateRequest,
+    user_id: int = Depends(current_user_id),
+):
     try:
         updated = experience.update_experience(
-            experience_id, updated_by=_actor(request), **payload.model_dump(exclude_unset=True, exclude_none=True),
+            experience_id,
+            user_id=user_id,
+            **payload.model_dump(exclude_unset=True, exclude_none=True),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -419,10 +411,13 @@ def admin_update_experience(experience_id: str, payload: ExperienceUpdateRequest
     return updated
 
 
-def _admin_topic_summary(topic: dict, identity: AuthIdentity | None) -> AdminWidgetTopicSummary:
+# ---- Admin Topics Audit ----------------------------------------------------
+
+def _admin_topic_summary(topic: dict, user: User) -> AdminWidgetTopicSummary:
     source = topic.get("source") or "web"
-    can_continue = source == "web" if identity is None else (
-        source in {"web", "widget", "remote"} and topic.get("auth_user_id") == identity.user_id
+    can_continue = (
+        source in {"web", "widget", "remote"}
+        and topic.get("user_id") == user.id
     )
     return AdminWidgetTopicSummary.model_validate({**topic, "can_continue": can_continue})
 
@@ -430,27 +425,18 @@ def _admin_topic_summary(topic: dict, identity: AuthIdentity | None) -> AdminWid
 @settings_router.get("/topics", response_model=AdminWidgetTopicPage)
 def admin_list_all_topics(
     source: str = Query(default="", pattern="^(|web|widget|remote)$"),
-    website_id: str | None = Query(default=None),
-    external_user_id: str | None = Query(default=None),
-    visitor_id: str | None = Query(default=None),
-    auth_user_id: str | None = Query(default=None),
+    user_id: int | None = Query(default=None),
     agent_id: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
     start: str | None = Query(default=None),
     end: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
-    identity: AuthIdentity | None = Depends(require_admin),
+    user: User = Depends(require_admin),
 ):
-    """Read-only admin listing across ALL conversation sources (web
-    anonymous pool, authenticated users, widget). `source=''` means no
-    source filter. The access flag selects the conversation UI for each row."""
     payload = get_topic_task_store().admin_list_topics(
         source=source,
-        website_id=website_id,
-        external_user_id=external_user_id,
-        visitor_id=visitor_id,
-        auth_user_id=auth_user_id,
+        user_id=user_id,
         agent_id=agent_id,
         keyword=keyword,
         start=start,
@@ -459,77 +445,11 @@ def admin_list_all_topics(
         page_size=page_size,
     )
     return AdminWidgetTopicPage(
-        items=[_admin_topic_summary(item, identity) for item in payload.get("items") or []],
+        items=[_admin_topic_summary(item, user) for item in payload.get("items") or []],
         total=int(payload.get("total") or 0),
         page=int(payload.get("page") or page),
         page_size=int(payload.get("page_size") or page_size),
     )
-
-
-@settings_router.get("/widget-topics", response_model=AdminWidgetTopicPage)
-def admin_list_widget_topics(
-    website_id: str | None = Query(default=None),
-    external_user_id: str | None = Query(default=None),
-    visitor_id: str | None = Query(default=None),
-    agent_id: str | None = Query(default=None),
-    keyword: str | None = Query(default=None),
-    start: str | None = Query(default=None),
-    end: str | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=200),
-    identity: AuthIdentity | None = Depends(require_admin),
-):
-    """Read-only admin listing of widget-sourced conversations across all
-    sites/users. Bypasses per-user isolation by design; web session
-    listing is unaffected."""
-    payload = get_topic_task_store().admin_list_topics(
-        source="widget",
-        website_id=website_id,
-        external_user_id=external_user_id,
-        visitor_id=visitor_id,
-        agent_id=agent_id,
-        keyword=keyword,
-        start=start,
-        end=end,
-        page=page,
-        page_size=page_size,
-    )
-    return AdminWidgetTopicPage(
-        items=[_admin_topic_summary(item, identity) for item in payload.get("items") or []],
-        total=int(payload.get("total") or 0),
-        page=int(payload.get("page") or page),
-        page_size=int(payload.get("page_size") or page_size),
-    )
-
-
-@settings_router.get("/widget-users", response_model=AdminWidgetUserList)
-def admin_list_widget_users(
-    website_id: str | None = Query(default=None),
-    keyword: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-):
-    """Distinct widget users (external users / anonymous visitors) for the
-    admin user filter. Supports server-side keyword search so the dropdown
-    can resolve the full user set rather than only users on the loaded page."""
-    rows = get_topic_task_store().admin_list_widget_users(
-        source="widget",
-        website_id=website_id,
-        keyword=keyword,
-        limit=limit,
-    )
-    return AdminWidgetUserList(items=[AdminWidgetUser.model_validate(row) for row in rows])
-
-
-@settings_router.get("/auth-users", response_model=AdminAuthUserList)
-def admin_list_auth_users(
-    keyword: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-):
-    """Distinct authenticated users (derived from topic ownership) powering
-    the agent visibility allow-list picker. Supports server-side keyword
-    search over the stable user id and display name."""
-    rows = get_topic_task_store().admin_list_auth_users(keyword=keyword, limit=limit)
-    return AdminAuthUserList(items=[AdminAuthUser.model_validate(row) for row in rows])
 
 
 def _require_audit_topic(store, topic_id: str) -> dict:
@@ -540,21 +460,21 @@ def _require_audit_topic(store, topic_id: str) -> dict:
 
 
 @settings_router.get("/topics/{topic_id}", response_model=AdminWidgetTopicSummary)
-def admin_get_topic(topic_id: str, identity: AuthIdentity | None = Depends(require_admin)):
-    return _admin_topic_summary(_require_audit_topic(get_topic_task_store(), topic_id), identity)
+def admin_get_topic(topic_id: str, user: User = Depends(require_admin)):
+    return _admin_topic_summary(_require_audit_topic(get_topic_task_store(), topic_id), user)
 
 
-@settings_router.get("/topics/{topic_id}/messages", response_model=TopicMessagePageResponse)
-@settings_router.get("/widget-topics/{topic_id}/messages", response_model=TopicMessagePageResponse)
+@settings_router.get(
+    "/topics/{topic_id}/messages",
+    response_model=TopicMessagePageResponse,
+    dependencies=[Depends(require_admin)],
+)
 def admin_list_topic_messages(
     topic_id: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=200, ge=1, le=500),
     order: str = Query(default="asc", pattern="^(asc|desc)$"),
 ):
-    """Read-only admin view of a conversation's messages. Resolved by
-    topic_id without owner check, since `context=None` reuses the existing
-    `1 = 1` predicate path in the store."""
     store = get_topic_task_store()
     _require_audit_topic(store, topic_id)
     payload = store.list_topic_messages_page(
@@ -563,94 +483,120 @@ def admin_list_topic_messages(
     return TopicMessagePageResponse.model_validate(payload)
 
 
-@settings_router.get("/topics/{topic_id}/files", response_model=WorkspaceFileListResponse)
+@settings_router.get(
+    "/topics/{topic_id}/files",
+    response_model=WorkspaceFileListResponse,
+    dependencies=[Depends(require_admin)],
+)
 def admin_list_topic_files(topic_id: str):
     _require_audit_topic(get_topic_task_store(), topic_id)
     return WorkspaceFileListResponse(files=list_files(topic_id))
 
 
-@settings_router.get("/topics/{topic_id}/files/{rel_path:path}")
+@settings_router.get(
+    "/topics/{topic_id}/files/{rel_path:path}",
+    dependencies=[Depends(require_admin)],
+)
 def admin_download_topic_file(topic_id: str, rel_path: str, download: int = Query(default=1)):
     _require_audit_topic(get_topic_task_store(), topic_id)
     return topic_file_response(topic_id, rel_path, download=bool(download))
 
 
-@user_router.get("/skills/documents", response_model=list[SkillDocumentSummary])
-def get_skill_documents():
-    return [SkillDocumentSummary.model_validate(item) for item in list_documents()]
-
-
-@skills_router.get("/agents/capabilities", response_model=AgentCapabilitiesResponse)
-def get_agent_capabilities():
-    return AgentCapabilitiesResponse.model_validate(agent_capabilities(list_documents()))
-
-
-@agents_public_router.get("/agents", response_model=list[AgentCatalogProfile])
-def get_agents(request: Request):
-    profiles = filter_visible_agent_profiles(list_agent_profiles(), _catalog_identity(request))
-    return [AgentCatalogProfile.model_validate(item) for item in profiles]
-
-
-@user_router.get("/agents/profiles", response_model=list[AgentReadableProfile])
-def get_readable_agent_profiles(identity: AuthIdentity | None = Depends(require_user)):
-    profiles = filter_visible_agent_profiles(list_agent_profiles(), identity)
-    return [AgentReadableProfile.model_validate(_readable_agent_payload(item)) for item in profiles]
-
+# ---- Agents & Workbench (static routes registered before dynamic {agent_id}) ----
 
 def _draft_error(exc: ValueError) -> HTTPException:
     status = 409 if isinstance(exc, DraftConflict) else 404 if "not found" in str(exc) else 400
     return HTTPException(status_code=status, detail=str(exc))
 
 
-@skills_router.get("/agents/workbench")
+def _preview_owner_context(user: User) -> dict[str, Any]:
+    return {
+        "source": "web",
+        "website_id": "",
+        "user_id": user.id,
+        "is_admin": user.is_admin,
+    }
+
+
+@dataagent_router.get(
+    "/agents/capabilities",
+    response_model=AgentCapabilitiesResponse,
+    dependencies=[Depends(require_admin)],
+)
+def get_agent_capabilities():
+    return AgentCapabilitiesResponse.model_validate(agent_capabilities(list_documents()))
+
+
+@dataagent_router.get(
+    "/agents/workbench",
+    dependencies=[Depends(require_admin)],
+)
 def list_agent_workbench():
     return agent_drafts.list()
 
 
-@user_router.get("/agents/builtin-prompt")
-def get_agent_builtin_prompt():
+@dataagent_router.get("/agents/builtin-prompt")
+def get_agent_builtin_prompt(_: User = Depends(current_user)):
     from core.agent_runtime import _load_system_prompt_template
+
     return {"content": _load_system_prompt_template()}
 
 
-@skills_router.post("/agents")
+@dataagent_router.get("/agents/profiles", response_model=list[AgentReadableProfile])
+def get_readable_agent_profiles(user: User = Depends(current_user)):
+    profiles = filter_accessible_agents(user, list_agent_profiles())
+    return [AgentReadableProfile.model_validate(_readable_agent_payload(item)) for item in profiles]
+
+
+@dataagent_router.get("/agents", response_model=list[AgentCatalogProfile])
+def get_agents(ctx: AccountContext = Depends(current_account_context)):
+    if ctx.user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    profiles = filter_accessible_agents(ctx.user, list_agent_profiles())
+    return [AgentCatalogProfile.model_validate(item) for item in profiles]
+
+
+@dataagent_router.post(
+    "/agents",
+    dependencies=[Depends(require_admin)],
+)
 def create_agent(request: AgentProfileCreateRequest):
     try:
-        return agent_drafts.create(request.model_dump(exclude_none=True, exclude_unset=True),
-                                  skill_folders_from_documents(list_documents()))
+        return agent_drafts.create(
+            request.model_dump(exclude_none=True, exclude_unset=True),
+            skill_folders_from_documents(list_documents()),
+        )
     except ValueError as exc:
         raise _draft_error(exc) from exc
 
 
-def _preview_owner_context(identity: AuthIdentity | None) -> dict[str, str]:
-    return {
-        "source": "web", "auth_user_id": identity.user_id if identity else "",
-        "auth_display_name": identity.display_name if identity else "", "auth_role": "admin",
-    }
-
-
-@skills_router.get("/agents/{agent_id}/draft")
-def get_agent_draft(agent_id: str, identity: AuthIdentity | None = Depends(require_admin)):
+@dataagent_router.get("/agents/{agent_id}/draft")
+def get_agent_draft(agent_id: str, user: User = Depends(require_admin)):
     try:
         draft = agent_drafts.get(agent_id)
         preview_id = draft.get("preview_topic_id")
-        if identity and preview_id and not get_topic_task_store().get_topic(preview_id, context=_preview_owner_context(identity)):
+        if preview_id and not get_topic_task_store().get_topic(preview_id, context=_preview_owner_context(user)):
             return {**draft, "preview_topic_id": None, "preview_task_id": None, "preview_status": None}
         return draft
     except ValueError as exc:
         raise _draft_error(exc) from exc
 
 
-@skills_router.put("/agents/{agent_id}/remote-mcp")
+@dataagent_router.put(
+    "/agents/{agent_id}/remote-mcp",
+    dependencies=[Depends(require_admin)],
+)
 def set_agent_remote_mcp(agent_id: str, request: AgentRemoteMcpRequest):
-    """MCP access acts on the published assistant at once, without a publish."""
     try:
         return agent_drafts.set_remote_mcp(agent_id, request.enabled)
     except ValueError as exc:
         raise _draft_error(exc) from exc
 
 
-@skills_router.post("/agents/{agent_id}/publish")
+@dataagent_router.post(
+    "/agents/{agent_id}/publish",
+    dependencies=[Depends(require_admin)],
+)
 def publish_agent(agent_id: str, request: AgentDraftRevisionRequest):
     try:
         return agent_drafts.publish(agent_id, request.expected_revision)
@@ -658,58 +604,73 @@ def publish_agent(agent_id: str, request: AgentDraftRevisionRequest):
         raise _draft_error(exc) from exc
 
 
-@skills_router.post("/agents/{agent_id}/preview-topics")
-def create_agent_preview_topic(agent_id: str, request: AgentDraftRevisionRequest,
-                               identity: AuthIdentity | None = Depends(require_admin)):
+@dataagent_router.post("/agents/{agent_id}/preview-topics")
+def create_agent_preview_topic(
+    agent_id: str,
+    request: AgentDraftRevisionRequest,
+    user: User = Depends(require_admin),
+):
     try:
         draft = agent_drafts.get(agent_id)
         check_revision(draft, request.expected_revision)
-        return get_topic_task_store().create_topic(title=f"调试 · {draft['name']}",
-            agent_snapshot=build_agent_snapshot(draft), context=_preview_owner_context(identity), is_agent_preview=True)
+        return get_topic_task_store().create_topic(
+            title=f"调试 · {draft['name']}",
+            agent_snapshot=build_agent_snapshot(draft),
+            context=_preview_owner_context(user),
+            is_agent_preview=True,
+        )
     except ValueError as exc:
         raise _draft_error(exc) from exc
 
 
-@skills_router.post("/agents/{agent_id}/preview-tasks")
-async def submit_agent_preview(agent_id: str, request: AgentPreviewMessageRequest,
-                               identity: AuthIdentity | None = Depends(require_admin)):
+@dataagent_router.post("/agents/{agent_id}/preview-tasks")
+async def submit_agent_preview(
+    agent_id: str,
+    request: AgentPreviewMessageRequest,
+    user: User = Depends(require_admin),
+):
     try:
         draft = agent_drafts.get(agent_id)
         check_revision(draft, request.expected_revision)
-        topic = get_topic_task_store().get_topic(request.topic_id, context=_preview_owner_context(identity))
+        topic = get_topic_task_store().get_topic(request.topic_id, context=_preview_owner_context(user))
         if not topic or not topic.get("is_agent_preview") or topic.get("agent_id") != agent_id:
             raise ValueError("preview topic not found")
-        # Row-lock acquisition must not block the event loop while another
-        # preview or publish transaction completes.
         token = await anyio.to_thread.run_sync(agent_drafts.reserve_preview, agent_id, request.expected_revision, topic)
-        result = await submit_message_task(topic_id=request.topic_id, message_type="text",
-            message_content=request.message_content, agent_id=agent_id, provider_id=request.provider_id,
-            model=request.model, debug=True)
-        await anyio.to_thread.run_sync(agent_drafts.register_preview, agent_id,
-                                      request.expected_revision, result["task_id"], token)
+        result = await submit_message_task(
+            topic_id=request.topic_id,
+            message_type="text",
+            message_content=request.message_content,
+            agent_id=agent_id,
+            provider_id=request.provider_id,
+            model=request.model,
+            debug=True,
+        )
+        await anyio.to_thread.run_sync(
+            agent_drafts.register_preview,
+            agent_id,
+            request.expected_revision,
+            result["task_id"],
+            token,
+        )
         return result
     except ValueError as exc:
         raise _draft_error(exc) from exc
 
 
-@agents_public_router.get("/agents/{agent_id}", response_model=AgentCatalogProfile)
-def get_agent(agent_id: str, request: Request):
-    profile = get_agent_profile(agent_id)
-    # 不可见与不存在返回完全一致的 404，防助手存在性探测。
-    if not profile or not agent_visible_to(profile, _catalog_identity(request)):
-        raise HTTPException(status_code=404, detail="agent not found")
-    return AgentCatalogProfile.model_validate(profile)
-
-
-@user_router.get("/agents/{agent_id}/profile", response_model=AgentReadableProfile)
-def get_readable_agent_profile(agent_id: str, identity: AuthIdentity | None = Depends(require_user)):
-    profile = get_agent_profile(agent_id)
-    if not profile or not agent_visible_to(profile, identity):
-        raise HTTPException(status_code=404, detail="agent not found")
+@dataagent_router.get("/agents/{agent_id}/profile", response_model=AgentReadableProfile)
+def get_readable_agent_profile(agent_id: str, user: User = Depends(current_user)):
+    try:
+        profile = require_agent_access(user.id, agent_id)
+    except AgentAccessDeniedError as exc:
+        raise HTTPException(status_code=404, detail="agent not found") from exc
     return AgentReadableProfile.model_validate(_readable_agent_payload(profile))
 
 
-@skills_router.get("/agents/{agent_id}/configuration", response_model=AgentProfile)
+@dataagent_router.get(
+    "/agents/{agent_id}/configuration",
+    response_model=AgentProfile,
+    dependencies=[Depends(require_admin)],
+)
 def get_agent_configuration(agent_id: str):
     profile = get_agent_profile(agent_id)
     if not profile:
@@ -717,38 +678,50 @@ def get_agent_configuration(agent_id: str):
     return AgentProfile.model_validate(profile)
 
 
-@skills_router.get("/tasks/{task_id}/system-prompt")
-def get_task_system_prompt(task_id: str):
-    # Admin only: the prompt carries internal instructions and the agent's
-    # authorized data scope, which session APIs never expose.
-    record = get_topic_task_store().get_task_system_prompt(task_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="system prompt not recorded for task")
-    return record
-
-
-@agents_public_router.get("/agents/{agent_id}/slash-commands", response_model=AgentSlashCommandsResponse)
-def get_agent_slash_commands_endpoint(agent_id: str, request: Request):
-    # Visibility must be enforced before consulting the slash-command cache,
-    # otherwise a cache hit would leak data about a hidden agent.
-    profile = get_agent_profile(agent_id)
-    if not profile or not agent_visible_to(profile, _catalog_identity(request)):
-        raise HTTPException(status_code=404, detail="agent not found")
+@dataagent_router.get("/agents/{agent_id}/slash-commands", response_model=AgentSlashCommandsResponse)
+def get_agent_slash_commands_endpoint(agent_id: str, ctx: AccountContext = Depends(current_account_context)):
+    if ctx.user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        profile = require_agent_access(ctx.user.id, agent_id)
+    except AgentAccessDeniedError as exc:
+        raise HTTPException(status_code=404, detail="agent not found") from exc
     raw = profile.get("skill_folders")
     folders = [str(item).strip() for item in raw if str(item or "").strip()] if isinstance(raw, list) else []
     return AgentSlashCommandsResponse(slash_commands=folders, source="skills")
 
 
-@skills_router.put("/agents/{agent_id}")
+@dataagent_router.get("/agents/{agent_id}", response_model=AgentCatalogProfile)
+def get_agent(agent_id: str, ctx: AccountContext = Depends(current_account_context)):
+    if ctx.user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        profile = require_agent_access(ctx.user.id, agent_id)
+    except AgentAccessDeniedError as exc:
+        raise HTTPException(status_code=404, detail="agent not found") from exc
+    return AgentCatalogProfile.model_validate(profile)
+
+
+@dataagent_router.put(
+    "/agents/{agent_id}",
+    dependencies=[Depends(require_admin)],
+)
 def update_agent(agent_id: str, request: AgentProfileUpdateRequest):
     try:
-        return agent_drafts.save(agent_id, request.model_dump(exclude_none=True, exclude_unset=True,
-            exclude={"expected_revision"}), request.expected_revision, skill_folders_from_documents(list_documents()))
+        return agent_drafts.save(
+            agent_id,
+            request.model_dump(exclude_none=True, exclude_unset=True, exclude={"expected_revision"}),
+            request.expected_revision,
+            skill_folders_from_documents(list_documents()),
+        )
     except ValueError as exc:
         raise _draft_error(exc) from exc
 
 
-@skills_router.delete("/agents/{agent_id}")
+@dataagent_router.delete(
+    "/agents/{agent_id}",
+    dependencies=[Depends(require_admin)],
+)
 def delete_agent(agent_id: str):
     try:
         agent_drafts.delete(agent_id)
@@ -757,7 +730,33 @@ def delete_agent(agent_id: str):
         raise _draft_error(exc) from exc
 
 
-@user_router.get("/skills/documents/{document_id}", response_model=SkillDocumentDetail)
+@dataagent_router.get(
+    "/tasks/{task_id}/system-prompt",
+    dependencies=[Depends(require_admin)],
+)
+def get_task_system_prompt(task_id: str):
+    record = get_topic_task_store().get_task_system_prompt(task_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="system prompt not recorded for task")
+    return record
+
+
+# ---- Skills ----------------------------------------------------------------
+
+@dataagent_router.get(
+    "/skills/documents",
+    response_model=list[SkillDocumentSummary],
+    dependencies=[Depends(current_user)],
+)
+def get_skill_documents():
+    return [SkillDocumentSummary.model_validate(item) for item in list_documents()]
+
+
+@dataagent_router.get(
+    "/skills/documents/{document_id}",
+    response_model=SkillDocumentDetail,
+    dependencies=[Depends(current_user)],
+)
 def get_skill_document(document_id: int):
     document = get_document_detail(document_id)
     if not document:
@@ -765,7 +764,11 @@ def get_skill_document(document_id: int):
     return SkillDocumentDetail.model_validate(document)
 
 
-@skills_router.put("/skills/documents/{document_id}", response_model=SkillDocumentDetail)
+@dataagent_router.put(
+    "/skills/documents/{document_id}",
+    response_model=SkillDocumentDetail,
+    dependencies=[Depends(require_admin)],
+)
 def update_skill_document(document_id: int, request: SkillDocumentUpdateRequest):
     try:
         document = save_document_content(document_id, request.content, request.change_summary)
@@ -776,7 +779,11 @@ def update_skill_document(document_id: int, request: SkillDocumentUpdateRequest)
     return SkillDocumentDetail.model_validate(document)
 
 
-@skills_router.put("/skills/runtime/{folder}", response_model=SkillRuntimeConfig)
+@dataagent_router.put(
+    "/skills/runtime/{folder}",
+    response_model=SkillRuntimeConfig,
+    dependencies=[Depends(require_admin)],
+)
 def update_skill_runtime_config(folder: str, request: SkillRuntimeUpdateRequest):
     try:
         result = update_skill_runtime(folder, request.enabled)
@@ -785,7 +792,11 @@ def update_skill_runtime_config(folder: str, request: SkillRuntimeUpdateRequest)
     return SkillRuntimeConfig.model_validate(result)
 
 
-@skills_router.post("/skills/imports", response_model=SkillImportResponse)
+@dataagent_router.post(
+    "/skills/imports",
+    response_model=SkillImportResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def import_skill(file: UploadFile = File(...)):
     try:
         content = await file.read()
@@ -795,7 +806,10 @@ async def import_skill(file: UploadFile = File(...)):
     return SkillImportResponse.model_validate(result)
 
 
-@skills_router.get("/skills/{folder}/export")
+@dataagent_router.get(
+    "/skills/{folder}/export",
+    dependencies=[Depends(require_admin)],
+)
 def export_skill(folder: str):
     try:
         file_name, content = export_skill_as_zip(folder)
@@ -810,7 +824,11 @@ def export_skill(folder: str):
     )
 
 
-@skills_router.delete("/skills/{folder}", response_model=SkillUninstallResponse)
+@dataagent_router.delete(
+    "/skills/{folder}",
+    response_model=SkillUninstallResponse,
+    dependencies=[Depends(require_admin)],
+)
 def delete_skill(folder: str):
     try:
         result = uninstall_skill(folder)
@@ -821,7 +839,11 @@ def delete_skill(folder: str):
     return SkillUninstallResponse.model_validate(result)
 
 
-@user_router.post("/skills/documents/{document_id}/compare", response_model=SkillDocumentCompareResponse)
+@dataagent_router.post(
+    "/skills/documents/{document_id}/compare",
+    response_model=SkillDocumentCompareResponse,
+    dependencies=[Depends(current_user)],
+)
 def compare_skill_document(document_id: int, request: SkillDocumentCompareRequest):
     try:
         result = compare_document_versions(
@@ -836,7 +858,11 @@ def compare_skill_document(document_id: int, request: SkillDocumentCompareReques
     return SkillDocumentCompareResponse.model_validate(result)
 
 
-@skills_router.post("/skills/documents/{document_id}/versions/{version_id}/rollback", response_model=SkillDocumentDetail)
+@dataagent_router.post(
+    "/skills/documents/{document_id}/versions/{version_id}/rollback",
+    response_model=SkillDocumentDetail,
+    dependencies=[Depends(require_admin)],
+)
 def rollback_skill_document(document_id: int, version_id: int):
     try:
         document = rollback_document(document_id, version_id)
@@ -847,9 +873,5 @@ def rollback_skill_document(document_id: int, version_id: int):
     return SkillDocumentDetail.model_validate(document)
 
 
-# include 顺序即路由匹配顺序：admin 的静态路径 /agents/capabilities 必须先于
-# 公开的动态路径 /agents/{agent_id} 注册，否则 capabilities 会被当作 agent_id。
 router.include_router(settings_router)
-router.include_router(skills_router)
-router.include_router(user_router)
-router.include_router(agents_public_router)
+router.include_router(dataagent_router)

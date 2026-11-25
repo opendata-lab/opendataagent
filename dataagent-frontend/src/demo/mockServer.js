@@ -124,17 +124,11 @@ const demoProviderSettings = {
   widget_allowed_sites: [
     {
       website_id: 'mall-web',
-      allow_anonymous: false,
-      project_name: '商城官网',
-      project_color: '#4A90A4',
-      allowed_origins: ['https://mall.demo.example.com']
+      allowed_origins: ['https://mall.example.com']
     },
     {
       website_id: 'ops-console',
-      allow_anonymous: false,
-      project_name: '运营后台',
-      project_color: '#7C5CFC',
-      allowed_origins: ['https://ops.demo.example.com']
+      allowed_origins: []
     }
   ]
 }
@@ -168,6 +162,10 @@ const demoWidgetTopics = [
     last_message_preview: '最近 7 天整体下单转化率为 18.6%，较上周提升 1.2 个百分点。',
     source: 'widget',
     website_id: 'mall-web',
+    user_id: 2,
+    username: 'u_10086',
+    display_name: 'u_10086',
+    can_continue: false,
     external_user_id: 'u_10086',
     visitor_id: '',
     created_at: '2026-06-01T09:12:00+08:00',
@@ -191,6 +189,8 @@ const demoWidgetTopics = [
     last_message_preview: '华东区销售额 Top3 门店为：上海徐汇店、杭州西湖店、南京新街口店。',
     source: 'widget',
     website_id: 'mall-web',
+    user_id: null,
+    can_continue: false,
     external_user_id: '',
     visitor_id: 'visitor-7f3a2b',
     created_at: '2026-05-31T20:01:10+08:00',
@@ -212,6 +212,10 @@ const demoWidgetTopics = [
     last_message_preview: '昨日共拦截 23 笔高风险订单，主要风险原因为「异常收货地址」。',
     source: 'widget',
     website_id: 'ops-console',
+    user_id: 3,
+    username: 'ops_zhang',
+    display_name: 'ops_zhang',
+    can_continue: false,
     external_user_id: 'ops_zhang',
     visitor_id: '',
     created_at: '2026-05-31T08:30:00+08:00',
@@ -234,6 +238,8 @@ const demoWidgetTopics = [
     last_message_preview: '当前注册会员共 12.8 万人，其中黄金及以上等级占比 21%。',
     source: 'widget',
     website_id: 'ops-console',
+    user_id: null,
+    can_continue: false,
     external_user_id: '',
     visitor_id: 'visitor-aa19c0',
     created_at: '2026-05-30T15:48:00+08:00',
@@ -250,9 +256,8 @@ const handleDemoWidgetTopics = (params = {}) => {
   const pageSize = Math.max(1, Number(params.page_size) || 20)
   const keyword = String(params.keyword || '').trim().toLowerCase()
   const filtered = demoWidgetTopics.filter((topic) => {
-    if (params.website_id && topic.website_id !== params.website_id) return false
-    if (params.external_user_id && topic.external_user_id !== params.external_user_id) return false
-    if (params.visitor_id && topic.visitor_id !== params.visitor_id) return false
+    if (params.source && (topic.source || 'widget') !== params.source) return false
+    if (params.user_id && Number(topic.user_id) !== Number(params.user_id)) return false
     if (params.agent_id && topic.agent_id !== params.agent_id) return false
     if (keyword && !String(topic.title || '').toLowerCase().includes(keyword)) return false
     return true
@@ -263,31 +268,6 @@ const handleDemoWidgetTopics = (params = {}) => {
     return clone(summary)
   })
   return { items, total: filtered.length, page, page_size: pageSize }
-}
-
-const handleDemoWidgetUsers = (params = {}) => {
-  const keyword = String(params.keyword || '').trim().toLowerCase()
-  const limit = Math.max(1, Math.min(500, Number(params.limit) || 100))
-  const byUser = new Map()
-  for (const topic of demoWidgetTopics) {
-    if (params.website_id && topic.website_id !== params.website_id) continue
-    const ext = String(topic.external_user_id || '').trim()
-    const vis = String(topic.visitor_id || '').trim()
-    const kind = ext ? 'ext' : (vis ? 'vis' : '')
-    const userId = ext || vis
-    if (!kind || !userId) continue
-    if (keyword && !userId.toLowerCase().includes(keyword)) continue
-    const key = `${kind}:${userId}`
-    const entry = byUser.get(key) || { kind, user_id: userId, topic_count: 0, last_active_at: '' }
-    entry.topic_count += 1
-    if (String(topic.updated_at || '') > entry.last_active_at) entry.last_active_at = String(topic.updated_at || '')
-    byUser.set(key, entry)
-  }
-  const items = Array.from(byUser.values())
-    .sort((a, b) => (b.last_active_at > a.last_active_at ? 1 : b.last_active_at < a.last_active_at ? -1 : b.topic_count - a.topic_count))
-    .slice(0, limit)
-    .map(({ kind, user_id, topic_count }) => ({ kind, user_id, topic_count }))
-  return { items }
 }
 
 const handleDemoWidgetTopicMessages = (topicId, params = {}) => {
@@ -739,15 +719,72 @@ export const demoAdapter = async (config) => {
     return createResponse(config, { status: 'ok', mode: 'demo' })
   }
 
-  // 演示模式不启用认证：SPA 路由守卫与登录页保持关闭。
+  const demoAdminUser = {
+    id: 1,
+    username: 'demo_admin',
+    display_name: '演示管理员',
+    is_active: true,
+    is_admin: true,
+    roles: [
+      { id: 1, role_key: 'admin', name: '管理员', is_builtin: true },
+      { id: 2, role_key: 'user', name: '普通用户', is_builtin: true }
+    ]
+  }
+
   if (method === 'get' && pathname === '/v1/nl2sql/auth/config') {
     return createResponse(config, {
-      enabled: false,
+      enabled: true,
       provider_name: '',
       provider_icon: '',
-      local_login_enabled: false,
+      local_login_enabled: true,
       oauth_login_enabled: false
     })
+  }
+
+  if (method === 'get' && pathname === '/v1/nl2sql/auth/me') {
+    return createResponse(config, demoAdminUser)
+  }
+
+  if (method === 'get' && pathname === '/v1/dataagent/profile') {
+    const { username, display_name, roles } = demoAdminUser
+    return createResponse(config, { username, display_name, roles, login_method: 'password' })
+  }
+
+  if (method === 'get' && pathname === '/v1/dataagent/users') {
+    const keyword = String(params.keyword || '').trim().toLowerCase()
+    const users = [
+      demoAdminUser,
+      ...demoWidgetTopics.filter((topic) => topic.user_id != null).map((topic) => ({
+        id: topic.user_id,
+        username: topic.username,
+        display_name: topic.display_name,
+        is_active: true,
+        is_admin: false,
+        roles: [{ id: 2, role_key: 'user', name: '普通用户', is_builtin: true }]
+      }))
+    ]
+    const items = users.filter((user) => [user.username, user.display_name].some((value) => value.toLowerCase().includes(keyword)))
+    const page = Math.max(1, Number(params.page) || 1)
+    const pageSize = Math.max(1, Number(params.page_size) || 50)
+    const start = (page - 1) * pageSize
+    return createResponse(config, { items: items.slice(start, start + pageSize), total: items.length, page, page_size: pageSize })
+  }
+
+  if (method === 'get' && pathname === '/v1/dataagent/roles') {
+    return createResponse(config, {
+      items: [
+        { id: 1, role_key: 'admin', name: '管理员', description: '系统管理员', is_builtin: true, user_count: 1, agent_ids: [] },
+        { id: 2, role_key: 'user', name: '普通用户', description: '默认用户角色', is_builtin: true, user_count: 1, agent_ids: [] }
+      ]
+    })
+  }
+
+  if (method === 'get' && /^\/v1\/dataagent\/agents\/[^/]+\/grants$/.test(pathname)) {
+    return createResponse(config, { users: [], roles: [] })
+  }
+
+  if (method === 'put' && /^\/v1\/dataagent\/agents\/[^/]+\/grants$/.test(pathname)) {
+    return createResponse(config, { users: [], roles: [] })
   }
 
   if (method === 'get' && pathname === '/v1/nl2sql-admin/topics') {
@@ -770,15 +807,7 @@ export const demoAdapter = async (config) => {
     })
   }
 
-  if (method === 'get' && pathname === '/v1/nl2sql-admin/widget-topics') {
-    return createResponse(config, handleDemoWidgetTopics(params))
-  }
-
-  if (method === 'get' && pathname === '/v1/nl2sql-admin/widget-users') {
-    return createResponse(config, handleDemoWidgetUsers(params))
-  }
-
-  if (method === 'get' && pathname.match(/^\/v1\/nl2sql-admin\/widget-topics\/[^/]+\/messages$/)) {
+  if (method === 'get' && pathname.match(/^\/v1\/nl2sql-admin\/topics\/[^/]+\/messages$/)) {
     const topicId = decodeURIComponent(pathname.split('/')[4])
     const payload = handleDemoWidgetTopicMessages(topicId, params)
     return payload

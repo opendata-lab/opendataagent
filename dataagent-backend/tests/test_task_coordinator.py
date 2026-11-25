@@ -105,12 +105,12 @@ def test_recover_checkpointed_cards_without_a_live_process():
     assert queued==["task-1"] and store.status==[("task-1","waiting")]
 
 
-def test_execution_identity_prefers_dataagent_login_then_host_reported_widget_user():
+def test_execution_identity_uses_integer_user_id_only():
     from core.task_coordinator import _execution_user_id
 
-    assert _execution_user_id({"auth_user_id": "local:alice", "external_user_id": "local:bob"}) == "local:alice"
-    assert _execution_user_id({"auth_user_id": "", "external_user_id": "local:bob"}) == "local:bob"
-    assert _execution_user_id({"auth_user_id": "", "external_user_id": "", "visitor_id": "v1"}) == ""
+    assert _execution_user_id({"user_id": 42, "auth_user_id": "local:alice"}) == 42
+    assert _execution_user_id({"user_id": None, "external_user_id": "local:bob"}) is None
+    assert _execution_user_id({"auth_user_id": "local:alice"}) is None
 
 
 def test_fast_card_answer_is_queued_after_previous_segment_releases_lease():

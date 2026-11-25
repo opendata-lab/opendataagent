@@ -230,19 +230,15 @@ def test_merge_provider_settings_allows_enabled_model_without_detection():
     assert provider["enabled"] is True
 
 
-def test_normalize_widget_allowed_sites_from_json_string():
+def test_normalize_widget_allowed_sites_preserves_origins_and_ignores_legacy_fields_in_json():
     sites = _normalize_widget_allowed_sites(
-        '[{"website_id":"demo","allowed_origins":["https://a.com","https://a.com"],"project_name":"Demo","project_color":"#4A90A4"}]'
+        '[{"website_id":"demo","allowed_origins":["https://a.com","https://a.com"],"project_name":"Demo","project_color":"#4A90A4","server_side":{"enabled":true,"access_key_hash":"old"}}]'
     )
 
     assert sites == [
         {
             "website_id": "demo",
             "allowed_origins": ["https://a.com"],
-            "project_name": "Demo",
-            "project_color": "#4A90A4",
-            "allow_anonymous": False,
-            "server_side": {"enabled": False, "access_key_hash": ""},
         }
     ]
 
@@ -260,7 +256,6 @@ def test_normalize_widget_allowed_sites_drops_invalid_and_duplicate_entries():
 
     assert [item["website_id"] for item in sites] == ["dup"]
     assert sites[0]["allowed_origins"] == []
-    assert sites[0]["allow_anonymous"] is False
 
 
 def test_merge_settings_payload_carries_widget_allowed_sites_from_patch():
@@ -273,9 +268,7 @@ def test_merge_settings_payload_carries_widget_allowed_sites_from_patch():
             "widget_allowed_sites": [
                 {
                     "website_id": "new",
-                    "allowed_origins": ["https://b.com"],
-                    "project_color": "#000",
-                    "allow_anonymous": True,
+                    "allowed_origins": ["https://portal.example.com"],
                 }
             ]
         },
@@ -284,11 +277,7 @@ def test_merge_settings_payload_carries_widget_allowed_sites_from_patch():
     assert merged["widget_allowed_sites"] == [
         {
             "website_id": "new",
-            "allowed_origins": ["https://b.com"],
-            "project_name": "",
-            "project_color": "#000",
-            "allow_anonymous": True,
-            "server_side": {"enabled": False, "access_key_hash": ""},
+            "allowed_origins": ["https://portal.example.com"],
         }
     ]
 
@@ -306,10 +295,6 @@ def test_merge_settings_payload_preserves_widget_allowed_sites_without_patch():
         {
             "website_id": "keep",
             "allowed_origins": ["*"],
-            "project_name": "",
-            "project_color": "",
-            "allow_anonymous": False,
-            "server_side": {"enabled": False, "access_key_hash": ""},
         }
     ]
 

@@ -101,7 +101,6 @@ class CreateTaskRequest(BaseModel):
     model: Optional[str] = None
     debug: bool = False
     database: Optional[str] = None
-    source_queue_id: Optional[str] = None
 
 
 
@@ -324,31 +323,9 @@ class RuntimeConfigResponse(BaseModel):
     providers: List[RuntimeProviderConfig] = Field(default_factory=list)
 
 
-class WidgetServerSide(BaseModel):
-    """Server-side access state as the admin UI sees it.
-
-    Deliberately carries no digest. The read DTO is echoed back on save, so
-    exposing the hash here would let a settings round-trip overwrite — or a
-    client forge — a site's key. Only the access-key endpoints change it.
-    """
-
-    enabled: bool = False
-    key_configured: bool = False
-
-
 class WidgetAllowedSite(BaseModel):
     website_id: str = ""
     allowed_origins: List[str] = Field(default_factory=list)
-    project_name: str = ""
-    project_color: str = ""
-    allow_anonymous: bool = False
-    server_side: WidgetServerSide = Field(default_factory=WidgetServerSide)
-
-
-class WidgetAccessKeyResponse(BaseModel):
-    website_id: str
-    # Shown exactly once, at generation. Nothing stores the plaintext.
-    access_key: str
 
 
 class AdminSettingsResponse(BaseModel):
@@ -540,7 +517,7 @@ class AgentProfile(BaseModel):
     plan_timeout_action: str = "park"
     env_vars: Dict[str, str] = Field(default_factory=dict)
     visibility: Dict[str, Any] = Field(
-        default_factory=lambda: {"mode": "all", "allowed_users": [], "allowed_groups": []}
+        default_factory=lambda: {"mode": "all"}
     )
     preset_questions: List[str] = Field(default_factory=list)
     is_default: bool = False
@@ -629,6 +606,9 @@ class TopicSummary(BaseModel):
     chat_conversation_id: str
     agent_id: str = ""
     source: str = "web"
+    user_id: Optional[int] = None
+    username: str = ""
+    display_name: str = ""
     agent: Optional[AgentSummary] = None
     permission_mode: str = "default"
     current_task_id: Optional[str] = None
@@ -646,6 +626,9 @@ class TopicDetail(BaseModel):
     chat_conversation_id: str
     agent_id: str = ""
     source: str = "web"
+    user_id: Optional[int] = None
+    username: str = ""
+    display_name: str = ""
     agent: Optional[AgentSummary] = None
     permission_mode: str = "default"
     current_task_id: Optional[str] = None
@@ -696,7 +679,8 @@ class AdminFeedbackItem(BaseModel):
     topic_title: str = ""
     source: str = "web"          # 'web' links to /chat; 'widget' is shown inline only
     website_id: Optional[str] = None
-    user_id: Optional[str] = None
+    user_id: Optional[int] = None
+    legacy_user_id: Optional[str] = None
     user_display_name: Optional[str] = None
 
 
@@ -731,6 +715,7 @@ class Experience(BaseModel):
     sources: List[ExperienceSource] = Field(default_factory=list)
     digest_topic_id: Optional[str] = None
     status: Literal["pending", "active", "disabled"]
+    user_id: Optional[int] = None
     updated_by: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -764,33 +749,6 @@ class ExperienceUpdateRequest(BaseModel):
     when_text: Optional[str] = Field(default=None, min_length=1, max_length=120)
     body: Optional[str] = Field(default=None, min_length=1, max_length=500)
     inject_mode: Optional[Literal["always", "on_demand"]] = None
-
-
-class AdminWidgetUser(BaseModel):
-    """A distinct widget user (logged-in external user or anonymous visitor)
-    for the admin user filter, with how many conversations they own."""
-
-    kind: str = "vis"          # 'ext' (external_user_id) | 'vis' (visitor_id)
-    user_id: str = ""
-    topic_count: int = 0
-
-
-class AdminWidgetUserList(BaseModel):
-    items: List[AdminWidgetUser] = Field(default_factory=list)
-
-
-class AdminAuthUser(BaseModel):
-    """A distinct authenticated user (namespaced stable id from topic
-    ownership) for the agent visibility allow-list picker."""
-
-    user_id: str = ""
-    display_name: str = ""
-    topic_count: int = 0
-    last_active_at: str = ""
-
-
-class AdminAuthUserList(BaseModel):
-    items: List[AdminAuthUser] = Field(default_factory=list)
 
 
 class UpdateMessageFeedbackRequest(BaseModel):
@@ -959,6 +917,7 @@ class EvalDatasetSummary(BaseModel):
     case_count: int = 0
     dataset_hash: str = ""
     status: str = "active"
+    user_id: Optional[int] = None
     created_by: str = ""
     created_at: Any = None
     updated_at: Any = None

@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import uuid
 from dataclasses import dataclass
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+_AUTH_HEADERS: dict[str, str] = {}
 
 
 @dataclass(frozen=True)
@@ -80,9 +84,27 @@ SCENARIOS: tuple[Scenario, ...] = (
 )
 
 
+def _login(base_url: str, username: str, password: str, timeout_seconds: int) -> None:
+    body = json.dumps({"username": username, "password": password}).encode("utf-8")
+    req = Request(
+        f"{base_url.rstrip('/')}/api/v1/nl2sql/auth/login",
+        data=body,
+        headers={"Accept": "application/json", "Content-Type": "application/json", "X-DataAgent-Client": "dataagent"},
+        method="POST",
+    )
+    with urlopen(req, timeout=timeout_seconds) as response:
+        cookie = SimpleCookie()
+        for header in response.headers.get_all("Set-Cookie") or []:
+            cookie.load(header)
+        if "da_session" in cookie:
+            _AUTH_HEADERS["Cookie"] = f"da_session={cookie['da_session'].value}"
+        else:
+            raise RuntimeError("login succeeded without da_session cookie")
+
+
 def _http_json(method: str, url: str, *, payload: dict[str, Any] | None, timeout_seconds: int) -> Any:
     body = None
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", "X-DataAgent-Client": "dataagent", **_AUTH_HEADERS}
     if payload is not None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -313,7 +335,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--report", default="")
     parser.add_argument("--scenario", action="append", default=[], help="Only run the specified scenario_id. Repeatable.")
+    parser.add_argument("--username", default=os.environ.get("DATAAGENT_USERNAME", ""))
+    parser.add_argument("--password", default=os.environ.get("DATAAGENT_PASSWORD", ""))
+    parser.add_argument("--auth-token", default=os.environ.get("DATAAGENT_AUTH_TOKEN", ""))
     args = parser.parse_args(argv)
+
+    if args.auth_token:
+        _AUTH_HEADERS["Authorization"] = f"Bearer {args.auth_token.strip()}"
+    elif args.username and args.password:
+        _login(args.base_url, args.username, args.password, args.timeout_seconds)
 
     settings = _http_json("GET", f"{args.base_url}/api/v1/nl2sql-admin/settings", payload=None, timeout_seconds=args.timeout_seconds)
     provider_id = args.provider_id or str(settings.get("provider_id") or "")

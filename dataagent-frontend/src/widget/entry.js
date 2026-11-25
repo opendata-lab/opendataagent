@@ -1,6 +1,6 @@
 import { createApp, reactive, watch } from 'vue'
 import DataAgentWidget from './DataAgentWidget.vue'
-import { isWidgetLoginRequired, normalizePanelWidth, normalizePermissionMode, parseBooleanFlag, parseWidgetConfig, resolveCurrentScript, resolveFullscreenUrl, resolveVisitorId } from './config'
+import { isWidgetLoginRequired, normalizePanelWidth, normalizePermissionMode, parseWidgetConfig, resolveCurrentScript, resolveFullscreenUrl } from './config'
 import { WIDGET_STYLES } from './styles'
 import { createWidgetTracker } from './tracking'
 import { getPanelLayout, normalizePanelMode, PANEL_MODES } from './panelLayout'
@@ -581,8 +581,6 @@ export function installWidget(scriptOrConfig = resolveCurrentScript()) {
     config.position = config.position || 'bottom-right'
     config.projectName = config.projectName || '智能问数'
     config.projectColor = config.projectColor || '#4A90A4'
-    config.allowAnonymous = parseBooleanFlag(config.allowAnonymous)
-    config.usePlatformSession = parseBooleanFlag(config.usePlatformSession)
     config.loginUrl = String(config.loginUrl || '').trim()
     config.fullscreenUrl = resolveFullscreenUrl(config.fullscreenUrl)
     if (!config.headers) {
@@ -590,17 +588,10 @@ export function installWidget(scriptOrConfig = resolveCurrentScript()) {
       if (websiteId) {
         const userId = String(config.userId || '').trim()
         config.headers = { 'X-DataAgent-Client': 'widget', 'X-DataAgent-Website-Id': websiteId }
-        if (!config.usePlatformSession && userId) {
-          config.headers['X-DataAgent-User-Id'] = userId
-        } else if (!config.usePlatformSession && config.allowAnonymous) {
-          config.headers['X-DataAgent-Visitor-Id'] = config.visitorId || resolveVisitorId(websiteId)
-        }
+        if (userId) config.headers['X-DataAgent-User-Id'] = userId
       } else {
         config.headers = {}
       }
-    }
-    if (config.usePlatformSession) {
-      config.headers = { ...config.headers, 'X-DataAgent-Widget-Identity': 'platform' }
     }
     config.agentId = config.agentId || ''
     config.apiBaseUrl = config.apiBaseUrl ?? ''

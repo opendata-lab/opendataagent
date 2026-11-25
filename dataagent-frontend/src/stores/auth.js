@@ -14,21 +14,20 @@ export function sanitizeRedirectPath(raw, fallback = '/chat') {
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
-    // auth 未启用（后端 env 未设置或显式关闭）时一切保持现状：
-    // 无登录页、无守卫、管理功能照旧可用。
-    enabled: false,
+    // 统一账号体系始终启用登录态；不再存在无认证降级。
+    enabled: true,
     providerName: '',
     providerIcon: '',
-    localLoginEnabled: false,
+    localLoginEnabled: true,
     oauthLoginEnabled: false,
     currentUser: null,
     bootstrapped: false
   }),
 
   getters: {
-    isAuthenticated: (state) => !state.enabled || Boolean(state.currentUser),
-    // auth 关闭时为 true：现有管理 UI（Skills/智能体/模型/Widget 接入）保持可用。
-    isAdmin: (state) => !state.enabled || state.currentUser?.role === 'admin'
+    isAuthenticated: (state) => Boolean(state.currentUser),
+    roles: (state) => (Array.isArray(state.currentUser?.roles) ? state.currentUser.roles : []),
+    isAdmin: (state) => state.currentUser?.is_admin === true
   },
 
   actions: {
@@ -36,23 +35,34 @@ export const useAuthStore = defineStore('auth', {
       if (this.bootstrapped) return
       try {
         const config = await authApi.getAuthConfig()
-        this.enabled = Boolean(config?.enabled)
+        this.enabled = config?.enabled !== false
         this.providerName = String(config?.provider_name || '')
         this.providerIcon = String(config?.provider_icon || '')
-        this.localLoginEnabled = Boolean(config?.local_login_enabled)
+        this.localLoginEnabled = config?.local_login_enabled !== false
         this.oauthLoginEnabled = Boolean(config?.oauth_login_enabled)
       } catch (_error) {
-        // 后端不可达时按关闭处理，避免把整个 SPA 锁在登录页外。
-        this.enabled = false
+        // 后端不可达时 fail-closed，绝不放行管理界面。
+        this.enabled = true
+        this.currentUser = null
+        this.bootstrapped = true
+        return
       }
-      if (this.enabled) {
-        try {
-          this.currentUser = await authApi.me()
-        } catch (_error) {
-          this.currentUser = null
-        }
+      try {
+        this.currentUser = await authApi.me()
+      } catch (_error) {
+        this.currentUser = null
       }
       this.bootstrapped = true
+    },
+
+    async refreshMe() {
+      try {
+        this.currentUser = await authApi.me()
+        return this.currentUser
+      } catch (_error) {
+        this.currentUser = null
+        return null
+      }
     },
 
     async loginLocal(username, password) {

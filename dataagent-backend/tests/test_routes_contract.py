@@ -13,8 +13,11 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import api.routes as routes
+import core.accounts.service as account_service
+import core.agent_profile_service as agent_profile_service
 import main
 from core.agent_profile_service import normalize_permission_mode
+from tests.account_test_helpers import bearer_headers, install_fake_accounts
 
 
 DEFAULT_AGENT = {
@@ -83,7 +86,7 @@ class _FakeStore:
         self._schedule_log_seq += 1
         return f"schedule_log_{self._schedule_log_seq}"
 
-    def create_topic(self, *, title: str, agent_snapshot=None, permission_mode=None, context=None):
+    def create_topic(self, *, title: str, agent_snapshot=None, permission_mode=None, context=None, is_agent_preview: bool = False):
         topic_id = self._new_topic()
         snapshot = dict(agent_snapshot or DEFAULT_AGENT)
         self.topics[topic_id] = {
@@ -682,16 +685,18 @@ def _submit_message_task_factory(store: _FakeStore, calls: list[dict]):
 
 
 def _build_client(monkeypatch):
+    acc_store, _admin, alice = install_fake_accounts()
     store = _FakeStore()
     coordinator = _FakeCoordinator()
     submit_calls: list[dict] = []
 
     monkeypatch.setattr(routes, "get_topic_task_store", lambda: store)
     monkeypatch.setattr(routes, "get_task_coordinator", lambda: coordinator)
-    monkeypatch.setattr(routes, "get_agent_profile", lambda agent_id: DEFAULT_AGENT if agent_id == "agent_default" else None)
+    monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: DEFAULT_AGENT if agent_id == "agent_default" else None)
     monkeypatch.setattr(routes, "submit_message_task", _submit_message_task_factory(store, submit_calls))
     monkeypatch.setattr(routes, "compute_next_run_at", lambda cron_expr, timezone: datetime(2026, 3, 23, 4, 0, 0))
 
+    monkeypatch.setattr(main, "init_auth", lambda: account_service.get_auth_settings())
     monkeypatch.setattr(main, "get_topic_task_store", lambda: store)
     monkeypatch.setattr(main, "get_task_coordinator", lambda: coordinator)
     monkeypatch.setattr(main, "get_skill_admin_store", lambda: SimpleNamespace(init_schema=lambda: None))
@@ -699,7 +704,7 @@ def _build_client(monkeypatch):
     monkeypatch.setattr(main, "bootstrap_default_agent_profile", lambda: DEFAULT_AGENT)
     monkeypatch.setattr(main, "reindex_documents_from_disk", lambda: [])
 
-    return TestClient(main.app), store, coordinator, submit_calls
+    return TestClient(main.app, headers=bearer_headers(alice.id)), store, coordinator, submit_calls
 
 
 def test_topics_tasks_and_v2_routes(monkeypatch):
@@ -1139,8 +1144,8 @@ def test_followup_suggestions_route_generates_without_changing_message_contract(
         assert store.get_message_contexts[-1] == {
             "source": "web",
             "website_id": "",
-            "external_user_id": "",
-            "visitor_id": "",
+            "user_id": 2,
+            "is_admin": False,
         }
 
         history = client.get(f"/api/v1/nl2sql/topics/{topic_id}/messages", params={"page": 1, "page_size": 50, "order": "asc"})
@@ -1269,22 +1274,19 @@ def test_message_queue_and_schedule_routes(monkeypatch):
         assert client.delete(f"/api/v1/nl2sql/message-schedule/{schedule_id}").status_code == 200
 
 
-def test_create_topic_enforces_agent_visibility_for_anonymous(monkeypatch):
-    """话题创建是可见范围的强制点：匿名 web 上下文只能使用 mode=all 的助手，
-    不可见与不存在返回同一 400 文案。已有话题按快照继续（不在本用例范围）。"""
+def test_create_topic_enforces_agent_visibility_and_grants(monkeypatch):
+    """话题创建是可见范围的强制点：未授权的 selected 助手与不存在助手返回同一 400 文案。"""
     client, store, coordinator, submit_calls = _build_client(monkeypatch)
-    # 仅打开可见性判定的 auth 开关；routes 侧 auth 仍关闭 → 请求走匿名 web 上下文。
-    monkeypatch.setattr("core.agent_visibility.is_auth_enabled", lambda: True)
 
-    open_agent = {**DEFAULT_AGENT, "agent_id": "agent_open", "is_default": False}
+    open_agent = {**DEFAULT_AGENT, "agent_id": "agent_open", "is_default": False, "visibility": {"mode": "all"}}
     restricted = {
         **DEFAULT_AGENT,
         "agent_id": "agent_restricted",
         "is_default": False,
-        "visibility": {"mode": "authenticated", "allowed_users": [], "allowed_groups": []},
+        "visibility": {"mode": "selected"},
     }
     by_id = {"agent_open": open_agent, "agent_restricted": restricted}
-    monkeypatch.setattr(routes, "get_agent_profile", lambda agent_id: by_id.get(agent_id))
+    monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: by_id.get(agent_id))
 
     with client:
         allowed = client.post("/api/v1/nl2sql/topics", json={"agent_id": "agent_open"})
@@ -1299,36 +1301,30 @@ def test_create_topic_enforces_agent_visibility_for_anonymous(monkeypatch):
         assert missing.json()["detail"] == blocked.json()["detail"]
 
 
-def test_require_agent_profile_visibility_matrix_by_context(monkeypatch):
+def test_require_agent_profile_visibility_matrix_by_user(monkeypatch):
     import pytest
     from fastapi import HTTPException
 
-    monkeypatch.setattr("core.agent_visibility.is_auth_enabled", lambda: True)
+    acc_store, admin, alice = install_fake_accounts()
+    bob = acc_store.create_user(username="bob", password_hash="x", display_name="Bob")
     selected = {
         **DEFAULT_AGENT,
         "agent_id": "agent_selected",
         "is_default": False,
-        "visibility": {"mode": "selected", "allowed_users": ["SSO:42"], "allowed_groups": []},
+        "visibility": {"mode": "selected"},
     }
     monkeypatch.setattr(
-        routes, "get_agent_profile", lambda agent_id: selected if agent_id == "agent_selected" else None
+        agent_profile_service, "get_agent_profile", lambda agent_id: selected if agent_id == "agent_selected" else None
     )
+    acc_store.set_agent_grants("agent_selected", user_ids=[alice.id], role_ids=[])
 
-    member_context = {"auth_user_id": "SSO:42", "auth_display_name": "alice", "auth_role": "user"}
-    assert routes._require_agent_profile("agent_selected", context=member_context)["agent_id"] == "agent_selected"
+    assert routes._require_agent_profile("agent_selected", alice)["agent_id"] == "agent_selected"
+    assert routes._require_agent_profile("agent_selected", admin)["agent_id"] == "agent_selected"
 
-    admin_context = {"auth_user_id": "local:admin", "auth_display_name": "admin", "auth_role": "admin"}
-    assert routes._require_agent_profile("agent_selected", context=admin_context)["agent_id"] == "agent_selected"
-
-    outsider_context = {"auth_user_id": "SSO:99", "auth_display_name": "bob", "auth_role": "user"}
     with pytest.raises(HTTPException) as excinfo:
-        routes._require_agent_profile("agent_selected", context=outsider_context)
+        routes._require_agent_profile("agent_selected", bob)
     assert excinfo.value.status_code == 400
     assert excinfo.value.detail == "agent not found"
-
-    # widget/门户匿名上下文（无 auth_user_id）→ 不可见。
-    with pytest.raises(HTTPException):
-        routes._require_agent_profile("agent_selected", context={"source": "widget"})
 
 
 def test_card_persistence_does_not_block_the_event_loop(monkeypatch):

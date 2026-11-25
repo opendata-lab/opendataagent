@@ -68,7 +68,7 @@ class TaskExecutionInput:
     sql_read_timeout_seconds: int | None = None
     sql_write_timeout_seconds: int | None = None
     agent_snapshot: dict[str, Any] | None = None
-    auth_user_id: str = ""
+    user_id: int | None = None
     permission_mode: str | None = None
     # Internal control-plane -> child contract, not a public request override.
     runtime_limits: dict[str, int] | None = None

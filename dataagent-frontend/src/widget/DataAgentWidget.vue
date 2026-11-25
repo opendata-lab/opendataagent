@@ -202,16 +202,7 @@ watch(() => props.state.isOpen, value => { if (!value) layoutMenuOpen.value = fa
 const panelMounted = ref(false)
 watch(() => props.state.isOpen, value => { if (value) panelMounted.value = true }, { immediate: true })
 const hasFullscreenCallback = computed(() => typeof props.config.onFullscreen === 'function')
-const fullscreenHref = computed(() => {
-  if (!props.config.usePlatformSession) return props.config.fullscreenUrl
-  const url = new URL(props.config.fullscreenUrl || '/chat', window.location.href)
-  // A topic ID stays on the platform origin and route.
-  if (url.origin === window.location.origin && url.pathname === '/chat') {
-    if (props.config.agentId) url.searchParams.set('agent_id', props.config.agentId)
-    if (props.state.topicId) url.searchParams.set('topic_id', props.state.topicId)
-  }
-  return url.href
-})
+const fullscreenHref = computed(() => props.config.fullscreenUrl)
 const hasFullscreenAction = computed(() => hasFullscreenCallback.value || Boolean(fullscreenHref.value))
 
 const openFullscreen = async () => {

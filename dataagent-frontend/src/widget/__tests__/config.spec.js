@@ -29,10 +29,9 @@ describe('parseWidgetConfig', () => {
       'X-DataAgent-Website-Id': 'demo',
       'X-DataAgent-User-Id': 'user-123'
     })
-    expect(config.headers).not.toHaveProperty('X-DataAgent-Visitor-Id')
   })
 
-  it('does not generate a visitor id by default when no user id is available', () => {
+  it('sends no user header when the host page has no signed-in user', () => {
     const script = document.createElement('script')
     script.dataset.websiteId = 'demo'
     script.dataset.loginUrl = '/login'
@@ -41,30 +40,10 @@ describe('parseWidgetConfig', () => {
     const config = parseWidgetConfig(script)
 
     expect(config.userId).toBe('')
-    expect(config.visitorId).toBe('')
-    expect(config.allowAnonymous).toBe(false)
     expect(config.loginUrl).toBe('/login')
     expect(config.headers).toMatchObject({
       'X-DataAgent-Client': 'widget',
       'X-DataAgent-Website-Id': 'demo'
-    })
-    expect(config.headers).not.toHaveProperty('X-DataAgent-Visitor-Id')
-  })
-
-  it('generates a visitor id only when anonymous access is explicitly enabled', () => {
-    const script = document.createElement('script')
-    script.dataset.websiteId = 'demo'
-    script.dataset.allowAnonymous = 'true'
-    window.localStorage.clear()
-
-    const config = parseWidgetConfig(script)
-
-    expect(config.allowAnonymous).toBe(true)
-    expect(config.visitorId).toMatch(/^visitor_/)
-    expect(config.headers).toMatchObject({
-      'X-DataAgent-Client': 'widget',
-      'X-DataAgent-Website-Id': 'demo',
-      'X-DataAgent-Visitor-Id': config.visitorId
     })
   })
 

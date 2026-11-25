@@ -311,7 +311,7 @@ const displayLabel = computed(() => {
   return toolAction.value.label
 })
 
-const isStructuredKind = computed(() => ['sql_execution', 'chart_spec', 'python_execution'].includes(kind.value))
+const isStructuredKind = computed(() => ['sql_execution', 'sql_export', 'chart_spec', 'python_execution'].includes(kind.value))
 
 const iconKind = computed(() => {
   if (kind.value === 'sql_execution') return 'sql'

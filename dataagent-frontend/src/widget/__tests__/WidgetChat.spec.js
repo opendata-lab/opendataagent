@@ -172,11 +172,10 @@ describe('WidgetChat history conversations', () => {
     else Reflect.deleteProperty(URL, 'revokeObjectURL')
   })
 
-  it('shows the login-required state without loading data when anonymous access is disabled', async () => {
+  it('shows the login-required state without loading data when the host has no signed-in user', async () => {
     const { wrapper, state } = mountChat({
       config: {
         userId: '',
-        allowAnonymous: false,
         loginUrl: '/login',
         headers: {
           'X-DataAgent-Client': 'widget',
@@ -196,15 +195,14 @@ describe('WidgetChat history conversations', () => {
     expect(apiMocks.topicApi.listTopics).not.toHaveBeenCalled()
   })
 
-  it('switches to the login-required state when the backend rejects anonymous access', async () => {
+  it('switches to the login-required state when the backend rejects the forwarded user', async () => {
     const { wrapper, state } = mountChat({
       config: {
-        userId: '',
-        allowAnonymous: true,
+        userId: 'u1',
         headers: {
           'X-DataAgent-Client': 'widget',
           'X-DataAgent-Website-Id': 'demo',
-          'X-DataAgent-Visitor-Id': 'visitor-test'
+          'X-DataAgent-User-Id': 'u1'
         }
       }
     })

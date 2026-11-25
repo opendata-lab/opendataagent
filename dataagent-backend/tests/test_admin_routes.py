@@ -11,7 +11,14 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import api.admin_routes as admin_routes
+import core.agent_profile_service as agent_profile_service
 from main import app
+from tests.account_test_helpers import bearer_headers, install_fake_accounts
+
+
+def _admin_client():
+    _store, admin, _alice = install_fake_accounts()
+    return TestClient(app, headers=bearer_headers(admin.id))
 
 
 def test_admin_settings_contract(monkeypatch):
@@ -76,7 +83,7 @@ def test_admin_settings_contract(monkeypatch):
         _persist,
     )
 
-    client = TestClient(app)
+    client = _admin_client()
 
     response = client.get("/api/v1/nl2sql-admin/settings")
     assert response.status_code == 200
@@ -119,7 +126,7 @@ def test_model_detection_route_contract(monkeypatch):
 
     monkeypatch.setattr(admin_routes, "detect_model_availability", _detect)
 
-    client = TestClient(app)
+    client = _admin_client()
     response = client.post(
         "/api/v1/nl2sql-admin/model-detections",
         json={
@@ -186,7 +193,7 @@ def test_mcp_registry_routes_contract(monkeypatch):
             "checked_at": "2026-09-27T12:00:00+00:00",
         }
     monkeypatch.setattr(admin_routes, "detect_mcp_server", _detect_mcp)
-    client = TestClient(app)
+    client = _admin_client()
 
     assert client.get("/api/v1/dataagent/mcp/servers").json()["configured"][0]["server_id"] == "srv_demo"
     created = client.post(
@@ -319,7 +326,7 @@ def test_skill_document_routes_contract(monkeypatch):
             "document_count": 1,
         },
     )
-    client = TestClient(app)
+    client = _admin_client()
 
     list_response = client.get("/api/v1/dataagent/skills/documents")
     assert list_response.status_code == 200
@@ -385,7 +392,7 @@ def test_skill_uninstall_route_rejects_service_errors(monkeypatch):
 
     monkeypatch.setattr(admin_routes, "uninstall_skill", _reject_uninstall)
 
-    client = TestClient(app)
+    client = _admin_client()
     response = client.delete("/api/v1/dataagent/skills/example-business-knowledge")
 
     assert response.status_code == 400
@@ -425,6 +432,7 @@ def test_agent_profile_routes_contract(monkeypatch):
     )
     monkeypatch.setattr(admin_routes, "list_agent_profiles", lambda: [profile])
     monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
+    monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
     monkeypatch.setattr(admin_routes, "agent_capabilities", lambda documents: {
         "tools": ["Skill", "Read"],
         "mcp_servers": [{"id": "web", "name": "Example MCP", "enabled": True, "tool_names": ["example_query_readonly"]}],
@@ -445,7 +453,7 @@ def test_agent_profile_routes_contract(monkeypatch):
     monkeypatch.setattr(admin_routes.agent_drafts, "save", _update)
     monkeypatch.setattr(admin_routes.agent_drafts, "delete", lambda agent_id: agent_id == "agent_1")
 
-    client = TestClient(app)
+    client = _admin_client()
 
     capabilities = client.get("/api/v1/dataagent/agents/capabilities")
     assert capabilities.status_code == 200
@@ -487,8 +495,9 @@ def test_agent_profile_routes_contract(monkeypatch):
 def test_agent_slash_commands_route_contract(monkeypatch):
     profile = {"agent_id": "agent_1", "name": "x", "skill_folders": ["marketing-insights", "platform-tools"]}
     monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
+    monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
 
-    client = TestClient(app)
+    client = _admin_client()
 
     # Cold start: no run reported yet, fall back to the agent's enabled skill folders.
     fallback = client.get("/api/v1/dataagent/agents/agent_1/slash-commands")
@@ -548,328 +557,239 @@ class _FakeWidgetStore:
         }
 
 
-def test_admin_widget_topics_routes_contract(monkeypatch):
+def test_admin_topics_routes_contract(monkeypatch):
     store = _FakeWidgetStore()
     monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: store)
 
-    client = TestClient(app)
+    client = _admin_client()
 
     listing = client.get(
-        "/api/v1/nl2sql-admin/widget-topics",
-        params={"website_id": "site_a", "keyword": "嵌入", "page": 1, "page_size": 20},
+        "/api/v1/nl2sql-admin/topics",
+        params={"source": "widget", "user_id": 7, "keyword": "嵌入", "page": 1, "page_size": 20},
     )
     assert listing.status_code == 200
     body = listing.json()
     assert body["total"] == 1
     assert body["items"][0]["source"] == "widget"
-    assert body["items"][0]["website_id"] == "site_a"
-    assert body["items"][0]["visitor_id"] == "visitor_x"
-    # Admin listing must always scope to widget source and forward filters.
+    # Admin listing filters by source and platform user only.
     assert store.list_calls[0]["source"] == "widget"
-    assert store.list_calls[0]["website_id"] == "site_a"
+    assert store.list_calls[0]["user_id"] == 7
     assert store.list_calls[0]["keyword"] == "嵌入"
 
-    messages = client.get("/api/v1/nl2sql-admin/widget-topics/topic_widget_1/messages")
+    messages = client.get("/api/v1/nl2sql-admin/topics/topic_widget_1/messages")
     assert messages.status_code == 200
     assert messages.json()["topic_id"] == "topic_widget_1"
     # Admin message read bypasses owner isolation via context=None.
     assert store.message_calls[0]["context"] is None
 
-    missing = client.get("/api/v1/nl2sql-admin/widget-topics/unknown/messages")
+    missing = client.get("/api/v1/nl2sql-admin/topics/unknown/messages")
     assert missing.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# 认证启用后的管理端点门禁（auth 关闭时以上所有既有用例即回归：全部开放）。
+# 统一认证与权限门禁
 # ---------------------------------------------------------------------------
 
-VALID_SECRET = "unit-test-secret-key-0123456789abcdef-0123456789"
+
+def test_admin_routes_require_admin_when_auth_enabled(monkeypatch):
+    _acc_store, admin, alice = install_fake_accounts()
+    store = _FakeWidgetStore()
+    monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: store)
+    monkeypatch.setattr(admin_routes, "list_documents", lambda: [])
+    client = TestClient(app)
+
+    # 未登录 → 401
+    assert client.get("/api/v1/nl2sql-admin/settings").status_code == 401
+    assert client.get("/api/v1/nl2sql-admin/topics").status_code == 401
+    assert client.get("/api/v1/dataagent/skills/documents").status_code == 401
+    assert client.post("/api/v1/dataagent/agents", json={"name": "x"}).status_code == 401
+
+    # 普通用户 → 403（读 skills 有 menu:skills 放行，写 skills 需要 skills:manage 被拒）
+    user_headers = bearer_headers(alice.id)
+    assert client.get("/api/v1/nl2sql-admin/topics", headers=user_headers).status_code == 403
+    assert client.get("/api/v1/dataagent/skills/documents", headers=user_headers).status_code == 200
+    assert client.put(
+        "/api/v1/dataagent/skills/runtime/demo",
+        json={"enabled": True},
+        headers=user_headers,
+    ).status_code == 403
+
+    # admin → 放行
+    admin_headers = bearer_headers(admin.id)
+    listing = client.get("/api/v1/nl2sql-admin/topics", headers=admin_headers)
+    assert listing.status_code == 200
+    assert store.list_calls[0]["source"] == ""
 
 
-def _enable_auth(monkeypatch, tmp_path):
-    import bcrypt
-    import core.auth as auth
+def test_agent_responses_are_layered_by_authentication(monkeypatch):
+    _acc_store, admin, alice = install_fake_accounts()
+    profile = {
+        "agent_id": "agent_1",
+        "name": "x",
+        "description": "readable",
+        "system_prompt": "internal instructions",
+        "allowed_tools": ["Read"],
+        "mcp_server_ids": ["web"],
+        "skill_folders": ["demo"],
+        "env_vars": {"SECRET_TOKEN": "hidden"},
+        "visibility": {"mode": "all"},
+    }
+    monkeypatch.setattr(admin_routes, "list_agent_profiles", lambda: [profile])
+    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
+    monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
+    client = TestClient(app)
 
-    password_hash = bcrypt.hashpw(b"admin-pass", bcrypt.gensalt(rounds=4)).decode()
-    config_file = tmp_path / "auth_config.py"
-    config_file.write_text(
-        f"""
-AUTH_ENABLED = True
-SECRET_KEY = {VALID_SECRET!r}
-LOCAL_ADMINS = [{{"username": "admin", "password_bcrypt": {password_hash!r}}}]
-""",
-        encoding="utf-8",
+    # 未登录 → 401（统一账号体系下不开放匿名访问）
+    assert client.get("/api/v1/dataagent/agents").status_code == 401
+    assert client.get("/api/v1/dataagent/agents/agent_1").status_code == 401
+    assert client.get("/api/v1/dataagent/agents/agent_1/slash-commands").status_code == 401
+
+    user_headers = bearer_headers(alice.id)
+    # 普通用户目录 DTO 不泄露配置
+    catalog_list = client.get("/api/v1/dataagent/agents", headers=user_headers)
+    assert catalog_list.status_code == 200
+    assert set(catalog_list.json()[0]) == {
+        "agent_id", "name", "description", "is_default", "is_builtin", "preset_questions"
+    }
+    catalog_detail = client.get("/api/v1/dataagent/agents/agent_1", headers=user_headers)
+    assert catalog_detail.status_code == 200
+    assert "system_prompt" not in catalog_detail.json()
+    assert "env_vars" not in catalog_detail.json()
+    assert client.get("/api/v1/dataagent/agents/agent_1/slash-commands", headers=user_headers).status_code == 200
+
+    # 普通用户读取完整只读配置，但 env_vars 始终排除
+    readable = client.get("/api/v1/dataagent/agents/agent_1/profile", headers=user_headers)
+    assert readable.status_code == 200
+    assert readable.json()["system_prompt"] == "internal instructions"
+    assert readable.json()["mcp_server_ids"] == ["web"]
+    assert "env_vars" not in readable.json()
+
+    # 管理员配置端点保留完整 Profile
+    configuration = client.get(
+        "/api/v1/dataagent/agents/agent_1/configuration",
+        headers=bearer_headers(admin.id),
     )
-    monkeypatch.setenv(auth.AUTH_CONFIG_ENV, str(config_file))
-    auth.reset_auth_for_tests()
-    auth.init_auth()
-    return auth
+    assert configuration.status_code == 200
+    assert configuration.json()["env_vars"] == {"SECRET_TOKEN": "hidden"}
 
 
-def _bearer(auth, *, role):
-    identity = auth.AuthIdentity(user_id=f"local:{role}", display_name=role, role=role, provider="local")
-    return {"Authorization": f"Bearer {auth.issue_session_token(identity)}"}
+def test_agents_capabilities_not_shadowed_by_public_dynamic_route(monkeypatch):
+    """路由遮蔽回归：/agents/capabilities（admin 静态路径）必须先于动态 /agents/{agent_id} 匹配。"""
+    _acc_store, admin, _alice = install_fake_accounts()
+    monkeypatch.setattr(admin_routes, "list_documents", lambda: [])
+    monkeypatch.setattr(
+        admin_routes,
+        "agent_capabilities",
+        lambda documents: {"tools": [], "mcp_servers": [], "skills": [], "permission_modes": []},
+    )
+    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: None)
+    monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: None)
+    client = TestClient(app)
+
+    assert client.get("/api/v1/dataagent/agents/capabilities").status_code == 401
+    response = client.get("/api/v1/dataagent/agents/capabilities", headers=bearer_headers(admin.id))
+    assert response.status_code == 200
+    assert "tools" not in response.json()
 
 
-def test_admin_routes_require_admin_when_auth_enabled(monkeypatch, tmp_path):
-    auth = _enable_auth(monkeypatch, tmp_path)
-    try:
-        store = _FakeWidgetStore()
-        monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: store)
-        monkeypatch.setattr(admin_routes, "list_documents", lambda: [])
-        client = TestClient(app)
+def test_admin_all_topics_forwards_filters(monkeypatch):
+    _acc_store, admin, _alice = install_fake_accounts()
+    store = _FakeWidgetStore()
+    monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: store)
+    client = TestClient(app)
 
-        # 未登录 → 401
-        assert client.get("/api/v1/nl2sql-admin/settings").status_code == 401
-        assert client.get("/api/v1/nl2sql-admin/widget-topics").status_code == 401
-        assert client.get("/api/v1/nl2sql-admin/topics").status_code == 401
-        assert client.get("/api/v1/dataagent/skills/documents").status_code == 401
-        assert client.post("/api/v1/dataagent/agents", json={"name": "x"}).status_code == 401
+    response = client.get(
+        "/api/v1/nl2sql-admin/topics",
+        params={"source": "web", "user_id": 42, "keyword": "趋势"},
+        headers=bearer_headers(admin.id),
+    )
+    assert response.status_code == 200
+    assert store.list_calls[0]["source"] == "web"
+    assert store.list_calls[0]["user_id"] == 42
+    assert store.list_calls[0]["keyword"] == "趋势"
 
-        # 普通用户 → 403
-        user_headers = _bearer(auth, role="user")
-        assert client.get("/api/v1/nl2sql-admin/topics", headers=user_headers).status_code == 403
-        assert client.get("/api/v1/dataagent/skills/documents", headers=user_headers).status_code == 200
-        assert client.put(
-            "/api/v1/dataagent/skills/runtime/demo",
-            json={"enabled": True},
-            headers=user_headers,
-        ).status_code == 403
-
-        # admin → 放行
-        admin_headers = _bearer(auth, role="admin")
-        listing = client.get("/api/v1/nl2sql-admin/topics", headers=admin_headers)
-        assert listing.status_code == 200
-        assert store.list_calls[0]["source"] == ""
-    finally:
-        auth.reset_auth_for_tests()
+    bad_source = client.get(
+        "/api/v1/nl2sql-admin/topics",
+        params={"source": "evil"},
+        headers=bearer_headers(admin.id),
+    )
+    assert bad_source.status_code == 422
 
 
-def test_agent_responses_are_layered_by_authentication(monkeypatch, tmp_path):
-    auth = _enable_auth(monkeypatch, tmp_path)
-    try:
-        profile = {
-            "agent_id": "agent_1",
-            "name": "x",
-            "description": "readable",
-            "system_prompt": "internal instructions",
-            "allowed_tools": ["Read"],
-            "mcp_server_ids": ["web"],
-            "skill_folders": ["demo"],
-
-            "env_vars": {"SECRET_TOKEN": "hidden"},
-        }
-        monkeypatch.setattr(admin_routes, "list_agent_profiles", lambda: [profile])
-        monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
-        client = TestClient(app)
-
-        # Widget / 匿名嵌入依赖的三个端点保持公开，但目录 DTO 不泄露配置。
-        public_list = client.get("/api/v1/dataagent/agents")
-        assert public_list.status_code == 200
-        assert set(public_list.json()[0]) == {
-            "agent_id", "name", "description", "is_default", "is_builtin", "preset_questions"
-        }
-        public_detail = client.get("/api/v1/dataagent/agents/agent_1")
-        assert public_detail.status_code == 200
-        assert "system_prompt" not in public_detail.json()
-        assert "env_vars" not in public_detail.json()
-        assert client.get("/api/v1/dataagent/agents/agent_1/slash-commands").status_code == 200
-
-        # 普通用户读取完整只读配置，但 env_vars 始终排除。
-        user_headers = _bearer(auth, role="user")
-        readable = client.get("/api/v1/dataagent/agents/agent_1/profile", headers=user_headers)
-        assert readable.status_code == 200
-        assert readable.json()["system_prompt"] == "internal instructions"
-        assert readable.json()["mcp_server_ids"] == ["web"]
-        assert "env_vars" not in readable.json()
-
-        # 管理员配置端点保留完整 Profile。
-        configuration = client.get(
-            "/api/v1/dataagent/agents/agent_1/configuration",
-            headers=_bearer(auth, role="admin"),
-        )
-        assert configuration.status_code == 200
-        assert configuration.json()["env_vars"] == {"SECRET_TOKEN": "hidden"}
-    finally:
-        auth.reset_auth_for_tests()
-
-
-def test_agents_capabilities_not_shadowed_by_public_dynamic_route(monkeypatch, tmp_path):
-    """路由遮蔽回归：/agents/capabilities（admin 静态路径）必须先于公开的
-    /agents/{agent_id} 匹配，否则 capabilities 会被当作 agent_id 返回 404/泄漏。"""
-    auth = _enable_auth(monkeypatch, tmp_path)
-    try:
-        monkeypatch.setattr(admin_routes, "list_documents", lambda: [])
-        monkeypatch.setattr(
-            admin_routes,
-            "agent_capabilities",
-            lambda documents: {"tools": [], "mcp_servers": [], "skills": [], "permission_modes": []},
-        )
-        # 公开动态路由若吞掉 capabilities，会走 get_agent_profile 而不是 401/200。
-        monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: None)
-        client = TestClient(app)
-
-        # 未登录：capabilities 属于 admin router → 401（而不是被公开动态路由当作 agent_id 返回 404）。
-        assert client.get("/api/v1/dataagent/agents/capabilities").status_code == 401
-        # admin：正常返回 capabilities 契约。
-        response = client.get("/api/v1/dataagent/agents/capabilities", headers=_bearer(auth, role="admin"))
-        assert response.status_code == 200
-        assert "tools" not in response.json()
-    finally:
-        auth.reset_auth_for_tests()
-
-
-def test_admin_all_topics_forwards_filters(monkeypatch, tmp_path):
-    auth = _enable_auth(monkeypatch, tmp_path)
-    try:
-        store = _FakeWidgetStore()
-        monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: store)
-        client = TestClient(app)
-
-        response = client.get(
-            "/api/v1/nl2sql-admin/topics",
-            params={"source": "web", "auth_user_id": "SSO:42", "keyword": "趋势"},
-            headers=_bearer(auth, role="admin"),
-        )
-        assert response.status_code == 200
-        assert store.list_calls[0]["source"] == "web"
-        assert store.list_calls[0]["auth_user_id"] == "SSO:42"
-        assert store.list_calls[0]["keyword"] == "趋势"
-
-        bad_source = client.get(
-            "/api/v1/nl2sql-admin/topics",
-            params={"source": "evil"},
-            headers=_bearer(auth, role="admin"),
-        )
-        assert bad_source.status_code == 422
-    finally:
-        auth.reset_auth_for_tests()
-
-
-def test_agent_visibility_scope_enforced_across_read_tiers(monkeypatch, tmp_path):
-    """可见范围矩阵：匿名只见 all 档；登录用户按 authenticated/selected 过滤；
+def test_agent_visibility_scope_enforced_across_read_tiers(monkeypatch):
+    """可见范围矩阵：登录用户按 all / authenticated / selected（基于 da_agent_grant）过滤；
     admin 全量；不可见详情与 slash-commands 返回与不存在一致的 404。"""
-    auth = _enable_auth(monkeypatch, tmp_path)
-    try:
-        profiles = [
-            {"agent_id": "agent_open", "name": "开放", "skill_folders": ["demo"]},
-            {
-                "agent_id": "agent_auth",
-                "name": "仅登录",
-                "visibility": {"mode": "authenticated", "allowed_users": [], "allowed_groups": []},
-            },
-            {
-                "agent_id": "agent_sel",
-                "name": "指定用户",
-                "visibility": {"mode": "selected", "allowed_users": ["local:user"], "allowed_groups": []},
-            },
-            {
-                "agent_id": "agent_sel_other",
-                "name": "指定他人",
-                "visibility": {"mode": "selected", "allowed_users": ["SSO:someone-else"], "allowed_groups": []},
-            },
-        ]
-        by_id = {item["agent_id"]: item for item in profiles}
-        monkeypatch.setattr(admin_routes, "list_agent_profiles", lambda: list(profiles))
-        monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: by_id.get(agent_id))
-        client = TestClient(app)
+    acc_store, admin, alice = install_fake_accounts()
+    bob = acc_store.create_user(username="bob", password_hash="x", display_name="Bob")
+    profiles = [
+        {"agent_id": "agent_open", "name": "开放", "skill_folders": ["demo"], "visibility": {"mode": "all"}},
+        {"agent_id": "agent_auth", "name": "仅登录", "visibility": {"mode": "authenticated"}},
+        {"agent_id": "agent_sel", "name": "指定用户", "visibility": {"mode": "selected"}},
+        {"agent_id": "agent_sel_other", "name": "指定他人", "visibility": {"mode": "selected"}},
+    ]
+    by_id = {item["agent_id"]: item for item in profiles}
+    acc_store.set_agent_grants("agent_sel", user_ids=[alice.id], role_ids=[])
+    acc_store.set_agent_grants("agent_sel_other", user_ids=[bob.id], role_ids=[])
+    monkeypatch.setattr(admin_routes, "list_agent_profiles", lambda: list(profiles))
+    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: by_id.get(agent_id))
+    monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: by_id.get(agent_id))
+    client = TestClient(app)
 
-        spa = {"X-DataAgent-Client": "dataagent"}
-        user_headers = {**_bearer(auth, role="user"), **spa}
-        admin_headers = {**_bearer(auth, role="admin"), **spa}
+    user_headers = bearer_headers(alice.id)
+    admin_headers = bearer_headers(admin.id)
 
-        # 匿名（widget/门户嵌入，无 SPA 标记）：仅 mode=all 可见。
-        anonymous = client.get("/api/v1/dataagent/agents")
-        assert anonymous.status_code == 200
-        assert [item["agent_id"] for item in anonymous.json()] == ["agent_open"]
-        assert client.get("/api/v1/dataagent/agents/agent_auth").status_code == 404
-        assert client.get("/api/v1/dataagent/agents/agent_sel/slash-commands").status_code == 404
+    # 未登录 → 401
+    assert client.get("/api/v1/dataagent/agents").status_code == 401
 
-        # 携带会话但无 dataagent SPA 标记：公开端点遵循三分支语义，保持匿名。
-        marked_less = client.get("/api/v1/dataagent/agents", headers=_bearer(auth, role="user"))
-        assert [item["agent_id"] for item in marked_less.json()] == ["agent_open"]
+    # 登录普通用户：all + authenticated + selected 命中
+    listed = client.get("/api/v1/dataagent/agents", headers=user_headers)
+    assert listed.status_code == 200
+    assert [item["agent_id"] for item in listed.json()] == ["agent_open", "agent_auth", "agent_sel"]
+    assert client.get("/api/v1/dataagent/agents/agent_sel", headers=user_headers).status_code == 200
+    assert client.get("/api/v1/dataagent/agents/agent_sel_other", headers=user_headers).status_code == 404
+    assert client.get("/api/v1/dataagent/agents/agent_sel_other/slash-commands", headers=user_headers).status_code == 404
 
-        # 登录普通用户（SPA 标记 + 会话）：all + authenticated + selected 命中。
-        listed = client.get("/api/v1/dataagent/agents", headers=user_headers)
-        assert [item["agent_id"] for item in listed.json()] == ["agent_open", "agent_auth", "agent_sel"]
-        assert client.get("/api/v1/dataagent/agents/agent_sel", headers=user_headers).status_code == 200
-        assert client.get("/api/v1/dataagent/agents/agent_sel_other", headers=user_headers).status_code == 404
-        assert (
-            client.get("/api/v1/dataagent/agents/agent_sel_other/slash-commands", headers=user_headers).status_code
-            == 404
-        )
+    # 登录用户读侧只暴露 visibility_mode 摘要
+    readable_list = client.get("/api/v1/dataagent/agents/profiles", headers=user_headers)
+    assert readable_list.status_code == 200
+    readable_ids = {item["agent_id"]: item for item in readable_list.json()}
+    assert set(readable_ids) == {"agent_open", "agent_auth", "agent_sel"}
+    assert readable_ids["agent_sel"]["visibility_mode"] == "selected"
+    assert "visibility" not in readable_ids["agent_sel"]
+    assert client.get("/api/v1/dataagent/agents/agent_sel_other/profile", headers=user_headers).status_code == 404
 
-        # 登录用户读侧只暴露 visibility_mode 摘要，不泄露 allowed_users 名单。
-        readable_list = client.get("/api/v1/dataagent/agents/profiles", headers=_bearer(auth, role="user"))
-        assert readable_list.status_code == 200
-        readable_ids = {item["agent_id"]: item for item in readable_list.json()}
-        assert set(readable_ids) == {"agent_open", "agent_auth", "agent_sel"}
-        assert readable_ids["agent_sel"]["visibility_mode"] == "selected"
-        assert "visibility" not in readable_ids["agent_sel"]
-        assert (
-            client.get("/api/v1/dataagent/agents/agent_sel_other/profile", headers=_bearer(auth, role="user")).status_code
-            == 404
-        )
+    # 目录 DTO 不泄露额外字段
+    assert set(listed.json()[0]) == {
+        "agent_id", "name", "description", "is_default", "is_builtin", "preset_questions"
+    }
 
-        # 目录 DTO 不因可见性新增泄露字段。
-        assert set(listed.json()[0]) == {
-            "agent_id", "name", "description", "is_default", "is_builtin", "preset_questions"
-        }
-
-        # admin：列表全量，configuration 返回完整 visibility 配置。
-        admin_listed = client.get("/api/v1/dataagent/agents", headers=admin_headers)
-        assert len(admin_listed.json()) == 4
-        configuration = client.get(
-            "/api/v1/dataagent/agents/agent_sel_other/configuration", headers=admin_headers
-        )
-        assert configuration.status_code == 200
-        assert configuration.json()["visibility"]["allowed_users"] == ["SSO:someone-else"]
-    finally:
-        auth.reset_auth_for_tests()
+    # admin：列表全量，configuration 返回完整 visibility 配置（仅含 mode）
+    admin_listed = client.get("/api/v1/dataagent/agents", headers=admin_headers)
+    assert len(admin_listed.json()) == 4
+    configuration = client.get("/api/v1/dataagent/agents/agent_sel_other/configuration", headers=admin_headers)
+    assert configuration.status_code == 200
+    assert configuration.json()["visibility"] == {"mode": "selected"}
 
 
-def test_admin_auth_users_route_contract(monkeypatch, tmp_path):
-    auth = _enable_auth(monkeypatch, tmp_path)
-    try:
-        calls = []
+def test_admin_conversation_filter_uses_platform_users_route():
+    _acc_store, admin, alice = install_fake_accounts()
+    client = TestClient(app)
 
-        class _FakeAuthUserStore:
-            def admin_list_auth_users(self, *, keyword=None, limit=100):
-                calls.append({"keyword": keyword, "limit": limit})
-                return [
-                    {
-                        "user_id": "SSO:42",
-                        "display_name": "alice",
-                        "topic_count": 3,
-                        "last_active_at": "2026-07-19T10:00:00",
-                    }
-                ]
+    assert client.get("/api/v1/nl2sql-admin/auth-users", headers=bearer_headers(admin.id)).status_code == 404
+    assert client.get("/api/v1/dataagent/users").status_code == 401
+    assert client.get("/api/v1/dataagent/users", headers=bearer_headers(alice.id)).status_code == 403
 
-        monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: _FakeAuthUserStore())
-        client = TestClient(app)
-
-        assert client.get("/api/v1/nl2sql-admin/auth-users").status_code == 401
-        assert (
-            client.get("/api/v1/nl2sql-admin/auth-users", headers=_bearer(auth, role="user")).status_code == 403
-        )
-
-        response = client.get(
-            "/api/v1/nl2sql-admin/auth-users",
-            params={"keyword": "ali", "limit": 20},
-            headers=_bearer(auth, role="admin"),
-        )
-        assert response.status_code == 200
-        assert response.json()["items"] == [
-            {
-                "user_id": "SSO:42",
-                "display_name": "alice",
-                "topic_count": 3,
-                "last_active_at": "2026-07-19T10:00:00",
-            }
-        ]
-        assert calls == [{"keyword": "ali", "limit": 20}]
-    finally:
-        auth.reset_auth_for_tests()
+    response = client.get(
+        "/api/v1/dataagent/users",
+        params={"keyword": "ali", "page": 1, "page_size": 100},
+        headers=bearer_headers(admin.id),
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == alice.id
+    assert items[0]["username"] == "alice"
+    assert items[0]["display_name"] == "Alice"
 
 
 def test_task_system_prompt_route_contract(monkeypatch):
@@ -886,7 +806,7 @@ def test_task_system_prompt_route_contract(monkeypatch):
             return record if task_id == "task_1" else None
 
     monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: _Store())
-    client = TestClient(app)
+    client = _admin_client()
 
     found = client.get("/api/v1/dataagent/tasks/task_1/system-prompt")
     assert found.status_code == 200
@@ -896,11 +816,13 @@ def test_task_system_prompt_route_contract(monkeypatch):
     assert missing.status_code == 404
 
 
-def test_knowledge_memory_admin_contract(monkeypatch, tmp_path):
-    auth = _enable_auth(monkeypatch, tmp_path)
+def test_knowledge_memory_admin_contract(monkeypatch):
+    _acc_store, admin, alice = install_fake_accounts()
     calls = []
-    base = {"experience_id": "exp1", "kind": "knowledge", "title": "标题", "when_text": "条件", "body": "内容",
-            "scope": "global", "agent_id": None, "inject_mode": "always", "status": "active"}
+    base = {
+        "experience_id": "exp1", "kind": "knowledge", "title": "标题", "when_text": "条件", "body": "内容",
+        "scope": "global", "agent_id": None, "inject_mode": "always", "status": "active",
+    }
     def listing(**kwargs):
         calls.append(kwargs)
         return {"items": [base], "total": 1, "page": 1, "page_size": 20}
@@ -911,58 +833,56 @@ def test_knowledge_memory_admin_contract(monkeypatch, tmp_path):
     monkeypatch.setattr(admin_routes.experience, "injection_preview", lambda id: {"prompt": "preview", "items": [base]})
     client = TestClient(app)
     root = "/api/v1/nl2sql-admin/experiences"
-    endpoints = [("get", root, None), ("get", root + "/injection-preview?agent_id=a", None),
-                 ("post", root, {"title": "t", "when_text": "w", "body": "b"}),
-                 ("patch", root + "/exp1", {"status": "disabled"}), ("delete", root + "/exp1", None)]
-    try:
-        for method, path, payload in endpoints:
-            kwargs = {"json": payload} if payload else {}
-            assert getattr(client, method)(path, **kwargs).status_code == 401
-            assert getattr(client, method)(path, headers=_bearer(auth, role="user"), **kwargs).status_code == 403
-        assert calls == []
-        headers = _bearer(auth, role="admin")
-        response = client.get(root, params={"kind": "knowledge", "keyword": "标", "scope": "global"}, headers=headers)
-        assert response.status_code == 200 and response.json()["items"][0]["body"] == "内容"
-        assert calls[-1]["kind"] == "knowledge" and calls[-1]["keyword"] == "标"
-        assert client.post(root, json={"kind": "memory", "title": "t", "when_text": "w", "body": "b"}, headers=headers).status_code == 422
-        assert client.post(root, json={"title": "t" * 41, "when_text": "w", "body": "b"}, headers=headers).status_code == 422
-        assert client.post(root, json={"title": "t", "when_text": "w", "body": "b"}, headers=headers).status_code == 200
-        assert calls[-1]["kind"] == "knowledge" and calls[-1]["status"] == "active"
-        assert client.patch(root + "/exp1", json={"scope": "global", "title": "edited"}, headers=headers).status_code == 200
-        assert set(calls[-1]) == {"scope", "title", "updated_by"}
-        assert client.patch(root + "/missing", json={"status": "disabled"}, headers=headers).status_code == 404
-        assert client.get(root + "/injection-preview?agent_id=a", headers=headers).json()["prompt"] == "preview"
-        assert client.delete(root + "/exp1", headers=headers).status_code == 200
-        assert client.delete(root + "/missing", headers=headers).status_code == 404
-    finally:
-        auth.reset_auth_for_tests()
+    endpoints = [
+        ("get", root, None),
+        ("get", root + "/injection-preview?agent_id=a", None),
+        ("post", root, {"title": "t", "when_text": "w", "body": "b"}),
+        ("patch", root + "/exp1", {"status": "disabled"}),
+        ("delete", root + "/exp1", None),
+    ]
+    for method, path, payload in endpoints:
+        kwargs = {"json": payload} if payload else {}
+        assert getattr(client, method)(path, **kwargs).status_code == 401
+        assert getattr(client, method)(path, headers=bearer_headers(alice.id), **kwargs).status_code == 403
+    assert calls == []
+    headers = bearer_headers(admin.id)
+    response = client.get(root, params={"kind": "knowledge", "keyword": "标", "scope": "global"}, headers=headers)
+    assert response.status_code == 200 and response.json()["items"][0]["body"] == "内容"
+    assert calls[-1]["kind"] == "knowledge" and calls[-1]["keyword"] == "标"
+    assert client.post(root, json={"kind": "memory", "title": "t", "when_text": "w", "body": "b"}, headers=headers).status_code == 422
+    assert client.post(root, json={"title": "t" * 41, "when_text": "w", "body": "b"}, headers=headers).status_code == 422
+    assert client.post(root, json={"title": "t", "when_text": "w", "body": "b"}, headers=headers).status_code == 200
+    assert calls[-1]["kind"] == "knowledge" and calls[-1]["status"] == "active"
+    assert client.patch(root + "/exp1", json={"scope": "global", "title": "edited"}, headers=headers).status_code == 200
+    assert set(calls[-1]) == {"scope", "title", "user_id"}
+    assert client.patch(root + "/missing", json={"status": "disabled"}, headers=headers).status_code == 404
+    assert client.get(root + "/injection-preview?agent_id=a", headers=headers).json()["prompt"] == "preview"
+    assert client.delete(root + "/exp1", headers=headers).status_code == 200
+    assert client.delete(root + "/missing", headers=headers).status_code == 404
 
 
 def test_admin_can_download_other_conversation_files_with_read_only_routes(monkeypatch, tmp_path):
     from core import topic_files
 
-    auth = _enable_auth(monkeypatch, tmp_path)
-    try:
-        monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: _FakeWidgetStore())
-        monkeypatch.setattr(topic_files, "_workspace_root", lambda topic_id: tmp_path)
-        output = tmp_path / "output"
-        output.mkdir()
-        (output / "report.html").write_text("<p>report</p>")
-        (tmp_path / ".private").write_text("private")
-        client = TestClient(app)
-        url = "/api/v1/nl2sql-admin/topics/topic_widget_1/files"
-        admin_headers = _bearer(auth, role="admin")
+    _acc_store, admin, alice = install_fake_accounts()
+    monkeypatch.setattr(admin_routes, "get_topic_task_store", lambda: _FakeWidgetStore())
+    monkeypatch.setattr(topic_files, "_workspace_root", lambda topic_id: tmp_path)
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "report.html").write_text("<p>report</p>")
+    (tmp_path / ".private").write_text("private")
+    client = TestClient(app)
+    url = "/api/v1/nl2sql-admin/topics/topic_widget_1/files"
+    admin_headers = bearer_headers(admin.id)
 
-        assert client.get(url).status_code == 401
-        assert client.get(url + "/output/report.html", headers=_bearer(auth, role="user")).status_code == 403
-        listing = client.get(url, headers=admin_headers)
-        assert listing.status_code == 200
-        assert "output/report.html" in {file["rel_path"] for file in listing.json()["files"]}
-        response = client.get(url + "/output/report.html", headers=admin_headers)
-        assert response.text == "<p>report</p>"
-        assert response.headers["content-disposition"].startswith("attachment")
-        assert response.headers["x-content-type-options"] == "nosniff"
-        assert client.get(url + "/.private", headers=admin_headers).status_code == 404
-        assert client.post(url, headers=admin_headers).status_code == 405
-    finally:
-        auth.reset_auth_for_tests()
+    assert client.get(url).status_code == 401
+    assert client.get(url + "/output/report.html", headers=bearer_headers(alice.id)).status_code == 403
+    listing = client.get(url, headers=admin_headers)
+    assert listing.status_code == 200
+    assert "output/report.html" in {file["rel_path"] for file in listing.json()["files"]}
+    response = client.get(url + "/output/report.html", headers=admin_headers)
+    assert response.text == "<p>report</p>"
+    assert response.headers["content-disposition"].startswith("attachment")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert client.get(url + "/.private", headers=admin_headers).status_code == 404
+    assert client.post(url, headers=admin_headers).status_code == 405

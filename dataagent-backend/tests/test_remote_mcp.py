@@ -14,17 +14,16 @@ from starlette.responses import JSONResponse
 import pytest
 
 from api import admin_routes, remote_mcp
-from core import auth, remote_mcp_policy, remote_mcp_tokens
+from core import accounts, remote_mcp_policy, remote_mcp_tokens
+from core.accounts import ROLE_ADMIN, ROLE_USER, hash_password
 from main import app
+from tests.account_test_helpers import TEST_DEFAULT_PASSWORD, TEST_SECRET_KEY, FakeAccountStore
 
 ORIGIN = "http://agent.example:8443"
 OTHER_ORIGIN = "https://other.example"
 MANAGEMENT = "/api/v1/dataagent/mcp-tokens"
 MCP = f"{remote_mcp_policy.PREFIX}/a1/mcp"
 DOWNLOAD = f"{remote_mcp_policy.PREFIX}/a1/threads/thread-1/files/output/report.csv"
-IDENTITY = auth.AuthIdentity("example:Alice", "Alice", "user", "example")
-ADMIN = auth.AuthIdentity("local:root", "Root", "admin", "local")
-OTHER_USER = auth.AuthIdentity("example:alice", "Another user", "user", "example")
 BROWSER_HEADERS = {"Origin": ORIGIN}
 
 
@@ -38,14 +37,18 @@ class TokenCursor(sqlite3.Cursor):
     def execute(self, sql, parameters=()):
         if sql.startswith("SELECT GET_LOCK("):
             return super().execute("SELECT 1 AS acquired")
-        parameters = tuple(value.isoformat(sep=" ") if isinstance(value, datetime) else value
-                           for value in parameters)
+        parameters = tuple(
+            value.isoformat(sep=" ") if isinstance(value, datetime) else value
+            for value in parameters
+        )
         return super().execute(sql.replace("%s", "?"), parameters)
 
 
 def token_row(cursor, values):
-    return {column[0]: datetime.fromisoformat(value) if column[0].endswith("_at") and value else value
-            for column, value in zip(cursor.description, values)}
+    return {
+        column[0]: datetime.fromisoformat(value) if column[0].endswith("_at") and value else value
+        for column, value in zip(cursor.description, values)
+    }
 
 
 @pytest.fixture
@@ -66,10 +69,14 @@ def token_db(tmp_path, monkeypatch):
 
     with connect() as connection, connection.cursor() as cursor:
         cursor.execute(
+            """CREATE TABLE da_user (
+               id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL)"""
+        )
+        cursor.execute(
             """CREATE TABLE da_mcp_access_token (
                id INTEGER PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, token_prefix TEXT NOT NULL,
-               user_id TEXT NOT NULL, display_name TEXT NOT NULL, name TEXT NOT NULL,
-               created_at TEXT NOT NULL, last_used_at TEXT, expires_at TEXT, revoked_at TEXT, oauth_role TEXT)"""
+               user_id INTEGER NOT NULL, name TEXT NOT NULL,
+               created_at TEXT NOT NULL, last_used_at TEXT, expires_at TEXT, revoked_at TEXT)"""
         )
         connection.commit()
     monkeypatch.setattr(remote_mcp_tokens, "_connect", connect)
@@ -79,15 +86,27 @@ def token_db(tmp_path, monkeypatch):
 
 @pytest.fixture
 def tokens_app(monkeypatch, token_db):
-    settings = auth.AuthSettings(
-        enabled=True, secret_key="test-key-" * 5, local_admins=[{"username": "root"}],
-        oauth=auth.OAuthSettings(provider_name="example", client_id="web",
-                                 authorize_url="https://sso.example/auth", token_url="https://sso.example/token"),
+    settings = accounts.AuthSettings(
+        secret_key=TEST_SECRET_KEY,
+        default_user_password=TEST_DEFAULT_PASSWORD,
     )
-    monkeypatch.setattr(auth, "get_auth_settings", lambda: settings)
-    monkeypatch.setattr(remote_mcp_policy, "get_auth_settings", lambda: settings)
-    monkeypatch.setattr(remote_mcp, "_require_agent_profile",
-                        lambda agent_id, context: {"remote_mcp_enabled": True})
+    accounts.set_auth_settings_for_tests(settings)
+    acct_store = FakeAccountStore(valid_agent_ids={"a1", "a2"})
+    alice = acct_store.create_user(username="alice", display_name="Alice", password_hash=hash_password("p1"), role_keys=[ROLE_USER])
+    admin = acct_store.create_user(username="root", display_name="Root", password_hash=hash_password("p2"), role_keys=[ROLE_ADMIN, ROLE_USER])
+    other = acct_store.create_user(username="bob", display_name="Another user", password_hash=hash_password("p3"), role_keys=[ROLE_USER])
+    accounts.set_account_store_for_tests(acct_store)
+
+    with token_db.connect() as connection, connection.cursor() as cursor:
+        for u in (alice, admin, other):
+            cursor.execute("INSERT INTO da_user (id, username, display_name) VALUES (%s, %s, %s)", (u.id, u.username, u.display_name))
+        connection.commit()
+
+    monkeypatch.setattr(
+        remote_mcp,
+        "require_agent_access",
+        lambda user_id, agent_id: {"agent_id": agent_id, "remote_mcp_enabled": True},
+    )
     server = remote_mcp.create_server()
 
     @asynccontextmanager
@@ -98,13 +117,24 @@ def tokens_app(monkeypatch, token_db):
     monkeypatch.setattr(app.router, "lifespan_context", lifespan)
     monkeypatch.setattr(app.state, "remote_mcp", server, raising=False)
     with TestClient(app, base_url=ORIGIN, follow_redirects=False) as client:
-        def login(identity):
+        def login(user):
             client.cookies.clear()
-            if identity is not None:
-                client.cookies.set(settings.cookie_name, auth.issue_session_token(identity))
+            if user is not None:
+                client.cookies.set(settings.cookie_name, accounts.issue_session_token(user.id))
 
-        login(IDENTITY)
-        yield SimpleNamespace(client=client, login=login, settings=settings, db=token_db)
+        login(alice)
+        yield SimpleNamespace(
+            client=client,
+            login=login,
+            settings=settings,
+            db=token_db,
+            acct_store=acct_store,
+            alice=alice,
+            admin=admin,
+            other=other,
+        )
+    accounts.reset_auth_for_tests()
+    accounts.set_account_store_for_tests(None)
 
 
 def create(client, name="ZCode", **options):
@@ -130,52 +160,42 @@ def rpc_messages(response):
     return [json.loads(line[5:]) for line in response.text.splitlines() if line.startswith("data: {")]
 
 
-def test_create_and_list_mine_or_all(tokens_app):
+def test_create_and_list_own_tokens(tokens_app):
     client = tokens_app.client
     first = create(client, "内网客户端 ")
     item, token = first["item"], first["token"]
     assert set(first) == {"item", "token"}
     assert token.startswith("dak_") and len(token) == 47
+    # Tokens never expire (user decision 2026-11-24).
     assert item == {
         "id": 1, "name": "内网客户端", "token_prefix": token[:10],
-        "user_id": IDENTITY.user_id, "display_name": IDENTITY.display_name, "status": "active",
-        "created_at": "2026-11-22T12:00:00Z", "expires_at": "2027-02-20T12:00:00Z",
-        "last_used_at": None, "revoked_at": None,
+        "user_id": tokens_app.alice.id, "status": "active",
+        "created_at": "2026-11-22T12:00:00Z", "last_used_at": None, "revoked_at": None,
     }
     with tokens_app.db.connect() as connection, connection.cursor() as cursor:
         cursor.execute("SELECT token_hash FROM da_mcp_access_token WHERE id = %s", (item["id"],))
         assert cursor.fetchone()["token_hash"] == hashlib.sha256(token.encode()).hexdigest()
-    second = create(client, expires_in_days=None)["item"]
-    assert second["expires_at"] is None
-    tokens_app.login(OTHER_USER)
-    other = create(client, expires_in_days=30)["item"]
+    second = create(client)["item"]
+    tokens_app.login(tokens_app.other)
+    other = create(client)["item"]
     assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [other]}
-    assert client.get(f"{MANAGEMENT}?scope=all", headers=BROWSER_HEADERS).status_code == 403
-    tokens_app.login(ADMIN)
-    admin_item = create(client, expires_in_days=180, user_id=IDENTITY.user_id)["item"]
-    assert admin_item["user_id"] == ADMIN.user_id
-    assert client.get(f"{MANAGEMENT}?scope=mine", headers=BROWSER_HEADERS).json() == {"items": [admin_item]}
-    assert client.get(f"{MANAGEMENT}?scope=all", headers=BROWSER_HEADERS).json() == {
-        "items": [admin_item, other, second, item],
-    }
+    # Administrators manage only their own tokens too.
+    tokens_app.login(tokens_app.admin)
+    admin_item = create(client, user_id=tokens_app.alice.id)["item"]
+    assert admin_item["user_id"] == tokens_app.admin.id
+    assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [admin_item]}
+    tokens_app.login(tokens_app.alice)
+    assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [second, item]}
 
 
-def test_active_limit_frees_slots_after_expiry_and_revocation(tokens_app):
+def test_no_cap_on_tokens(tokens_app):
     client = tokens_app.client
-    items = [create(client, f"token-{index}", expires_in_days=30)["item"] for index in range(10)]
-    assert client.post(MANAGEMENT, headers=BROWSER_HEADERS, json={"name": "extra"}).status_code == 409
-    assert client.delete(f"{MANAGEMENT}/{items[0]['id']}", headers=BROWSER_HEADERS).status_code == 200
-    create(client, expires_in_days=None)
-    assert client.post(MANAGEMENT, headers=BROWSER_HEADERS, json={"name": "extra"}).status_code == 409
-    tokens_app.db.clock.now += timedelta(days=30)
-    create(client)
+    for index in range(12):
+        create(client, f"token-{index}")
+    assert len(client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"]) == 12
 
 
-@pytest.mark.parametrize("payload", [
-    {}, {"name": ""}, {"name": " \t "}, {"name": "字" * 65}, {"name": 123},
-    {"name": "client", "expires_in_days": 31}, {"name": "client", "expires_in_days": "90"},
-    {"name": "client", "expires_in_days": 90.0}, {"name": "client", "expires_in_days": True},
-])
+@pytest.mark.parametrize("payload", [{}, {"name": ""}, {"name": " \t "}, {"name": "字" * 65}, {"name": 123}])
 def test_token_create_validates_request(tokens_app, payload):
     assert tokens_app.client.post(MANAGEMENT, headers=BROWSER_HEADERS, json=payload).status_code == 422
 
@@ -195,15 +215,9 @@ def test_management_requires_a_session_and_full_same_origin(tokens_app):
         options = {"json": {"name": "client"}} if method == "POST" else {}
         headers = {**BROWSER_HEADERS, **bearer(created["token"])}
         assert client.request(method, url, headers=headers, **options).status_code == 401
-        tokens_app.settings.enabled = False
-        assert client.request(method, url, headers=headers, **options).status_code == 404
-        tokens_app.settings.enabled = True
-    assert client.get(f"{MANAGEMENT}?scope=someone", headers=BROWSER_HEADERS).status_code == 401
-    tokens_app.login(IDENTITY)
-    assert client.get(f"{MANAGEMENT}?scope=someone", headers=BROWSER_HEADERS).status_code == 422
 
 
-def test_user_can_revoke_own_token_and_admin_can_revoke_others(tokens_app):
+def test_users_revoke_only_their_own_tokens(tokens_app):
     client = tokens_app.client
     first = create(client)["item"]
     second = create(client)["item"]
@@ -214,26 +228,21 @@ def test_user_can_revoke_own_token_and_admin_can_revoke_others(tokens_app):
     tokens_app.db.clock.now += timedelta(minutes=2)
     repeated = client.delete(own_url, headers=BROWSER_HEADERS)
     assert repeated.status_code == 200 and repeated.json() == {"item": revoked}
-    tokens_app.login(OTHER_USER)
+    tokens_app.login(tokens_app.other)
     assert client.delete(other_url, headers=BROWSER_HEADERS).status_code == 404
-    tokens_app.login(ADMIN)
-    response = client.delete(other_url, headers=BROWSER_HEADERS)
-    assert response.status_code == 200 and response.json()["item"]["status"] == "revoked"
+    tokens_app.login(tokens_app.admin)
+    assert client.delete(other_url, headers=BROWSER_HEADERS).status_code == 404
     assert client.delete(f"{MANAGEMENT}/999", headers=BROWSER_HEADERS).status_code == 404
 
 
-def test_lists_only_active_and_recently_invalid_tokens(tokens_app):
+def test_lists_active_and_recently_revoked_tokens(tokens_app):
     client = tokens_app.client
-    revoked = create(client, "revoked", expires_in_days=None)["item"]
+    revoked = create(client, "revoked")["item"]
     client.delete(f"{MANAGEMENT}/{revoked['id']}", headers=BROWSER_HEADERS)
-    expired = create(client, "expired", expires_in_days=30)["item"]
-    tokens_app.db.clock.now += timedelta(days=30, seconds=1)
-    active = create(client, "active", expires_in_days=None)["item"]
+    active = create(client, "active")["item"]
     items = client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"]
-    assert [(item["id"], item["status"]) for item in items] == [
-        (active["id"], "active"), (expired["id"], "expired"),
-    ]
-    tokens_app.db.clock.now += timedelta(days=30)
+    assert [(item["id"], item["status"]) for item in items] == [(active["id"], "active"), (revoked["id"], "revoked")]
+    tokens_app.db.clock.now += timedelta(days=30, seconds=1)
     assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json() == {"items": [active]}
 
 
@@ -263,7 +272,7 @@ def test_browser_download_requires_the_owner_session_and_preserves_bearer_checks
     token = issued["token"]
     topic = {"agent_id": "a1"}
     monkeypatch.setattr(remote_mcp, "get_topic_task_store", lambda: SimpleNamespace(
-        get_topic=lambda _id, context: topic if context["auth_user_id"] == IDENTITY.user_id else None,
+        get_topic=lambda _id, context: topic if context["user_id"] == tokens_app.alice.id else None,
     ))
     monkeypatch.setattr(remote_mcp, "topic_file_response", lambda *_args, **_kwargs: JSONResponse({"file": "report"}))
 
@@ -273,63 +282,56 @@ def test_browser_download_requires_the_owner_session_and_preserves_bearer_checks
     assert mcp_call(client, "").status_code == 401
     assert client.post(MCP, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).status_code == 401
 
-    for identity in (OTHER_USER, ADMIN):
-        tokens_app.login(identity)
+    for user in (tokens_app.other, tokens_app.admin):
+        tokens_app.login(user)
         assert client.get(DOWNLOAD).status_code == 404
 
     tokens_app.login(None)
     assert client.get(DOWNLOAD).status_code == 401
     assert client.get(DOWNLOAD, headers=bearer(token)).json() == {"file": "report"}
 
-    tokens_app.login(IDENTITY)
+    tokens_app.login(tokens_app.alice)
     assert client.delete(f"{MANAGEMENT}/{issued['item']['id']}", headers=BROWSER_HEADERS).status_code == 200
     assert client.get(DOWNLOAD, headers=bearer(token)).status_code == 401
     assert client.get(DOWNLOAD).json() == {"file": "report"}
 
 
-def test_mcp_rejects_expired_unknown_and_session_tokens(tokens_app):
+def test_mcp_rejects_unknown_and_session_tokens(tokens_app):
     client = tokens_app.client
-    expiring = create(client, expires_in_days=30)["token"]
-    tokens_app.db.clock.now += timedelta(days=30)
     unknown = "dak_" + secrets.token_urlsafe(32)
-    for token in (expiring, unknown, auth.issue_session_token(IDENTITY), ""):
+    for token in (unknown, accounts.issue_session_token(tokens_app.alice.id), ""):
         response = mcp_call(client, token)
         assert response.status_code == 401
         assert response.headers["WWW-Authenticate"] == 'Bearer realm="DataAgent MCP"'
         assert "更新客户端配置" in response.json()["detail"]
 
 
-def test_mcp_rejects_a_local_admin_removed_from_settings(tokens_app):
-    tokens_app.login(ADMIN)
-    token = create(tokens_app.client)["token"]
-    assert mcp_call(tokens_app.client, token).status_code == 200
-    tokens_app.settings.local_admins.clear()
-    assert mcp_call(tokens_app.client, token).status_code == 401
+def test_mcp_rejects_disabled_user_and_reflects_live_role_changes(tokens_app):
+    client = tokens_app.client
+    token = create(client)["token"]
+    assert accounts.authenticate_mcp_token(f"Bearer {token}").is_admin is False
 
+    # Promote alice to admin -> live token reflects admin immediately.
+    admin_rid = tokens_app.acct_store.role_id_for(ROLE_ADMIN)
+    user_rid = tokens_app.acct_store.role_id_for(ROLE_USER)
+    tokens_app.acct_store.update_user(tokens_app.alice.id, role_ids=[admin_rid, user_rid])
+    assert accounts.authenticate_mcp_token(f"Bearer {token}").is_admin is True
 
-def test_mcp_respects_web_role_and_current_configured_admins(tokens_app):
-    tokens_app.settings.admin_users.append(IDENTITY.user_id)
-    tokens_app.login(auth.AuthIdentity(IDENTITY.user_id, "Alice", "user", "example", oauth_role="user"))
-    limited = create(tokens_app.client)["token"]
-    assert not remote_mcp_policy.verify_identity(f"Bearer {limited}").is_admin
+    # Revoke admin -> immediate demotion.
+    tokens_app.acct_store.update_user(tokens_app.alice.id, role_ids=[user_rid])
+    assert accounts.authenticate_mcp_token(f"Bearer {token}").is_admin is False
 
-    tokens_app.login(auth.AuthIdentity(IDENTITY.user_id, "Alice", "admin", "example"))
-    configured = create(tokens_app.client)["token"]
-    assert remote_mcp_policy.verify_identity(f"Bearer {configured}").is_admin
-    tokens_app.settings.admin_users.clear()
-    assert not remote_mcp_policy.verify_identity(f"Bearer {configured}").is_admin
-
-    tokens_app.login(auth.AuthIdentity(IDENTITY.user_id, "Alice", "admin", "example", oauth_role="admin"))
-    mapped = create(tokens_app.client)["token"]
-    assert remote_mcp_policy.verify_identity(f"Bearer {mapped}").is_admin
+    # Disable user -> token immediately returns 401.
+    tokens_app.acct_store.update_user(tokens_app.alice.id, is_active=False)
+    assert mcp_call(client, token).status_code == 401
 
 
 def test_mcp_throttles_last_used(tokens_app):
     client = tokens_app.client
     token = create(client)["token"]
-    assert remote_mcp_policy.verify_identity(f"Bearer {token}") == IDENTITY
+    assert accounts.authenticate_mcp_token(f"Bearer {token}").id == tokens_app.alice.id
     tokens_app.db.clock.now += timedelta(seconds=59)
-    assert not remote_mcp_policy.verify_identity(f"Bearer {token}").is_admin
+    assert accounts.authenticate_mcp_token(f"Bearer {token}").id == tokens_app.alice.id
     assert client.get(MANAGEMENT, headers=BROWSER_HEADERS).json()["items"][0]["last_used_at"] == "2026-11-22T12:00:00Z"
     updates = [statement for statement in tokens_app.db.statements if "SET last_used_at" in statement]
     assert len(updates) == 1
@@ -339,13 +341,13 @@ def test_mcp_throttles_last_used(tokens_app):
 
 
 def test_readable_assistant_exposes_only_its_enabled_mcp_path(tokens_app, monkeypatch):
-    profile = {"agent_id": "a1", "name": "Assistant", "remote_mcp_enabled": True}
-    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda _: profile)
+    profile = {"agent_id": "a1", "name": "Assistant", "remote_mcp_enabled": True, "visibility": {"mode": "all"}}
+    monkeypatch.setattr("core.agent_profile_service.get_agent_profile", lambda _: profile)
     url = "/api/v1/dataagent/agents/a1/profile"
     assert tokens_app.client.get(url).json()["remote_mcp_path"] == MCP
     profile["remote_mcp_enabled"] = False
     assert tokens_app.client.get(url).json()["remote_mcp_path"] == ""
-    profile["visibility"] = {"mode": "selected", "allowed_users": ["example:another"]}
+    profile["visibility"] = {"mode": "selected"}
     assert tokens_app.client.get(url).status_code == 404
     assert tokens_app.client.put("/api/v1/dataagent/agents/a1/remote-mcp", json={"enabled": True}).status_code == 403
 
@@ -435,27 +437,25 @@ def run(coro):
     return result.structuredContent
 
 
-ALICE = remote_mcp._context(SimpleNamespace(user_id="sso:alice", display_name="Alice", role="user"))
+ALICE_CTX = {"source": "remote", "website_id": "", "user_id": 10, "is_admin": False}
 
 
 class FakeStore:
-    """Topics owned by alice or bob; get_topic applies the caller's context like the real predicate."""
-
     def __init__(self):
         self.topics = {
-            "t-alice": {"topic_id": "t-alice", "agent_id": "a1", "owner": "sso:alice", "title": "Sales",
+            "t-alice": {"topic_id": "t-alice", "agent_id": "a1", "user_id": 10, "title": "Sales",
                         "source": "web", "current_task_status": "finished"},
-            "t-bob": {"topic_id": "t-bob", "agent_id": "a1", "owner": "sso:bob", "title": "Bob's",
+            "t-bob": {"topic_id": "t-bob", "agent_id": "a1", "user_id": 20, "title": "Bob's",
                       "source": "remote", "current_task_status": "finished"},
         }
         self.tasks = {}
 
     def get_topic(self, topic_id, context=None):
         topic = self.topics.get(topic_id)
-        return topic if topic and topic["owner"] == context["auth_user_id"] else None
+        return topic if topic and topic["user_id"] == context["user_id"] else None
 
     def create_topic(self, *, title, agent_snapshot, context):
-        topic = {"topic_id": "t-new", "agent_id": "a1", "owner": context["auth_user_id"], "title": title,
+        topic = {"topic_id": "t-new", "agent_id": "a1", "user_id": context["user_id"], "title": title,
                  "source": context["source"], "current_task_status": None}
         self.topics["t-new"] = topic
         return topic
@@ -488,7 +488,7 @@ def store(monkeypatch):
 
     monkeypatch.setattr(remote_mcp, "get_topic_task_store", lambda: fake)
     monkeypatch.setattr(remote_mcp, "submit_message_task", submit)
-    monkeypatch.setattr(remote_mcp, "_require_agent_profile", lambda agent_id, context: {"agent_id": agent_id})
+    monkeypatch.setattr(remote_mcp, "require_agent_access", lambda user_id, agent_id: {"agent_id": agent_id})
     monkeypatch.setattr(remote_mcp, "build_agent_snapshot", lambda profile: profile)
     monkeypatch.setattr(remote_mcp, "WAIT_POLL_SECONDS", 0.001)
 
@@ -496,12 +496,12 @@ def store(monkeypatch):
         progress.append((elapsed, message))
 
     async def authorize(*_args):
-        return ALICE
+        return ALICE_CTX
 
     monkeypatch.setattr(remote_mcp, "_authenticate", authorize)
     fixture.ctx = SimpleNamespace(request_context=SimpleNamespace(request=None), report_progress=report_progress)
     fixture.fake, fixture.submitted, fixture.progress = fake, submitted, progress
-    token = remote_mcp._caller.set(("a1", ALICE, "https://agent.example"))
+    token = remote_mcp._caller.set(("a1", ALICE_CTX, "https://agent.example"))
     yield fixture
     remote_mcp._caller.reset(token)
 
