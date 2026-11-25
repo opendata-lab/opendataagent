@@ -149,14 +149,6 @@
 
             <el-row :gutter="16" class="server-side-fields">
               <el-col :xs="24" :md="12">
-                <el-form-item label="账号与会话模式">
-                  <el-radio-group v-model="site.server_side.account_mode" :data-testid="`account-mode-${site.website_id || index}`">
-                    <el-radio-button value="personal">个人账号（personal）</el-radio-button>
-                    <el-radio-button value="shared">共享会话（shared）</el-radio-button>
-                  </el-radio-group>
-                </el-form-item>
-              </el-col>
-              <el-col :xs="24" :md="12">
                 <el-form-item label="信任同命名空间用户名">
                   <div class="switch-row">
                     <el-switch v-model="site.server_side.trusted_username_namespace" />
@@ -209,7 +201,6 @@ const normalizeServerSide = (raw = {}) => {
   return {
     enabled: Boolean(ss.enabled),
     access_key_set: Boolean(ss.access_key_set || ss.enabled),
-    account_mode: ss.account_mode === 'shared' ? 'shared' : 'personal',
     trusted_username_namespace: Boolean(ss.trusted_username_namespace),
     provider_mapping_rows: Object.entries(mappings).map(([key, value]) => ({
       key: String(key || ''),
@@ -227,7 +218,6 @@ const toPayloadServerSide = (ss = {}) => {
   }
   return {
     enabled: Boolean(ss.enabled),
-    account_mode: ss.account_mode === 'shared' ? 'shared' : 'personal',
     trusted_username_namespace: Boolean(ss.trusted_username_namespace),
     provider_mappings: mappings
   }

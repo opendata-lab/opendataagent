@@ -101,7 +101,6 @@ class CreateTaskRequest(BaseModel):
     model: Optional[str] = None
     debug: bool = False
     database: Optional[str] = None
-    source_queue_id: Optional[str] = None
 
 
 
@@ -334,7 +333,6 @@ class WidgetServerSide(BaseModel):
 
     enabled: bool = False
     key_configured: bool = False
-    account_mode: Literal["personal", "shared"] = "personal"
     trusted_username_namespace: bool = False
     provider_mappings: Dict[str, str] = Field(default_factory=dict)
 

@@ -457,7 +457,7 @@ def run(coro):
     return result.structuredContent
 
 
-ALICE_CTX = {"source": "remote", "website_id": "", "user_id": 10, "is_admin": False, "shared_session_key": ""}
+ALICE_CTX = {"source": "remote", "website_id": "", "user_id": 10, "is_admin": False}
 
 
 class FakeStore:

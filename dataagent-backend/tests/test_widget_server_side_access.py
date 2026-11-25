@@ -28,7 +28,6 @@ class TestNormalisation:
         assert site["server_side"] == {
             "enabled": False,
             "access_key_hash": "",
-            "account_mode": "personal",
             "trusted_username_namespace": False,
             "provider_mappings": {},
         }
@@ -39,7 +38,6 @@ class TestNormalisation:
             "server_side": {
                 "enabled": True,
                 "access_key_hash": DIGEST,
-                "account_mode": "shared",
                 "trusted_username_namespace": True,
                 "provider_mappings": {"sso": "SSO"},
             },
@@ -47,7 +45,6 @@ class TestNormalisation:
         assert site["server_side"] == {
             "enabled": True,
             "access_key_hash": DIGEST,
-            "account_mode": "shared",
             "trusted_username_namespace": True,
             "provider_mappings": {"sso": "SSO"},
         }
@@ -101,62 +98,79 @@ class TestRequestContext:
         return _resolve
 
     @staticmethod
-    def shared_headers(**extra):
+    def trusted_headers(**extra):
         return {
             "X-DataAgent-Client": "widget",
             "X-DataAgent-Website-Id": "ontofoundry",
-            "X-DataAgent-Session-Key": "ontofoundry:w-1:s-1",
             "X-DataAgent-User-Id": "local:bob",
             **extra,
         }
 
     def test_a_site_without_server_side_rejects_anonymous_host_id(self, resolve):
         with pytest.raises(HTTPException) as caught:
-            resolve({"website_id": "ontofoundry", "allowed_origins": []}, self.shared_headers())
+            resolve({"website_id": "ontofoundry", "allowed_origins": []}, self.trusted_headers())
         assert caught.value.status_code == 401
 
     def test_an_enabled_site_rejects_a_caller_with_no_key(self, resolve):
         with pytest.raises(HTTPException) as caught:
             resolve(
-                {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST, "account_mode": "shared"}},
-                self.shared_headers(),
+                {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}},
+                self.trusted_headers(),
             )
         assert caught.value.status_code == 403
 
     def test_an_enabled_site_rejects_a_wrong_key(self, resolve):
         with pytest.raises(HTTPException) as caught:
             resolve(
-                {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST, "account_mode": "shared"}},
-                self.shared_headers(**{"X-DataAgent-Access-Key": "not-it"}),
+                {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}},
+                self.trusted_headers(**{"X-DataAgent-Access-Key": "not-it"}),
             )
         assert caught.value.status_code == 403
 
-    def test_a_correct_key_passes_and_registers_user_with_shared_session_key(self, resolve):
+    def test_a_correct_key_passes_and_registers_the_forwarded_user(self, resolve):
         ctx = resolve(
-            {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST, "account_mode": "shared"}},
-            self.shared_headers(**{"X-DataAgent-Access-Key": "super-secret"}),
+            {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}},
+            self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret"}),
         )
         assert ctx.source == "widget"
         assert ctx.website_id == "ontofoundry"
-        assert ctx.shared_session_key == "ontofoundry:w-1:s-1"
         assert ctx.user is not None and ctx.user.username == "bob"
+
+    def test_a_correct_key_without_a_user_is_rejected(self, resolve):
+        headers = self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret"})
+        headers.pop("X-DataAgent-User-Id")
+        with pytest.raises(HTTPException) as caught:
+            resolve({"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}}, headers)
+        assert caught.value.status_code == 401
+
+    def test_forwarded_widget_credentials_cannot_reach_platform_routes(self, resolve):
+        # Bind the forwarded identity to the platform admin: the site key must still not
+        # unlock account, admin, eval or MCP token routes (they depend on current_user).
+        self.store.add_identity(self.admin.id, "ontofoundry", "boss")
+        site = {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}}
+        ctx = resolve(site, self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret", "X-DataAgent-User-Id": "boss"}))
+        assert ctx.user is not None and ctx.user.is_admin
+        req = SimpleNamespace(headers={}, cookies={}, state=SimpleNamespace(_account_context=ctx))
+        with pytest.raises(HTTPException) as caught:
+            account_service.current_user(req)
+        assert caught.value.status_code == 403
 
     def test_a_correct_key_bypasses_the_origin_allowlist(self, resolve):
         ctx = resolve(
             {
                 "website_id": "ontofoundry",
                 "allowed_origins": ["https://somewhere.else"],
-                "server_side": {"enabled": True, "access_key_hash": DIGEST, "account_mode": "shared"},
+                "server_side": {"enabled": True, "access_key_hash": DIGEST},
             },
-            self.shared_headers(**{"X-DataAgent-Access-Key": "super-secret", "Origin": "https://not.on.the.list"}),
+            self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret", "Origin": "https://not.on.the.list"}),
         )
         assert ctx.source == "widget"
 
     def test_an_enabled_site_with_no_stored_digest_rejects_everyone(self, resolve):
         with pytest.raises(HTTPException):
             resolve(
-                {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": "", "account_mode": "shared"}},
-                self.shared_headers(**{"X-DataAgent-Access-Key": "anything"}),
+                {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": ""}},
+                self.trusted_headers(**{"X-DataAgent-Access-Key": "anything"}),
             )
 
 

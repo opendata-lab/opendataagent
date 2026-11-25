@@ -127,14 +127,14 @@ const demoProviderSettings = {
       project_name: '商城官网',
       project_color: '#4A90A4',
       allowed_origins: ['https://mall.demo.example.com'],
-      server_side: { enabled: false, access_key_set: false, account_mode: 'personal', trusted_username_namespace: false, provider_mappings: {} }
+      server_side: { enabled: false, access_key_set: false, trusted_username_namespace: false, provider_mappings: {} }
     },
     {
       website_id: 'ops-console',
       project_name: '运营后台',
       project_color: '#7C5CFC',
       allowed_origins: ['https://ops.demo.example.com'],
-      server_side: { enabled: false, access_key_set: false, account_mode: 'personal', trusted_username_namespace: false, provider_mappings: {} }
+      server_side: { enabled: false, access_key_set: false, trusted_username_namespace: false, provider_mappings: {} }
     }
   ]
 }

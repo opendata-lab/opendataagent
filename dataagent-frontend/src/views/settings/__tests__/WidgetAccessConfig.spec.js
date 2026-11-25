@@ -105,7 +105,7 @@ describe('WidgetAccessConfig', () => {
         allowed_origins: ['https://b.com'],
         project_name: '',
         project_color: '',
-        server_side: { enabled: false, account_mode: 'shared', trusted_username_namespace: true, provider_mappings: { github: 'CorpSSO' } }
+        server_side: { enabled: false, trusted_username_namespace: true, provider_mappings: { github: 'CorpSSO' } }
       }]
     })
     const wrapper = mountConfig()
@@ -115,7 +115,6 @@ describe('WidgetAccessConfig', () => {
     await flushPromises()
     wrapper.vm.sites[0].website_id = 'new-site'
     wrapper.vm.sites[0].allowed_origins = ['https://b.com', 'https://b.com', '']
-    wrapper.vm.sites[0].server_side.account_mode = 'shared'
     wrapper.vm.sites[0].server_side.trusted_username_namespace = true
     wrapper.vm.sites[0].server_side.provider_mapping_rows = [{ key: 'github', value: 'CorpSSO' }]
     await flushPromises()
@@ -131,7 +130,6 @@ describe('WidgetAccessConfig', () => {
         allowed_origins: ['https://b.com'],
         server_side: {
           enabled: false,
-          account_mode: 'shared',
           trusted_username_namespace: true,
           provider_mappings: { github: 'CorpSSO' }
         }

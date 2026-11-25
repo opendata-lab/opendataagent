@@ -20,6 +20,8 @@ from core.accounts import (
     require_permission,
     verify_password,
 )
+from core.accounts.config import get_auth_settings
+from core.accounts.permissions import ROLE_ADMIN
 from core.agent_profile_service import list_agent_profiles
 
 router = APIRouter(prefix="/api/v1/dataagent", tags=["accounts"])
@@ -172,11 +174,35 @@ def list_users(
     )
 
 
+def _admin_role_id() -> int | None:
+    for role in get_account_store().list_roles():
+        if role.get("role_key") == ROLE_ADMIN:
+            return int(role["id"])
+    return None
+
+
+def _require_private_passwords(user_ids) -> None:
+    """The default password is a shared credential for ordinary users only.
+
+    An account becomes an administrator only after it has its own password
+    (or has none, i.e. signs in through OAuth only).
+    """
+    default_pw = get_auth_settings().default_user_password
+    if not default_pw:
+        return
+    store = get_account_store()
+    for uid in user_ids:
+        if verify_password(default_pw, store.get_user_password_hash(uid))[0]:
+            raise HTTPException(status_code=400, detail="该账号仍在使用默认密码，本人修改密码后才能设为管理员")
+
+
 @router.post("/users", status_code=201)
 def create_user(
     payload: UserCreateRequest,
     _: User = Depends(require_permission("users:manage")),
 ):
+    if _admin_role_id() in set(payload.role_ids or []):
+        raise HTTPException(status_code=400, detail="新账号使用默认密码，不能直接设为管理员；本人修改密码后再授予")
     try:
         pw_hash = hash_default_password()
         created = get_account_store().create_user(
@@ -210,6 +236,11 @@ def update_user(
     actor: User = Depends(require_permission("users:manage")),
 ):
     fields = payload.model_dump(exclude_unset=True)
+    target = get_account_store().get_user(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if fields.get("role_ids") is not None and not target.is_admin and _admin_role_id() in set(fields["role_ids"]):
+        _require_private_passwords([user_id])
     try:
         updated = get_account_store().update_user(
             user_id,
@@ -229,6 +260,11 @@ def reset_user_password(
     user_id: int,
     _: User = Depends(require_permission("users:manage")),
 ):
+    target = get_account_store().get_user(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target.is_admin:
+        raise HTTPException(status_code=400, detail="管理员账号不能重置为默认密码")
     try:
         pw_hash = hash_default_password()
         get_account_store().update_password(user_id, pw_hash)
@@ -341,6 +377,9 @@ def set_role_users(
     payload: RoleUsersUpdateRequest,
     _: User = Depends(require_permission("roles:manage")),
 ):
+    if role_id == _admin_role_id():
+        current = {int(item["id"]) for item in get_account_store().list_role_users(role_id)}
+        _require_private_passwords([uid for uid in payload.user_ids if uid not in current])
     try:
         return {"items": get_account_store().set_role_users(role_id, payload.user_ids)}
     except Exception as exc:

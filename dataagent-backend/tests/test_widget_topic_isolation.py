@@ -1,4 +1,4 @@
-"""Widget conversation isolation (trusted shared sessions & personal accounts)."""
+"""Widget conversation isolation (personal accounts only; shared sessions were removed)."""
 from __future__ import annotations
 
 import inspect
@@ -7,23 +7,12 @@ import pytest
 from core import topic_task_store
 
 
-def shared_widget_context(session_key, website_id="ontofoundry", user_id=None):
-    return {
-        "source": "widget",
-        "website_id": website_id,
-        "user_id": user_id,
-        "is_admin": False,
-        "shared_session_key": session_key,
-    }
-
-
 def personal_widget_context(user_id, website_id="opendataworks-portal"):
     return {
         "source": "widget",
         "website_id": website_id,
         "user_id": user_id,
         "is_admin": False,
-        "shared_session_key": "",
     }
 
 
@@ -32,22 +21,9 @@ def bare_store():
 
 
 class TestContextPredicate:
-    def test_shared_session_is_scoped_to_site_and_session_key(self):
-        sql, params = bare_store()._topic_context_predicate(
-            shared_widget_context("ontofoundry:w-1:s-1")
-        )
-        assert "source" in sql and "website_id" in sql and "external_user_id" in sql
-        assert params == ["widget", "ontofoundry", "ontofoundry:w-1:s-1"]
-
-    def test_two_shared_sessions_on_one_site_produce_different_predicates(self):
-        _, a = bare_store()._topic_context_predicate(shared_widget_context("ontofoundry:w-1:s-1"))
-        _, b = bare_store()._topic_context_predicate(shared_widget_context("ontofoundry:w-1:s-2"))
-        assert a != b
-
-    def test_personal_widget_is_scoped_by_integer_user_id_and_excludes_shared(self):
+    def test_personal_widget_is_scoped_by_integer_user_id(self):
         sql, params = bare_store()._topic_context_predicate(personal_widget_context(42))
         assert "user_id = %s" in sql
-        assert "external_user_id = ''" in sql
         assert 42 in params
         assert "opendataworks-portal" in params
 
@@ -93,7 +69,7 @@ class TestTaskReadsAreScoped:
         monkeypatch.setattr(topic_task_store.TopicTaskStore, "_schema_name", lambda self: "public")
 
         store = topic_task_store.TopicTaskStore.__new__(topic_task_store.TopicTaskStore)
-        context = shared_widget_context("ontofoundry:w-1:s-1")
+        context = personal_widget_context(42)
         store.get_task("t-1", context=context)
 
         assert seen["context"] == context

@@ -1,6 +1,7 @@
 """Comprehensive tests for unified user accounts, roles, grants, migration, and trusted Widget."""
 from __future__ import annotations
 
+import contextlib
 import concurrent.futures
 import hashlib
 import json
@@ -251,7 +252,7 @@ def test_user_role_profile_and_grant_apis(monkeypatch):
     assert grants_after["role_ids"] == []
 
 
-def test_real_mysql_migration_backfill_concurrent_register_and_shared_sessions(tmp_path, monkeypatch):
+def test_real_mysql_migration_backfill_and_concurrent_register(tmp_path, monkeypatch):
     """End-to-end verification against throwaway schema da_accounts_check on local Docker MySQL."""
     try:
         root_conn = pymysql.connect(host="127.0.0.1", port=3326, user="root", password="root123", autocommit=True)
@@ -332,7 +333,7 @@ ADMIN_USERS = ["SSO:u-admin"]
         subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=backend_dir, env=env, check=True)
 
         # 3. Verify cutover results directly in MySQL
-        conn = pymysql.connect(host="127.0.0.1", port=3326, user="root", password="root123", database=schema, cursorclass=pymysql.cursors.DictCursor)
+        conn = pymysql.connect(host="127.0.0.1", port=3326, user="root", password="root123", database=schema, cursorclass=pymysql.cursors.DictCursor, autocommit=True)
         with conn.cursor() as cur:
             cur.execute("SELECT id, username, password_hash FROM da_user ORDER BY id")
             users = {r["username"]: r for r in cur.fetchall()}
@@ -340,22 +341,44 @@ ADMIN_USERS = ["SSO:u-admin"]
             assert users["legacy_admin"]["password_hash"].startswith("$2")
             legacy_uid = int(users["legacy_admin"]["id"])
 
-            # Binary-exact backfill: t_mapped gets user_id; t_unmapped and t_case (different case!) stay NULL.
+            # Imported OAuth admin signs in through OAuth only: no default password.
+            cur.execute(
+                "SELECT u.password_hash FROM da_user u JOIN da_user_identity i ON i.user_id = u.id"
+                " WHERE i.source = 'SSO' AND i.subject = 'u-admin'"
+            )
+            assert cur.fetchone()["password_hash"] == ""
+
+            # Every legacy principal becomes an ordinary account bound to the exact identity,
+            # so binary-distinct principals (ghost, LEGACY_ADMIN) keep their own topics.
+            cur.execute("SELECT source, subject, user_id FROM da_user_identity")
+            identity = {(r["source"], r["subject"]): int(r["user_id"]) for r in cur.fetchall()}
+            ghost_uid = identity[("local", "ghost")]
+            case_uid = identity[("local", "LEGACY_ADMIN")]
+            unknown_uid = identity[("SSO", "unknown")]
+            assert len({legacy_uid, ghost_uid, case_uid, unknown_uid}) == 4
+            assert ("SSO", "draft_only") not in identity
+            assert users["ghost"]["password_hash"].startswith("$argon2id$")
+            cur.execute("SELECT r.role_key FROM da_user_role ur JOIN da_role r ON r.id = ur.role_id WHERE ur.user_id = %s", (ghost_uid,))
+            assert [r["role_key"] for r in cur.fetchall()] == ["user"]
+
             cur.execute("SELECT topic_id, user_id FROM da_agent_topic ORDER BY topic_id")
             topics = {r["topic_id"]: r["user_id"] for r in cur.fetchall()}
             assert topics["t_mapped"] == legacy_uid
-            assert topics["t_unmapped"] is None
-            assert topics["t_case"] is None
+            assert topics["t_unmapped"] == ghost_uid
+            assert topics["t_case"] == case_uid
             assert topics["t_shared_old"] is None
 
             # Old MCP tokens deleted and column is now BIGINT.
             cur.execute("SELECT COUNT(*) AS n FROM da_mcp_access_token")
             assert cur.fetchone()["n"] == 0
 
-            # Published grant migrated, unmapped/draft-only NOT auto-granted, old keys stripped.
-            cur.execute("SELECT agent_id, principal_type, principal_id FROM da_agent_grant")
+            # Published grants migrated (including the newly registered SSO:unknown); draft-only NOT granted.
+            cur.execute("SELECT agent_id, principal_type, principal_id FROM da_agent_grant ORDER BY principal_id")
             grants = cur.fetchall()
-            assert grants == [{"agent_id": "agent_default", "principal_type": "user", "principal_id": legacy_uid}]
+            assert grants == [
+                {"agent_id": "agent_default", "principal_type": "user", "principal_id": uid}
+                for uid in sorted([legacy_uid, unknown_uid])
+            ]
             cur.execute("SELECT visibility_json FROM da_agent_profile WHERE agent_id = 'agent_default'")
             assert json.loads(cur.fetchone()["visibility_json"]) == {"mode": "selected"}
             cur.execute("SELECT draft_json, published_json FROM da_agent_draft WHERE agent_id = 'agent_default'")
@@ -400,6 +423,8 @@ ADMIN_USERS = ["SSO:u-admin"]
         subprocess.run([sys.executable, "-m", "alembic", "downgrade", "20261122_000041"], cwd=backend_dir, env=env, check=True)
         subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=backend_dir, env=env, check=True)
     finally:
+        with contextlib.suppress(Exception):
+            conn.close()
         cleanup = pymysql.connect(host="127.0.0.1", port=3326, user="root", password="root123", autocommit=True)
         with cleanup.cursor() as cur:
             cur.execute(f"DROP DATABASE IF EXISTS {schema}")
@@ -460,3 +485,57 @@ def test_agent_grants_independent_of_draft_save_and_publish(monkeypatch):
     assert [u["id"] for u in grants_after.json()["users"]] == [alice.id]
     assert require_agent_access(alice.id, "agent_unpub")["agent_id"] == "agent_unpub"
 
+
+
+def test_default_password_never_reaches_an_administrator():
+    """The shared default password is for ordinary users only."""
+    store, admin, alice = install_fake_accounts()
+    client = TestClient(main.app)
+    headers = bearer_headers(admin.id)
+    admin_role_id = next(r["id"] for r in store.list_roles() if r["role_key"] == "admin")
+
+    # Creating an account straight into the admin role is refused.
+    created = client.post(
+        "/api/v1/dataagent/users",
+        json={"username": "eve", "display_name": "Eve", "role_ids": [admin_role_id]},
+        headers=headers,
+    )
+    assert created.status_code == 400
+
+    # An ordinary account still on the default password cannot be promoted by either path.
+    dave = client.post("/api/v1/dataagent/users", json={"username": "dave", "display_name": "Dave"}, headers=headers)
+    dave_id = dave.json()["id"]
+    user_role_id = next(r["id"] for r in store.list_roles() if r["role_key"] == "user")
+    promote = client.put(
+        f"/api/v1/dataagent/users/{dave_id}", json={"role_ids": [admin_role_id, user_role_id]}, headers=headers
+    )
+    assert promote.status_code == 400
+    via_role = client.put(
+        f"/api/v1/dataagent/roles/{admin_role_id}/users", json={"user_ids": [admin.id, dave_id]}, headers=headers
+    )
+    assert via_role.status_code == 400
+
+    # Alice has her own password, so she can be promoted; an admin can't be reset to the default.
+    promote_alice = client.put(
+        f"/api/v1/dataagent/users/{alice.id}", json={"role_ids": [admin_role_id, user_role_id]}, headers=headers
+    )
+    assert promote_alice.status_code == 200
+    reset = client.post(f"/api/v1/dataagent/users/{alice.id}/reset-password", headers=headers)
+    assert reset.status_code == 400
+    assert client.post(f"/api/v1/dataagent/users/{dave_id}/reset-password", headers=headers).status_code == 200
+
+
+def test_draft_preview_runs_for_an_agent_manager_without_a_published_profile(monkeypatch):
+    import core.agent_profile_service as profile_svc
+    from core.accounts.models import AgentAccessDeniedError
+    from core.task_coordinator import _verify_topic_execution_access
+
+    store, admin, alice = install_fake_accounts()
+    monkeypatch.setattr(profile_svc, "get_agent_profile", lambda aid: None)
+    preview = {"user_id": admin.id, "agent_id": "agent_draft", "is_agent_preview": True}
+    assert _verify_topic_execution_access(preview, "agent_draft") == admin.id
+
+    with pytest.raises(AgentAccessDeniedError):
+        _verify_topic_execution_access({**preview, "user_id": alice.id}, "agent_draft")
+    with pytest.raises(AgentAccessDeniedError):
+        _verify_topic_execution_access({**preview, "is_agent_preview": False}, "agent_draft")

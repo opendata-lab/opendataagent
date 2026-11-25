@@ -31,7 +31,7 @@ Superset 的安全管理使用 Flask-AppBuilder。其 `ab_user.id` 是整数主�
 
 ### 可信接入与自动注册
 
-1. 独立宿主的 Widget 请求走宿主自己的已登录后端。宿主逐请求检查登录和账号状态，从后端的登录主体取得用户 ID，重写用户头与站点头，再用现有 Widget 服务端接入密钥向 DataAgent 转发。密钥仅位于服务端。DataAgent 开启平台认证，为该站点要求服务端密钥并启用个人账号归属。缺少身份或站点凭据时拒绝请求。OntoFoundry 的会话主体按其站点接入方式处理。
+1. 独立宿主的 Widget 请求走宿主自己的已登录后端。宿主逐请求检查登录和账号状态，从后端的登录主体取得用户 ID，重写用户头与站点头，再用现有 Widget 服务端接入密钥向 DataAgent 转发。密钥仅位于服务端。DataAgent 开启平台认证，为该站点要求服务端密钥并启用个人账号归属。缺少身份或站点凭据时拒绝请求。OntoFoundry 同样转发已登录用户，不再使用共享会话键（2026-11-24 用户决定：不允许共享会话）。
 2. 外部身份统一解析为 `(source, subject)`。可信门户传 `alice` 或 `local:alice` 时得到站点来源和短名 `alice`。门户传 `<registration id>:<sub>` 时，按管理员配置的映射解析到主站 OAuth 来源，只有确认双方身份源及 `sub` 口径一致时才共用该绑定。若尚未绑定，只有明确配置为共用同一稳定账号命名空间的来源才能按唯一用户名匹配已有用户。其他同名冲突交管理员核对。管理员账号需要明确绑定其外部主体。
 3. 可信 Widget 和主站 OAuth 共用账号登记服务。匹配到的账号复用原用户记录。首次注册在同一事务创建账号、外部绑定、普通用户角色关联，并将管理员配置的默认密码哈希写入该账号。并发访问随后复用该账号。主站通过 OAuth 或密码登录后可以申请该账号的 MCP 个人访问令牌。
 4. 内部账号 ID 一律为整数，引用平台账号的列统一为 `user_id BIGINT REFERENCES da_user(id)`。新会话写入新增的 `da_agent_topic.user_id`；迁移时按 `da_user_identity` 精确匹配旧 `auth_user_id`（`local:<u>` / `<provider>:<sub>`）回填 `user_id`，匹配不到的旧会话保留 `user_id` 为空且仅管理员可读。代码仅保留按 `user_id` 的一套归属判断，不再保留按 `auth_user_id` 的旧路径。MCP 令牌表的 `user_id` 改为同样的外键，切换时直接删除旧令牌行（或重建表），用户重新申请。Widget 可访问当前账号的网页、MCP 和本站个人会话。
@@ -87,7 +87,7 @@ OIDC 将已验证的 `iss` 映射为配置的来源，以 `sub` 查外部身份�
 
 | 公共入口 | 责任 |
 | --- | --- |
-| `current_account_context(request)` | 每次请求验证一次凭据，返回可信站点和共享会话范围，以及请求中已验证的用户账号。 |
+| `current_account_context(request)` | 每次请求验证一次凭据，返回可信站点范围和请求中已验证的用户账号。宿主转发的 Widget 凭据只用于 Widget 运行和助手目录接口；`current_user` 及其上的账号、管理、评测和 MCP 令牌接口只接受平台登录。 |
 | `current_user(request) -> User` | FastAPI 依赖，从同一上下文取当前账号。 |
 | `current_user_id(request) -> int` | 复用当前账号并取整数主键，供所有者或操作者写入。 |
 | `require_permission(key)` | 校验菜单及管理操作对应的静态角色权限。 |
@@ -100,7 +100,7 @@ OIDC 将已验证的 `iss` 映射为配置的来源，以 `sub` 查外部身份�
 
 | 位置 | 已核对的用途 | 本次去向 |
 | --- | --- | --- |
-| `da_agent_topic.auth_user_id`、`auth_username`、`external_user_id`、`visitor_id` | 平台旧主体及名称、宿主 ID 和访客 ID | 新会话以 `user_id BIGINT NULL` 外键归属并联查显示名。迁移时将可经 `da_user_identity` 精确映射的 `auth_user_id` 回填至 `user_id`，未映射行 `user_id` 为空且仅管理员可读；代码只保留 `user_id` 归属路径。旧字段只读保留历史。可信共享会话继续用 `external_user_id` 存宿主会话键，作为资源范围。 |
+| `da_agent_topic.auth_user_id`、`auth_username`、`external_user_id`、`visitor_id` | 平台旧主体及名称、宿主 ID 和访客 ID | 新会话以 `user_id BIGINT NULL` 外键归属并联查显示名。迁移先为旧会话和已发布名单中出现的每个旧主体登记普通账号及同一外部身份（即该用户首次登录时会建立的绑定），再按 `da_user_identity` 精确映射回填 `user_id`；没有 `auth_user_id` 的行 `user_id` 为空且仅管理员可读；代码只保留 `user_id` 归属路径。旧字段只读保留历史。旧共享会话键仅作为历史保留在 `external_user_id`，不再作为访问范围。 |
 | `da_mcp_access_token.user_id`、`display_name`、`oauth_role` | 令牌的字符串持有人及资料、角色快照 | 切换时直接删除旧令牌行（或重建表），再将 `user_id` 改为整数外键，用户重新申请。移除快照并联查用户资料及权限。 |
 | 已发布助手 `visibility_json` 与草稿、发布快照中的 `visibility.allowed_users`、`allowed_groups` | 指定范围用户名单和未使用的组预留字段 | 已核实的授权迁入 `da_agent_grant`。配置保留模式，清除旧名单与组字段。 |
 | `da_agent_message.feedback`、`feedback_at` 及用户反馈列表 | 反馈在消息行，用户来源联查话题 | 继续从话题取 `user_id` 及显示名。 |
@@ -115,6 +115,6 @@ OIDC 将已验证的 `iss` 映射为配置的来源，以 `sub` 查外部身份�
 
 ### 切换影响
 
-- 平台停用认证关闭时的共享池及仅凭宿主 ID 的匿名 Widget 路径。既有「所有人」「登录用户」助手对已通过入口认证的调用者维持原有可见范围。旧网页会话在迁移时经 `da_user_identity` 精确映射回填 `user_id` 后继续归本人访问，未映射旧话题保持 `user_id` 为空且仅管理员可读；代码不再保留按 `auth_user_id` 的归属回退路径。
-- OpenDataWorks 个人 Widget 由门户认证后经站点凭据转发。OntoFoundry 的 BFF 核对工作空间权限，并转发已登录用户、站点凭据和共享会话键 `ontofoundry:<workspace>:<session>`。新话题写创建人的整数 `user_id`。共享话题只在精确匹配 Widget 来源、站点和共享键的范围内访问，并从个人会话列表排除。发问和修改按本次实际用户的助手权限校验，工作空间内有权限的成员可续聊同一话题。后台状态同步、结果读取使用已验证的站点及共享键。旧共享话题通过同一受信范围只读，新执行从新话题开始。
+- 平台停用认证关闭时的共享池及仅凭宿主 ID 的匿名 Widget 路径。既有「所有人」「登录用户」助手对已通过入口认证的调用者维持原有可见范围。旧网页会话在迁移时登记旧主体并经 `da_user_identity` 精确映射回填 `user_id` 后继续归本人访问，没有旧主体的话题保持 `user_id` 为空且仅管理员可读；代码不再保留按 `auth_user_id` 的归属回退路径。
+- OpenDataWorks 个人 Widget 由门户认证后经站点凭据转发。OntoFoundry 的 BFF 核对工作空间权限，并转发已登录用户和站点凭据。DataAgent 不支持共享会话（2026-11-24 用户决定）：每个建模会话只属于创建人，只有创建人能在其中发问，其他成员在 OntoFoundry 内查看；读时对账使用会话创建人的用户 ID。旧共享会话键话题没有 `user_id`，仅管理员可在审计中查看。
 - 本地开发、冒烟及评测在访问业务接口前使用专用账号登录，复用登录 Cookie 或 Bearer 会话凭据。存量评测话题保留历史，验证用登录态新话题。

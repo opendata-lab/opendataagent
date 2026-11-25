@@ -1146,7 +1146,6 @@ def test_followup_suggestions_route_generates_without_changing_message_contract(
             "website_id": "",
             "user_id": 2,
             "is_admin": False,
-            "shared_session_key": "",
         }
 
         history = client.get(f"/api/v1/nl2sql/topics/{topic_id}/messages", params={"page": 1, "page_size": 50, "order": "asc"})

@@ -230,7 +230,7 @@ def current_account_context(request: Request) -> AccountContext:
         user = _resolve_session_user(request)
         if user is None:
             raise HTTPException(status_code=401, detail="Not authenticated")
-        ctx = AccountContext(user=user, source="web", website_id="", shared_session_key="", auth_method="session")
+        ctx = AccountContext(user=user, source="web", website_id="", auth_method="session")
         request.state._account_context = ctx
         return ctx
 
@@ -270,7 +270,6 @@ def current_account_context(request: Request) -> AccountContext:
             user=user,
             source="widget",
             website_id=website_id,
-            shared_session_key="",
             auth_method="widget_platform",
         )
         request.state._account_context = ctx
@@ -290,59 +289,48 @@ def current_account_context(request: Request) -> AccountContext:
         logger.warning("Widget access key rejected website_id=%r", website_id)
         raise HTTPException(status_code=403, detail="Widget access key is invalid")
 
-    account_mode = str(server_side.get("account_mode") or "personal").strip().lower()
     raw_user_id = _clean_header(request.headers.get("X-DataAgent-User-Id"), 255)
-    shared_session_key = _clean_header(request.headers.get("X-DataAgent-Session-Key"), 255)
-    if account_mode == "shared":
-        if not shared_session_key:
-            raise HTTPException(status_code=400, detail="X-DataAgent-Session-Key is required for shared widget site")
-    else:
-        shared_session_key = ""
-
-    user: User | None = None
-    if raw_user_id:
-        ext_source, ext_subject, username_candidate, trusted_ns = _resolve_widget_external_identity(
-            matched_site, raw_user_id
-        )
-        display_name = _clean_header(request.headers.get("X-DataAgent-User-Display-Name"), 255)
-        email = _clean_header(request.headers.get("X-DataAgent-User-Email"), 255)
-        email_verified = _clean_header(request.headers.get("X-DataAgent-User-Email-Verified"), 16).lower() in {
-            "1",
-            "true",
-            "yes",
-        }
-        profile = {
-            "username": username_candidate,
-            "display_name": display_name,
-            "email": email,
-            "email_verified": email_verified,
-        }
-        try:
-            user = link_or_register(
-                ext_source,
-                ext_subject,
-                profile,
-                trusted_username_namespace=trusted_ns,
-            )
-        except AccountDisabledError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except IdentityConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except AutoRegisterUnavailableError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-    elif not shared_session_key:
+    if not raw_user_id:
         raise HTTPException(
             status_code=401,
             detail={"code": "WIDGET_LOGIN_REQUIRED", "message": "请先登录后使用智能问数"},
         )
+    ext_source, ext_subject, username_candidate, trusted_ns = _resolve_widget_external_identity(
+        matched_site, raw_user_id
+    )
+    display_name = _clean_header(request.headers.get("X-DataAgent-User-Display-Name"), 255)
+    email = _clean_header(request.headers.get("X-DataAgent-User-Email"), 255)
+    email_verified = _clean_header(request.headers.get("X-DataAgent-User-Email-Verified"), 16).lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    profile = {
+        "username": username_candidate,
+        "display_name": display_name,
+        "email": email,
+        "email_verified": email_verified,
+    }
+    try:
+        user = link_or_register(
+            ext_source,
+            ext_subject,
+            profile,
+            trusted_username_namespace=trusted_ns,
+        )
+    except AccountDisabledError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except IdentityConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AutoRegisterUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     ctx = AccountContext(
         user=user,
         source="widget",
         website_id=website_id,
-        shared_session_key=shared_session_key,
         auth_method="widget_trusted",
     )
     request.state._account_context = ctx
@@ -350,10 +338,17 @@ def current_account_context(request: Request) -> AccountContext:
 
 
 def current_user(request: Request) -> User:
-    """FastAPI dependency returning the verified active User for the current request."""
+    """FastAPI dependency returning the verified active User of a platform session.
+
+    Platform routes (account, admin, eval, MCP tokens) accept only the user's own
+    DataAgent login. A host-forwarded Widget request is limited to the routes that
+    take ``current_account_context`` (Widget runtime and assistant catalog).
+    """
     ctx = current_account_context(request)
     if ctx.user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    if ctx.auth_method == "widget_trusted":
+        raise HTTPException(status_code=403, detail="Widget credentials cannot access platform routes")
     return ctx.user
 
 

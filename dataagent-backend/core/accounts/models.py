@@ -113,12 +113,11 @@ class User:
 
 @dataclass(frozen=True)
 class AccountContext:
-    """Verified per-request account and site/shared-session context."""
+    """Verified per-request account and Widget site context."""
 
     user: User | None
     source: str = "web"  # "web" | "widget" | "remote"
     website_id: str = ""
-    shared_session_key: str = ""
     auth_method: str = "session"  # "session" | "mcp_token" | "widget_platform" | "widget_trusted"
 
     @property
@@ -135,5 +134,4 @@ class AccountContext:
             "website_id": self.website_id,
             "user_id": self.user_id,
             "is_admin": self.is_admin,
-            "shared_session_key": self.shared_session_key,
         }

@@ -139,7 +139,6 @@ def _mask_widget_sites(sites: list) -> list:
             "server_side": {
                 "enabled": server_side.get("enabled") is True,
                 "key_configured": bool(server_side.get("access_key_hash")),
-                "account_mode": str(server_side.get("account_mode") or "personal"),
                 "trusted_username_namespace": server_side.get("trusted_username_namespace") is True,
                 "provider_mappings": dict(server_side.get("provider_mappings") or {}),
             },
@@ -479,10 +478,8 @@ def admin_update_experience(
 
 def _admin_topic_summary(topic: dict, user: User) -> AdminWidgetTopicSummary:
     source = topic.get("source") or "web"
-    is_shared = source == "widget" and bool(topic.get("external_user_id"))
     can_continue = (
         source in {"web", "widget", "remote"}
-        and not is_shared
         and topic.get("user_id") == user.id
     )
     return AdminWidgetTopicSummary.model_validate({**topic, "can_continue": can_continue})
@@ -662,7 +659,6 @@ def _preview_owner_context(user: User) -> dict[str, Any]:
         "website_id": "",
         "user_id": user.id,
         "is_admin": user.is_admin,
-        "shared_session_key": "",
     }
 
 

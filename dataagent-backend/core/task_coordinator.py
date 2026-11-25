@@ -12,7 +12,7 @@ from typing import Any
 import redis.asyncio as redis
 
 from config import get_settings
-from core.accounts import AgentAccessDeniedError, require_agent_access
+from core.accounts import AgentAccessDeniedError, get_account_store, require_agent_access
 from core.experience import DIGEST_AGENT_ID, candidates_changed, collect_candidates, db_now, run_daily_digest
 from core.logging_config import task_id_var, topic_id_var
 from core.task_control import PARKED_TASK_STATUSES, CancelReason
@@ -39,6 +39,13 @@ def _verify_topic_execution_access(topic: dict, agent_id: str) -> int | None:
         return None
     if uid is None:
         raise AgentAccessDeniedError("会话缺少有效用户归属，无法执行任务")
+    if (topic or {}).get("is_agent_preview"):
+        # Draft previews run the topic's draft snapshot, which may have no
+        # published profile yet; the owner must still be able to manage agents.
+        user = get_account_store().get_user(uid)
+        if user is None or not user.is_active or not user.has_permission("agents:manage"):
+            raise AgentAccessDeniedError("账号不存在、已停用或无助手管理权限")
+        return uid
     require_agent_access(uid, resolved_agent_id)
     return uid
 

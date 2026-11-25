@@ -407,7 +407,6 @@ async def api_create_task(payload: CreateTaskRequest, request: Request):
             database_hint=payload.database,
             debug=bool(payload.debug),
             agent_id=payload.agent_id,
-            source_queue_id=payload.source_queue_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -974,8 +973,6 @@ def _require_writable_topic(
 ) -> dict:
     user = _require_writable_user(ctx)
     topic = _require_topic(topic_id, ctx.to_store_context())
-    if ctx.shared_session_key and topic.get("user_id") is None:
-        raise HTTPException(status_code=403, detail="历史共享会话仅支持只读，请新建会话继续提问")
     if check_agent_access:
         _require_agent_profile(str(topic.get("agent_id") or ""), user)
     return topic

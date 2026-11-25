@@ -439,7 +439,6 @@ class TopicTaskStore(SessionCheckpointStore):
             if isinstance(raw_uid, int) and not isinstance(raw_uid, bool) and raw_uid > 0
             else None
         )
-        shared_session_key = str(ctx.get("shared_session_key") or "").strip() if widget else ""
         return {
             # 'remote' marks a conversation started from the published MCP endpoint;
             # it is otherwise an ordinary signed-in conversation.
@@ -447,7 +446,6 @@ class TopicTaskStore(SessionCheckpointStore):
             "website_id": str(ctx.get("website_id") or "").strip() if widget else "",
             "user_id": user_id,
             "is_admin": bool(ctx.get("is_admin")),
-            "shared_session_key": shared_session_key,
             "system_digest": bool(ctx.get("system_digest")),
         }
 
@@ -464,37 +462,27 @@ class TopicTaskStore(SessionCheckpointStore):
         prefix = f"{alias}." if alias else ""
         regular_topic = f"{prefix}is_agent_preview = 0"
 
-        # Trusted shared modeling session (e.g. OntoFoundry): scoped strictly by
-        # (source='widget', website_id, external_user_id=shared_session_key).
-        if normalized["shared_session_key"]:
-            return (
-                f"{prefix}source = %s AND {prefix}website_id = %s AND {prefix}external_user_id = %s AND {regular_topic}",
-                ["widget", normalized["website_id"], normalized["shared_session_key"]],
-            )
-
         user_id = normalized["user_id"]
         if user_id is None:
             return "1 = 0", []
 
-        # Personal conversations never include shared-session widget topics.
-        not_shared = f"({prefix}source <> 'widget' OR {prefix}external_user_id = '')"
         if normalized["source"] != "widget":
             sources = ["web", "widget", "remote"]
             source_in = f"{prefix}source IN (%s, %s, %s)"
             if normalized["is_admin"]:
                 scope = f"({regular_topic} OR {prefix}source = %s)"
                 return (
-                    f"{source_in} AND {not_shared} AND {prefix}user_id = %s AND {scope}",
+                    f"{source_in} AND {prefix}user_id = %s AND {scope}",
                     [*sources, user_id, "web"],
                 )
             return (
-                f"{source_in} AND {not_shared} AND {prefix}user_id = %s AND {regular_topic}",
+                f"{source_in} AND {prefix}user_id = %s AND {regular_topic}",
                 [*sources, user_id],
             )
 
         # Personal widget: user's web + remote topics + personal widget topics for this site.
         return (
-            f"({prefix}source IN (%s, %s) OR ({prefix}source = %s AND {prefix}website_id = %s AND {prefix}external_user_id = '')) "
+            f"({prefix}source IN (%s, %s) OR ({prefix}source = %s AND {prefix}website_id = %s)) "
             f"AND {prefix}user_id = %s AND {regular_topic}",
             ["web", "remote", "widget", normalized["website_id"], user_id],
         )
@@ -556,7 +544,7 @@ class TopicTaskStore(SessionCheckpointStore):
                 normalized_context["source"],
                 normalized_context["website_id"],
                 normalized_context["user_id"],
-                normalized_context["shared_session_key"],
+                "",
                 "",
                 str((event or {}).get("agent_id") or "").strip()[:64],
                 (str((event or {}).get("topic_id") or "").strip()[:64] or None),
@@ -626,7 +614,7 @@ class TopicTaskStore(SessionCheckpointStore):
                         normalized_context["source"],
                         normalized_context["website_id"],
                         normalized_context["user_id"],
-                        normalized_context["shared_session_key"],
+                        "",
                         1 if is_agent_preview else 0,
                     ),
                 )

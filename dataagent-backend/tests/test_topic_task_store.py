@@ -262,7 +262,7 @@ def test_record_widget_events_uses_only_header_identity():
     rows = []
     store = _make_store_with_fake_db(rows)
     # Identity from context only — body fields should be ignored
-    context = {"source": "widget", "website_id": "real_site", "user_id": 9, "shared_session_key": "sess_1"}
+    context = {"source": "widget", "website_id": "real_site", "user_id": 9}
 
     store.record_widget_events(
         [{"event_type": "widget_open", "website_id": "injected_site", "user_id": 999, "external_user_id": "injected_user"}],
@@ -271,7 +271,7 @@ def test_record_widget_events_uses_only_header_identity():
 
     assert rows[0][2] == "real_site"
     assert rows[0][3] == 9
-    assert rows[0][4] == "sess_1"
+    assert rows[0][4] == ""
 
 
 def test_record_widget_events_returns_zero_for_empty_list():
@@ -449,20 +449,19 @@ def test_predicate_fail_closed_without_user_id():
 
 def test_predicate_unified_account_matrix():
     store = TopicTaskStore()
-    not_shared = "(t.source <> 'widget' OR t.external_user_id = '')"
 
     # 普通用户 web：看自己跨 web / 个人 widget / remote 话题，不含共享池。
     sql, params = store._topic_context_predicate(  # noqa: SLF001
         {"source": "web", "user_id": 42, "is_admin": False}, alias="t"
     )
-    assert sql == f"t.source IN (%s, %s, %s) AND {not_shared} AND t.user_id = %s AND t.is_agent_preview = 0"
+    assert sql == f"t.source IN (%s, %s, %s) AND t.user_id = %s AND t.is_agent_preview = 0"
     assert params == ["web", "widget", "remote", 42]
 
     # 管理员 web：看自己全部跨入口话题 + 自己的 web 调试话题。
     sql, params = store._topic_context_predicate(  # noqa: SLF001
         {"source": "web", "user_id": 1, "is_admin": True}, alias="t"
     )
-    assert sql == f"t.source IN (%s, %s, %s) AND {not_shared} AND t.user_id = %s AND (t.is_agent_preview = 0 OR t.source = %s)"
+    assert sql == f"t.source IN (%s, %s, %s) AND t.user_id = %s AND (t.is_agent_preview = 0 OR t.source = %s)"
     assert params == ["web", "widget", "remote", 1, "web"]
 
     # 个人模式 widget：看自己 web + remote + 该站点的个人 widget 话题。
@@ -470,18 +469,10 @@ def test_predicate_unified_account_matrix():
         {"source": "widget", "website_id": "demo", "user_id": 42}, alias="t"
     )
     assert sql == (
-        "(t.source IN (%s, %s) OR (t.source = %s AND t.website_id = %s AND t.external_user_id = '')) "
+        "(t.source IN (%s, %s) OR (t.source = %s AND t.website_id = %s)) "
         "AND t.user_id = %s AND t.is_agent_preview = 0"
     )
     assert params == ["web", "remote", "widget", "demo", 42]
-
-    # 共享会话 widget（OntoFoundry）：按站点 + shared_session_key 隔离，不混入个人话题。
-    sql, params = store._topic_context_predicate(  # noqa: SLF001
-        {"source": "widget", "website_id": "onto", "shared_session_key": "sess_1", "user_id": 42},
-        alias="t",
-    )
-    assert sql == "t.source = %s AND t.website_id = %s AND t.external_user_id = %s AND t.is_agent_preview = 0"
-    assert params == ["widget", "onto", "sess_1"]
 
     # context=None（管理端点）不过滤。
     sql, params = store._topic_context_predicate(None, alias="t")  # noqa: SLF001
@@ -489,7 +480,7 @@ def test_predicate_unified_account_matrix():
     assert params == []
 
 
-def test_create_topic_writes_user_id_and_shared_session_key(monkeypatch):
+def test_create_topic_writes_user_id(monkeypatch):
     class FakeCursor:
         def __init__(self, conn):
             self.conn = conn
@@ -530,15 +521,6 @@ def test_create_topic_writes_user_id_and_shared_session_key(monkeypatch):
     sql, params = conn.executed[0]
     assert "user_id, external_user_id" in sql
     assert params[-3:] == [42, "", 0]
-
-    # 共享会话 widget：同时写入 user_id（创建人）与 external_user_id（shared_session_key）。
-    conn.executed.clear()
-    store.create_topic(
-        title="共享研究",
-        context={"source": "widget", "website_id": "onto", "user_id": 42, "shared_session_key": "sess_9"},
-    )
-    _, params = conn.executed[0]
-    assert params[-3:] == [42, "sess_9", 0]
 
 
 # ---------------------------------------------------------------------------

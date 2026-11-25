@@ -114,7 +114,6 @@ def _import_cutover_admins(
 ) -> dict[str, Any]:
     imported_local: list[str] = []
     imported_oauth_admins: list[str] = []
-    default_pw = str(config.get("default_user_password") or "")
 
     for item in config.get("local_admins") or []:
         username = item["username"]
@@ -172,7 +171,9 @@ def _import_cutover_admins(
             user_id = int(ident[0])
         else:
             username = _allocate_unique_username(conn, subject, source)
-            pw_hash = hash_password(default_pw) if default_pw else ""
+            # Imported OAuth administrators keep OAuth-only login: the shared
+            # default password is for ordinary users only.
+            pw_hash = ""
             res = conn.execute(
                 sa.text(
                     """
@@ -204,6 +205,85 @@ def _import_cutover_admins(
         "imported_local_admins": imported_local,
         "imported_admin_users": imported_oauth_admins,
     }
+
+
+def _import_legacy_principals(
+    conn: sa.Connection,
+    *,
+    user_role_id: int,
+    config: dict[str, Any],
+) -> list[str]:
+    """Register every legacy principal as an ordinary account before backfill.
+
+    Old topics and published allowlists name users as ``<source>:<subject>``
+    (``local:<u>`` or ``<provider>:<sub>``), the exact identity a later login
+    looks up. Creating that binding now is what the user's first login would
+    do, so their old topics and assistant grants carry over instead of being
+    stranded as admin-only rows.
+    """
+    principals: dict[str, str] = {}
+    inspector = sa.inspect(conn)
+    if inspector.has_table("da_agent_topic"):
+        for row in conn.execute(
+            sa.text(
+                """
+                SELECT auth_user_id, MAX(auth_username) AS auth_username
+                FROM da_agent_topic
+                WHERE auth_user_id IS NOT NULL AND auth_user_id <> ''
+                GROUP BY auth_user_id
+                """
+            )
+        ).mappings():
+            principals[str(row["auth_user_id"])] = str(row.get("auth_username") or "")
+    if inspector.has_table("da_agent_profile"):
+        for row in conn.execute(sa.text("SELECT visibility_json FROM da_agent_profile")).mappings():
+            for entry in _clean_visibility(row.get("visibility_json"))[1]:
+                principals.setdefault(entry, "")
+
+    default_pw = str(config.get("default_user_password") or "")
+    imported: list[str] = []
+    for entry, legacy_name in sorted(principals.items()):
+        source, sep, subject = entry.partition(":")
+        if not sep or not source or not subject:
+            continue
+        exists = conn.execute(
+            sa.text(
+                """
+                SELECT 1 FROM da_user_identity
+                WHERE source = :src
+                  AND subject = :sub
+                LIMIT 1
+                """
+            ),
+            {"src": source, "sub": subject},
+        ).fetchone()
+        if exists:
+            continue
+        name = legacy_name.strip() or subject
+        res = conn.execute(
+            sa.text(
+                """
+                INSERT INTO da_user (username, display_name, password_hash, is_active)
+                VALUES (:u, :d, :pw, 1)
+                """
+            ),
+            {
+                "u": _allocate_unique_username(conn, name, source),
+                "d": name[:255],
+                "pw": hash_password(default_pw) if default_pw else "",
+            },
+        )
+        user_id = int(res.lastrowid)
+        conn.execute(
+            sa.text("INSERT INTO da_user_identity (source, subject, user_id) VALUES (:src, :sub, :uid)"),
+            {"src": source, "sub": subject, "uid": user_id},
+        )
+        conn.execute(
+            sa.text("INSERT IGNORE INTO da_user_role (user_id, role_id) VALUES (:uid, :rid)"),
+            {"uid": user_id, "rid": user_role_id},
+        )
+        imported.append(entry)
+    return imported
 
 
 def _backfill_topic_user_ids(conn: sa.Connection) -> int:
@@ -355,13 +435,15 @@ def _migrate_agent_grants_and_visibility(conn: sa.Connection) -> dict[str, Any]:
 
 def run_accounts_data_migration(conn: sa.Connection, *, config_path: str | None = None) -> dict[str, Any]:
     """Execute the full one-time accounts cutover data migration on an open connection."""
-    admin_role_id, _user_role_id = _ensure_builtin_roles(conn)
+    admin_role_id, user_role_id = _ensure_builtin_roles(conn)
     config = _load_cutover_config(config_path)
     admin_report = _import_cutover_admins(conn, admin_role_id=admin_role_id, config=config)
+    imported_users = _import_legacy_principals(conn, user_role_id=user_role_id, config=config)
     backfilled_topics = _backfill_topic_user_ids(conn)
     grant_report = _migrate_agent_grants_and_visibility(conn)
     report = {
         **admin_report,
+        "imported_legacy_users": imported_users,
         "backfilled_topics": backfilled_topics,
         **grant_report,
     }

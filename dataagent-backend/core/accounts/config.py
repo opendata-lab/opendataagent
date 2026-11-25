@@ -386,10 +386,6 @@ def verify_session_token(token: str) -> int | None:
     raw_uid = payload.get("uid")
     if isinstance(raw_uid, int) and not isinstance(raw_uid, bool) and raw_uid > 0:
         return raw_uid
-    raw_sub = str(payload.get("sub") or "").strip()
-    if raw_sub.isdigit():
-        uid = int(raw_sub)
-        return uid if uid > 0 else None
     return None
 
 

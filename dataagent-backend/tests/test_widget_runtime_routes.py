@@ -70,7 +70,7 @@ class FakeTopicStore:
             source=(context or {}).get("source", "widget"),
             website_id=(context or {}).get("website_id", "demo"),
             user_id=(context or {}).get("user_id"),
-            external_user_id=(context or {}).get("shared_session_key", ""),
+            external_user_id="",
         )
         self.topics[payload["topic_id"]] = payload
         return payload
@@ -208,7 +208,6 @@ def test_web_requests_require_authenticated_session(monkeypatch):
     assert context["source"] == "web"
     assert context["user_id"] == 2
     assert context["website_id"] == ""
-    assert context["shared_session_key"] == ""
 
 
 def test_platform_widget_uses_verified_session_and_requires_same_origin(monkeypatch):
@@ -227,7 +226,6 @@ def test_platform_widget_uses_verified_session_and_requires_same_origin(monkeypa
     assert ok.status_code == 200
     context = store.calls[-1][1]
     assert (context["source"], context["website_id"], context["user_id"]) == ("widget", "demo", 2)
-    assert context["shared_session_key"] == ""
 
     denied = client.get("/api/v1/nl2sql/topics", headers=platform_widget_headers(fetch_site="same-site"))
     assert denied.status_code == 403
@@ -300,7 +298,6 @@ def test_trusted_server_side_personal_widget_links_user_and_maps_provider(monkey
                 "server_side": {
                     "enabled": True,
                     "access_key_hash": _hash_key(raw_key),
-                    "account_mode": "personal",
                     "trusted_username_namespace": True,
                     "provider_mappings": {"sso-corp": "CorpSSO"},
                 },
@@ -335,7 +332,6 @@ def test_trusted_server_side_personal_widget_links_user_and_maps_provider(monkey
     )
     assert ok_bare.status_code == 200
     assert store.calls[-1][1]["user_id"] == 2
-    assert store.calls[-1][1]["shared_session_key"] == ""
 
     # `local:alice` resolves to the same user #2
     ok_local = client.get(
@@ -367,96 +363,6 @@ def test_trusted_server_side_personal_widget_links_user_and_maps_provider(monkey
         ident["source"] == "CorpSSO" and ident["subject"] == "emp99"
         for ident in acc_store.identities.values()
     )
-
-
-def test_trusted_server_side_shared_widget_collaborative_session_and_readonly_legacy(monkeypatch):
-    acc_store, _admin, _alice = install_fake_accounts()
-    # Create second member `bob`
-    bob = acc_store.create_user(username="bob", password_hash="x", display_name="Bob")
-    raw_key = "onto-secret-access-key"
-    install_widget_settings(
-        monkeypatch,
-        sites=[
-            {
-                "website_id": "onto",
-                "allowed_origins": [],
-                "project_name": "OntoFoundry",
-                "server_side": {
-                    "enabled": True,
-                    "access_key_hash": _hash_key(raw_key),
-                    "account_mode": "shared",
-                    "trusted_username_namespace": True,
-                    "provider_mappings": {},
-                },
-            }
-        ],
-    )
-    install_agent_profile(monkeypatch, "agent_widget")
-    store = install_fake_store(monkeypatch)
-    client = TestClient(app)
-
-    base = {
-        "X-DataAgent-Client": "widget",
-        "X-DataAgent-Website-Id": "onto",
-        "X-DataAgent-Access-Key": raw_key,
-    }
-
-    # Missing X-DataAgent-Session-Key rejected
-    assert client.get("/api/v1/nl2sql/topics", headers=base).status_code == 400
-
-    # Background read works with session key and WITHOUT X-DataAgent-User-Id
-    bg_headers = {**base, "X-DataAgent-Session-Key": "session-100"}
-    assert client.get("/api/v1/nl2sql/topics", headers=bg_headers).status_code == 200
-    assert store.calls[-1][1]["shared_session_key"] == "session-100"
-    assert store.calls[-1][1]["user_id"] is None
-
-    # Write WITHOUT X-DataAgent-User-Id is rejected (401)
-    assert (
-        client.post(
-            "/api/v1/nl2sql/topics",
-            headers=bg_headers,
-            json={"title": "共享分析", "agent_id": "agent_widget"},
-        ).status_code
-        == 401
-    )
-
-    # Member A (`alice`) creates shared topic
-    alice_headers = {**bg_headers, "X-DataAgent-User-Id": "alice"}
-    created = client.post(
-        "/api/v1/nl2sql/topics",
-        headers=alice_headers,
-        json={"title": "共享分析", "agent_id": "agent_widget"},
-    )
-    assert created.status_code == 200
-    assert store.calls[-1][1]["user_id"] == 2
-    assert store.calls[-1][1]["shared_session_key"] == "session-100"
-
-    # Member B (`bob`) reads and updates the same shared topic
-    bob_headers = {**bg_headers, "X-DataAgent-User-Id": "bob"}
-    assert client.get("/api/v1/nl2sql/topics/topic-created", headers=bob_headers).status_code == 200
-    patched = client.put(
-        "/api/v1/nl2sql/topics/topic-created",
-        headers=bob_headers,
-        json={"title": "Bob 更新标题"},
-    )
-    assert patched.status_code == 200
-    assert store.calls[-1][1]["user_id"] == bob.id
-
-    # Legacy shared topic (user_id is None) is read-only: GET ok, write returns 403
-    store.topics["legacy-shared"] = topic_payload(
-        "legacy-shared",
-        source="widget",
-        website_id="onto",
-        user_id=None,
-        external_user_id="session-100",
-    )
-    assert client.get("/api/v1/nl2sql/topics/legacy-shared", headers=bg_headers).status_code == 200
-    denied_write = client.put(
-        "/api/v1/nl2sql/topics/legacy-shared",
-        headers=alice_headers,
-        json={"title": "不能修改"},
-    )
-    assert denied_write.status_code == 403
 
 
 def test_widget_origin_site_and_task_isolation(monkeypatch):

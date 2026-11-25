@@ -133,22 +133,33 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
 | `dataagent_config_docker.py.example` | 用户覆盖示例（认证 + `DATAAGENT_SETTINGS`）；复制为 `dataagent_config_docker.py` 后填写 |
 | `custom_sso_user_info.py.example` | OAuth UserInfo 归一化钩子示例（仅返回身份与资料字段，不下发角色） |
 
-部署步骤：
+全新部署：
 
 1. `cd deploy/docker/dataagent && cp dataagent_config_docker.py.example dataagent_config_docker.py`
-2. 填写 `SECRET_KEY`（`secrets.token_urlsafe(32)`）、`DEFAULT_USER_PASSWORD`（用于后台建号、重置密码及外部可信登录首次自动注册），按需配置单项 `OAUTH_PROVIDERS`（`redirect_uri` 为 `https://<dataagent-host>/oauth-authorized/<provider_name>`）及 `OAUTH_USER_INFO`。
+2. 填写 `SECRET_KEY`（`secrets.token_urlsafe(32)`）、`DEFAULT_USER_PASSWORD`（普通用户的初始密码，用于后台建号、重置密码及外部可信登录首次自动注册；管理员账号不使用），按需配置单项 `OAUTH_PROVIDERS`（`redirect_uri` 为 `https://<dataagent-host>/oauth-authorized/<provider_name>`）及 `OAUTH_USER_INFO`。
 3. 运行数据库迁移 `alembic upgrade head` 后，执行 CLI 创建初始管理员账号：
    ```bash
    python -m core.accounts create-user --username admin --password '<强密码>' --admin
    ```
-   从旧版本升级时，迁移 `20261123_000042` 会一次性导入原配置中的 `LOCAL_ADMINS`（首次登录自动升级为 Argon2id）和 `ADMIN_USERS`，并清空旧个人 MCP 访问令牌（升级后需重新申请）。
+4. 重启 `dataagent-backend`。
+
+从旧版本升级（不要用示例覆盖现有 `dataagent_config_docker.py`，迁移要从中读取旧管理员）：
+
+1. 备份数据库，以及现有 `dataagent_config_docker.py`。
+2. 在现有文件中保留 `LOCAL_ADMINS`、`ADMIN_USERS`，补充 `DEFAULT_USER_PASSWORD`。确认 `DATAAGENT_CONFIG` 指向这个文件。
+3. 运行 `alembic upgrade head`。迁移 `20261123_000042` 一次性：
+   - 导入 `LOCAL_ADMINS`（保留原 bcrypt 哈希，首次登录升级为 Argon2id）和 `ADMIN_USERS`（仅 OAuth 登录，不设密码）为管理员；
+   - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<u>` / `<provider>:<sub>`）登记普通账号和外部身份，初始密码为 `DEFAULT_USER_PASSWORD`；
+   - 按外部身份精确回填旧会话归属，将已发布的 `allowed_users` 转为助手授权；
+   - 清空旧个人 MCP 访问令牌（升级后需重新申请）。
+   迁移日志 `Unified accounts migration summary` 列出导入的管理员、旧用户、回填数和未映射的授权，核对后再开放访问。
 4. 重启 `dataagent-backend`。
 
 缺合法 `SECRET_KEY`、显式置 `AUTH_ENABLED = False`、文件不可读或语法错误时服务启动失败（fail-closed）。
 
 宿主系统内嵌 Widget 时不再接受浏览器端自报 `X-DataAgent-User-Id` 或匿名访客，支持两种可信接入：
 - **同源平台会话**：Widget 与 DataAgent 同源部署，携带 `X-DataAgent-Widget-Identity: platform` 与平台 `da_session` Cookie。
-- **服务端受信任代理**（OpenDataWorks / OntoFoundry）：在后台「设置 → Widget 接入」为站点生成 `X-DataAgent-Access-Key`，由宿主后端转发并设置 `account_mode`（`personal` 个人账号模式 / `shared` 共享会话模式，后者同时携带 `X-DataAgent-Session-Key`）与可选 `provider_mappings`。保证 8900 端口不对外暴露。
+- **服务端受信任代理**（OpenDataWorks / OntoFoundry）：在后台「设置 → Widget 接入」为站点生成 `X-DataAgent-Access-Key`，由宿主后端逐请求校验登录，并在 `X-DataAgent-User-Id` 中转发宿主的当前登录用户（可选 `provider_mappings`）。每个会话只属于发起它的用户，不支持多人共享会话。保证 8900 端口不对外暴露。
 
 ## 单助手 MCP 发布
 
