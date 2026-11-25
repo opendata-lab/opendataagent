@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from core.accounts import (
@@ -11,8 +11,10 @@ from core.accounts import (
     AutoRegisterUnavailableError,
     IdentityConflictError,
     User,
+    current_account_context,
     current_user,
     get_account_store,
+    get_auth_settings,
     hash_default_password,
     hash_password,
     require_admin,
@@ -86,19 +88,29 @@ def _map_account_error(exc: Exception) -> HTTPException:
 # Self-service Profile (any signed-in user)
 # ---------------------------------------------------------------------------
 
+def _profile_response(request: Request, user: User) -> dict:
+    return {
+        "username": user.username,
+        "display_name": user.display_name or user.username,
+        "login_method": current_account_context(request).login_method,
+        "roles": [role.to_dict() for role in user.roles],
+    }
+
+
 @router.get("/profile")
-def get_profile(user: User = Depends(current_user)):
-    return user.to_public_dict()
+def get_profile(request: Request, user: User = Depends(current_user)):
+    return _profile_response(request, user)
 
 
 @router.put("/profile")
 def update_profile(
     payload: ProfileUpdateRequest,
+    request: Request,
     user: User = Depends(current_user),
 ):
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
-        return user.to_public_dict()
+        return _profile_response(request, user)
     try:
         updated = get_account_store().update_user(
             user.id,
@@ -106,7 +118,7 @@ def update_profile(
         )
     except Exception as exc:
         raise _map_account_error(exc) from exc
-    return updated.to_public_dict()
+    return _profile_response(request, updated)
 
 
 @router.put("/profile/password")
@@ -118,6 +130,8 @@ def change_own_password(
     stored_hash = store.get_user_password_hash(user.id)
     if not verify_password(payload.current_password, stored_hash):
         raise HTTPException(status_code=400, detail="当前密码不正确")
+    if user.is_admin and payload.new_password == get_auth_settings().default_user_password:
+        raise HTTPException(status_code=400, detail="管理员不能使用默认密码")
     try:
         store.update_password(user.id, hash_password(payload.new_password))
     except Exception as exc:

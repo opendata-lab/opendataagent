@@ -10,10 +10,7 @@ from typing import Any
 from fastapi import Depends, HTTPException, Request
 from starlette.requests import Request as StarletteRequest
 
-from core.accounts.config import (
-    get_auth_settings,
-    verify_session_token,
-)
+from core.accounts.config import get_auth_settings, read_session_token
 from core.accounts.models import (
     AccountContext,
     AccountDisabledError,
@@ -78,7 +75,8 @@ def authenticate_password(username: str, password: str) -> User | None:
     if not user.is_active:
         logger.warning("Password login rejected: disabled user_id=%s username=%r", user.id, user.username)
         return None
-    if not verify_password(password, stored_hash):
+    uses_admin_default = user.is_admin and password == get_auth_settings().default_user_password
+    if uses_admin_default or not verify_password(password, stored_hash):
         logger.warning("Password login failed: bad password user_id=%s username=%r", user.id, user.username)
         return None
     try:
@@ -96,6 +94,8 @@ def ensure_local_user(
     is_admin: bool = False,
 ) -> User:
     """Create or update a local user (for bootstrap CLI, local dev, and smoke tests)."""
+    if is_admin and password == get_auth_settings().default_user_password:
+        raise ValueError("管理员不能使用默认密码")
     store = get_account_store()
     pw_hash = hash_password(password)
     existing = store.get_user_with_password(username)
@@ -147,7 +147,7 @@ def link_or_register(
     )
 
 
-def _resolve_session_user(request: StarletteRequest) -> User | None:
+def _resolve_session(request: StarletteRequest) -> tuple[User, str] | None:
     cfg = get_auth_settings()
     token = request.cookies.get(cfg.cookie_name) or ""
     if not token:
@@ -157,13 +157,14 @@ def _resolve_session_user(request: StarletteRequest) -> User | None:
             # Never treat personal MCP access tokens (dak_*) as web session JWTs.
             if not candidate.startswith(_MCP_TOKEN_PREFIX):
                 token = candidate
-    user_id = verify_session_token(token)
-    if user_id is None:
+    session = read_session_token(token)
+    if session is None:
         return None
+    user_id, login_method = session
     user = get_account_store().get_user(user_id)
     if user is None or not user.is_active:
         return None
-    return user
+    return user, login_method
 
 
 # ---------------------------------------------------------------------------
@@ -178,10 +179,11 @@ def current_account_context(request: Request) -> AccountContext:
 
     client = _clean_header(request.headers.get("X-DataAgent-Client"), 32).lower()
     if client != "widget":
-        user = _resolve_session_user(request)
-        if user is None:
+        session = _resolve_session(request)
+        if session is None:
             raise HTTPException(status_code=401, detail="Not authenticated")
-        ctx = AccountContext(user=user, source="web", website_id="", auth_method="session")
+        user, login_method = session
+        ctx = AccountContext(user=user, login_method=login_method)
         request.state._account_context = ctx
         return ctx
 
@@ -301,9 +303,10 @@ def authenticate_mcp_request(
     """Authenticate an MCP endpoint or MCP file-download request into an AccountContext."""
     authorization = request.headers.get("authorization")
     if allow_web_session and authorization is None:
-        user = _resolve_session_user(request)
-        if user is None:
+        session = _resolve_session(request)
+        if session is None:
             raise HTTPException(status_code=401, detail="请登录 DataAgent 后下载文件")
+        user, _ = session
         return AccountContext(user=user, source="remote", auth_method="session")
     user = authenticate_mcp_token(authorization or "")
     return AccountContext(user=user, source="remote", auth_method="mcp_token")

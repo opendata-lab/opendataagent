@@ -108,6 +108,7 @@ class AccountContext:
     source: str = "web"  # "web" | "widget" | "remote"
     website_id: str = ""
     auth_method: str = "session"  # "session" | "mcp_token" | "widget_trusted"
+    login_method: str = ""  # "password" | "oauth" when present in the session
 
     @property
     def user_id(self) -> int | None:

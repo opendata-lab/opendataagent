@@ -348,10 +348,12 @@ def reset_auth_for_tests() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Session JWT (HS256): stores integer user_id only (no role/name snapshots)
+# Session JWT (HS256): stores user ID and login method, without role/name snapshots
 # ---------------------------------------------------------------------------
 
-def issue_session_token(user_id: int, now: float | None = None) -> str:
+def issue_session_token(
+    user_id: int, now: float | None = None, *, login_method: str = "password"
+) -> str:
     import jwt
 
     if not isinstance(user_id, int) or isinstance(user_id, bool) or user_id <= 0:
@@ -361,14 +363,15 @@ def issue_session_token(user_id: int, now: float | None = None) -> str:
     payload = {
         "sub": str(user_id),
         "uid": user_id,
+        "login_method": login_method,
         "iat": issued_at,
         "exp": issued_at + cfg.session_ttl_seconds,
     }
     return jwt.encode(payload, cfg.secret_key, algorithm="HS256")
 
 
-def verify_session_token(token: str) -> int | None:
-    """Decode a session JWT and return the integer user_id, or None if invalid."""
+def read_session_token(token: str) -> tuple[int, str] | None:
+    """Return the verified user ID and login method."""
     import jwt
 
     if not token:
@@ -380,8 +383,14 @@ def verify_session_token(token: str) -> int | None:
         return None
     raw_uid = payload.get("uid")
     if isinstance(raw_uid, int) and not isinstance(raw_uid, bool) and raw_uid > 0:
-        return raw_uid
+        method = payload.get("login_method")
+        return raw_uid, method if method in ("password", "oauth") else ""
     return None
+
+
+def verify_session_token(token: str) -> int | None:
+    session = read_session_token(token)
+    return session[0] if session is not None else None
 
 
 # ---------------------------------------------------------------------------

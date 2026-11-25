@@ -102,7 +102,7 @@ class TestRequestContext:
 
     def test_a_site_without_server_side_rejects_anonymous_host_id(self, resolve):
         with pytest.raises(HTTPException) as caught:
-            resolve({"website_id": "ontofoundry", "allowed_origins": []}, self.trusted_headers())
+            resolve({"website_id": "ontofoundry"}, self.trusted_headers())
         assert caught.value.status_code == 401
 
     def test_an_enabled_site_rejects_a_caller_with_no_key(self, resolve):
@@ -142,25 +142,26 @@ class TestRequestContext:
             resolve({"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}}, headers)
         assert caught.value.status_code == 401
 
-    def test_forwarded_widget_credentials_cannot_reach_platform_routes(self, resolve):
+    @pytest.mark.parametrize("username", ["alice", "admin"])
+    def test_forwarded_widget_credentials_cannot_reach_platform_routes(self, resolve, username):
         # A forwarded user's site key never unlocks account, admin, eval or MCP token
         # routes (they depend on current_user).
         site = {"website_id": "ontofoundry", "server_side": {"enabled": True, "access_key_hash": DIGEST}}
-        ctx = resolve(site, self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret", "X-DataAgent-User-Id": "alice"}))
-        assert ctx.user is not None
+        ctx = resolve(site, self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret", "X-DataAgent-User-Id": username}))
+        expected = self.admin if username == "admin" else self.alice
+        assert ctx.user_id == expected.id
         req = SimpleNamespace(headers={}, cookies={}, state=SimpleNamespace(_account_context=ctx))
         with pytest.raises(HTTPException) as caught:
             account_service.current_user(req)
         assert caught.value.status_code == 403
 
-    def test_a_correct_key_bypasses_the_origin_allowlist(self, resolve):
+    def test_a_correct_key_accepts_request_with_origin(self, resolve):
         ctx = resolve(
             {
                 "website_id": "ontofoundry",
-                "allowed_origins": ["https://somewhere.else"],
                 "server_side": {"enabled": True, "access_key_hash": DIGEST},
             },
-            self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret", "Origin": "https://not.on.the.list"}),
+            self.trusted_headers(**{"X-DataAgent-Access-Key": "super-secret", "Origin": "https://host.example.com"}),
         )
         assert ctx.source == "widget"
 

@@ -771,16 +771,17 @@ def test_agent_visibility_scope_enforced_across_read_tiers(monkeypatch):
     assert configuration.json()["visibility"] == {"mode": "selected"}
 
 
-def test_admin_auth_users_route_contract(monkeypatch):
+def test_admin_conversation_filter_uses_platform_users_route():
     _acc_store, admin, alice = install_fake_accounts()
     client = TestClient(app)
 
-    assert client.get("/api/v1/nl2sql-admin/auth-users").status_code == 401
-    assert client.get("/api/v1/nl2sql-admin/auth-users", headers=bearer_headers(alice.id)).status_code == 403
+    assert client.get("/api/v1/nl2sql-admin/auth-users", headers=bearer_headers(admin.id)).status_code == 404
+    assert client.get("/api/v1/dataagent/users").status_code == 401
+    assert client.get("/api/v1/dataagent/users", headers=bearer_headers(alice.id)).status_code == 403
 
     response = client.get(
-        "/api/v1/nl2sql-admin/auth-users",
-        params={"keyword": "ali", "limit": 20},
+        "/api/v1/dataagent/users",
+        params={"keyword": "ali", "page": 1, "page_size": 100},
         headers=bearer_headers(admin.id),
     )
     assert response.status_code == 200

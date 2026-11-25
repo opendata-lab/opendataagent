@@ -153,9 +153,6 @@ def install_widget_settings(monkeypatch, *, sites=None):
     resolved_sites = sites if sites is not None else [
         {
             "website_id": "demo",
-            "allowed_origins": ["https://host.example.com"],
-            "project_name": "Demo",
-            "project_color": "#4A90A4",
             "server_side": {"enabled": True, "access_key_hash": _hash_key(DEMO_KEY)},
         }
     ]

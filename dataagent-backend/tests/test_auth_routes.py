@@ -119,6 +119,7 @@ def test_oauth_callback_auto_registers_and_ignores_hook_role_claim(monkeypatch):
     assert body["display_name"] == "Mallory"
     assert body["is_admin"] is False
     assert [r["role_key"] for r in body["roles"]] == [ROLE_USER]
+    assert client.get("/api/v1/dataagent/profile").json()["login_method"] == "oauth"
 
 
 def test_oauth_callback_rejects_csrf_mismatch_and_disabled(monkeypatch):

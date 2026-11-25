@@ -269,6 +269,6 @@ async def oauth_callback(provider: str, request: Request):
 
     redirect_path = sanitize_redirect_path(state_payload.get("redirect"), fallback="/")
     response = RedirectResponse(url=redirect_path, status_code=302)
-    _set_session_cookie(response, issue_session_token(user.id))
+    _set_session_cookie(response, issue_session_token(user.id, login_method="oauth"))
     response.delete_cookie(key=OAUTH_STATE_COOKIE, path="/")
     return response

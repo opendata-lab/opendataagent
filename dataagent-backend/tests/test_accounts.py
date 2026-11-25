@@ -142,10 +142,13 @@ def test_user_role_profile_and_grant_apis(monkeypatch):
     assert isinstance(dave_id, int)
     assert client.delete(f"/api/v1/dataagent/users/{dave_id}", headers=bearer_headers(admin.id)).status_code == 405
 
-    # Dave logs in with default password, updates profile (email saved unverified), changes password.
+    # Dave logs in with default password, updates display name, changes password.
     login_resp = client.post("/api/v1/nl2sql/auth/login", json={"username": "dave", "password": TEST_DEFAULT_PASSWORD})
     assert login_resp.status_code == 200
     assert login_resp.json()["data"]["user_id"] == dave_id
+    profile = client.get("/api/v1/dataagent/profile").json()
+    assert set(profile) == {"username", "display_name", "roles", "login_method"}
+    assert profile["login_method"] == "password"
     client.cookies.clear()
 
     prof_upd = client.put(
@@ -155,6 +158,7 @@ def test_user_role_profile_and_grant_apis(monkeypatch):
     )
     assert prof_upd.status_code == 200
     assert prof_upd.json()["display_name"] == "大卫王"
+    assert prof_upd.json()["login_method"] == "password"
 
     pw_bad = client.put(
         "/api/v1/dataagent/profile/password",
@@ -477,6 +481,14 @@ def test_admin_role_cannot_be_granted_through_the_api():
     assert keep.status_code == 200
     assert client.post(f"/api/v1/dataagent/users/{admin.id}/reset-password", headers=headers).status_code == 400
     assert client.post(f"/api/v1/dataagent/users/{alice.id}/reset-password", headers=headers).status_code == 200
+    own_change = client.put(
+        "/api/v1/dataagent/profile/password",
+        headers=headers,
+        json={"current_password": "admin123", "new_password": TEST_DEFAULT_PASSWORD},
+    )
+    assert own_change.status_code == 400
+    assert own_change.json()["detail"] == "管理员不能使用默认密码"
+    assert authenticate_password(admin.username, TEST_DEFAULT_PASSWORD) is None
 
 
 def test_draft_preview_runs_for_an_agent_manager_without_a_published_profile(monkeypatch):

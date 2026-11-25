@@ -230,7 +230,7 @@ def test_merge_provider_settings_allows_enabled_model_without_detection():
     assert provider["enabled"] is True
 
 
-def test_normalize_widget_allowed_sites_from_json_string():
+def test_normalize_widget_allowed_sites_ignores_legacy_fields_in_json():
     sites = _normalize_widget_allowed_sites(
         '[{"website_id":"demo","allowed_origins":["https://a.com","https://a.com"],"project_name":"Demo","project_color":"#4A90A4"}]'
     )
@@ -238,9 +238,6 @@ def test_normalize_widget_allowed_sites_from_json_string():
     assert sites == [
         {
             "website_id": "demo",
-            "allowed_origins": ["https://a.com"],
-            "project_name": "Demo",
-            "project_color": "#4A90A4",
             "server_side": {
                 "enabled": False,
                 "access_key_hash": "",
@@ -261,8 +258,7 @@ def test_normalize_widget_allowed_sites_drops_invalid_and_duplicate_entries():
     )
 
     assert [item["website_id"] for item in sites] == ["dup"]
-    assert sites[0]["allowed_origins"] == []
-    assert "allow_anonymous" not in sites[0]
+    assert sites[0]["server_side"] == {"enabled": False, "access_key_hash": ""}
 
 
 def test_merge_settings_payload_carries_widget_allowed_sites_from_patch():
@@ -275,8 +271,7 @@ def test_merge_settings_payload_carries_widget_allowed_sites_from_patch():
             "widget_allowed_sites": [
                 {
                     "website_id": "new",
-                    "allowed_origins": ["https://b.com"],
-                    "project_color": "#000",
+                    "server_side": {"enabled": True, "access_key_hash": "qa-hash"},
                 }
             ]
         },
@@ -285,12 +280,9 @@ def test_merge_settings_payload_carries_widget_allowed_sites_from_patch():
     assert merged["widget_allowed_sites"] == [
         {
             "website_id": "new",
-            "allowed_origins": ["https://b.com"],
-            "project_name": "",
-            "project_color": "#000",
             "server_side": {
-                "enabled": False,
-                "access_key_hash": "",
+                "enabled": True,
+                "access_key_hash": "qa-hash",
             },
         }
     ]
@@ -308,9 +300,6 @@ def test_merge_settings_payload_preserves_widget_allowed_sites_without_patch():
     assert merged["widget_allowed_sites"] == [
         {
             "website_id": "keep",
-            "allowed_origins": ["*"],
-            "project_name": "",
-            "project_color": "",
             "server_side": {
                 "enabled": False,
                 "access_key_hash": "",
