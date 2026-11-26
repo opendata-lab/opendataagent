@@ -1,7 +1,7 @@
 # 用户自建智能体、Skill 与 MCP（计划）
 
 - 设计：[2026-11-26-user-owned-agents-design.md](../design/2026-11-26-user-owned-agents-design.md)
-- 状态：待设计 §11 三个问题确认后开始
+- 状态：设计已确认（2026-11-26），可以开始实施
 - 交付顺序：PR A → B → D → E1 → C → E2，每个 PR 单独过 CI 后合并
 
 ## PR A：所有权与通用授权（1–1.5 天）
