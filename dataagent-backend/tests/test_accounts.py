@@ -286,7 +286,11 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
                    ('t_zhang', 'Zhang', 'ct2', 'cc2', 'agent_default', 'web', '', '', '', 'SSO:u123', 'zhangsan', 0),
                    ('t_case', 'CaseDiff', 'ct3', 'cc3', 'agent_default', 'web', '', '', '', 'SSO:U123', 'zhangsan', 0),
                    ('t_shared_old', 'OldShared', 'ct4', 'cc4', 'agent_default', 'widget', 'ontofoundry', 'ontofoundry:ws1:s1', '', '', '', 0),
-                   ('t_wangwu', 'Wangwu', 'ct5', 'cc5', 'agent_default', 'web', '', '', '', 'SSO:wangwu', '王五', 0)
+                   ('t_wangwu', 'Wangwu', 'ct5', 'cc5', 'agent_default', 'web', '', '', '', 'SSO:wangwu', '王五', 0),
+                   ('t_w_wangwu', 'WidgetWangwu', 'ct6', 'cc6', 'agent_default', 'widget', 'odw', 'WangWu', '', '', '', 0),
+                   ('t_w_zhaoliu', 'WidgetZhaoliu', 'ct7', 'cc7', 'agent_default', 'widget', 'odw', 'zhaoliu', '', '', '', 0),
+                   ('t_w_zhaoliu2', 'WidgetZhaoliu2', 'ct8', 'cc8', 'agent_default', 'widget', 'portal', 'zhaoliu', '', '', '', 0),
+                   ('t_w_anon', 'WidgetAnon', 'ct9', 'cc9', 'agent_default', 'widget', 'odw', '', 'v1', '', '', 0)
                 """
             )
             cur.execute(
@@ -374,8 +378,17 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
 
             cur.execute("SELECT topic_id, user_id FROM da_agent_topic ORDER BY topic_id")
             topics = {r["topic_id"]: r["user_id"] for r in cur.fetchall()}
+            # Old widget topics: identity (website_id, external_user_id), bound to the same-named
+            # account like a widget sign-in today; names that are not valid usernames stay unowned.
+            zhaoliu_uid = identity[("odw", "zhaoliu")]
+            assert identity[("portal", "zhaoliu")] == zhaoliu_uid
+            cur.execute("SELECT username, display_name FROM da_user WHERE id = %s", (zhaoliu_uid,))
+            assert cur.fetchone() == {"username": "zhaoliu", "display_name": "zhaoliu"}
+            cur.execute("SELECT r.role_key FROM da_user_role ur JOIN da_role r ON r.id = ur.role_id WHERE ur.user_id = %s", (zhaoliu_uid,))
+            assert [r["role_key"] for r in cur.fetchall()] == ["user"]
             assert topics == {"t_admin": admin.id, "t_zhang": zhang_uid, "t_case": zhang_uid, "t_shared_old": None,
-                              "t_wangwu": wangwu_uid}
+                              "t_wangwu": wangwu_uid, "t_w_wangwu": wangwu_uid, "t_w_zhaoliu": zhaoliu_uid,
+                              "t_w_zhaoliu2": zhaoliu_uid, "t_w_anon": None}
             cur.execute("SELECT updated_at FROM da_agent_topic UNION SELECT updated_at FROM da_agent_draft")
             assert [str(r["updated_at"]) for r in cur.fetchall()] == ["2026-01-02 03:04:05"]
 
