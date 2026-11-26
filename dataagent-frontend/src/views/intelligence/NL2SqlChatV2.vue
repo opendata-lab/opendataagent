@@ -169,7 +169,7 @@
             :disabled="adminTopicsLoadingMore"
             @click="loadMoreAdminTopics"
           >
-            {{ adminTopicsLoadingMore ? '加载中...' : `加载更多（${topics.length} / ${adminTopicsTotal}）` }}
+            {{ adminTopicsLoadingMore ? '加载中...' : `加载更多（${adminTopicsLoaded} / ${adminTopicsTotal}）` }}
           </button>
         </div>
       </el-scrollbar>
@@ -712,7 +712,8 @@ const ADMIN_TOPIC_PAGE_SIZE = 50
 const adminTopicsPage = ref(1)
 const adminTopicsTotal = ref(0)
 const adminTopicsLoadingMore = ref(false)
-const adminTopicsHasMore = computed(() => usesAdminList.value && topics.value.length < adminTopicsTotal.value)
+const adminTopicsLoaded = ref(0)
+const adminTopicsHasMore = computed(() => usesAdminList.value && adminTopicsLoaded.value < adminTopicsTotal.value)
 
 async function loadTopics(options = {}) {
   const { selectDefault = true, skipRouteTopic = false } = options
@@ -788,7 +789,18 @@ async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true }
     if (seq !== adminListSequence) return
     adminTopicsPage.value = 1
     adminTopicsTotal.value = Number(data?.total) || 0
-    topics.value = (Array.isArray(data?.items) ? data.items : []).map(normalizeTopic).filter((topic) => topic.topic_id)
+    const loaded = (Array.isArray(data?.items) ? data.items : []).map(normalizeTopic).filter((topic) => topic.topic_id)
+    adminTopicsLoaded.value = loaded.length
+    // Keep the open conversation's row when the new filter leaves it out: its
+    // can_continue flag decides whether it is read through the admin endpoints,
+    // and dropping it for a moment reloaded another user's conversation through
+    // the owner-only API (404 "会话不存在").
+    const openRow = activeTopicId.value
+      ? topics.value.find((topic) => topic.topic_id === activeTopicId.value)
+      : null
+    topics.value = openRow && !loaded.some((topic) => topic.topic_id === openRow.topic_id)
+      ? [openRow, ...loaded]
+      : loaded
     const linkedId = openLinkedTopic ? routeTopicId() : ''
     if (linkedId) {
       const validTopicId = await validateRequestedTopic(linkedId)
@@ -829,6 +841,7 @@ async function loadMoreAdminTopics() {
     const known = new Set(topics.value.map((topic) => topic.topic_id))
     const more = (Array.isArray(data?.items) ? data.items : []).map(normalizeTopic)
       .filter((topic) => topic.topic_id && !known.has(topic.topic_id))
+    adminTopicsLoaded.value += Array.isArray(data?.items) ? data.items.length : 0
     topics.value = [...topics.value, ...more]
   } catch {
     // non-fatal: the button stays for another try

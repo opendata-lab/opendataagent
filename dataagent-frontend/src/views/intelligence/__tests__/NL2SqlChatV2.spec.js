@@ -670,6 +670,37 @@ describe('NL2SqlChatV2 URL location', () => {
     expect(dataagentApiMock.listAdminTopics).not.toHaveBeenCalled()
   })
 
+  it('keeps another user\'s open conversation read-only when the source filter leaves it out', async () => {
+    dataagentApiMock.listAdminTopics
+      .mockResolvedValueOnce({
+        items: [
+          { ...makeTopic('topic-mine', 'Mine'), source: 'web', can_continue: true },
+          { ...makeTopic('topic-other', 'Theirs'), source: 'widget', auth_display_name: 'Alice', can_continue: false }
+        ],
+        total: 2, page: 1, page_size: 50
+      })
+      .mockResolvedValueOnce({
+        items: [{ ...makeTopic('topic-mine', 'Mine'), source: 'web', can_continue: true }],
+        total: 1, page: 1, page_size: 50
+      })
+    const wrapper = mountChat({ admin: true })
+    await flushPromises()
+    await wrapper.findAll('.v2-session-item')[1].trigger('click')
+    await flushPromises()
+    expect(conversation(wrapper).disabled).toBe(true)
+    apiMocks.topicApi.getTopicMessages.mockClear()
+    apiMocks.topicApi.getTopic.mockClear()
+
+    await wrapper.get('#conversation-source').setValue('web')
+    await flushPromises()
+
+    expect(dataagentApiMock.listAdminTopics).toHaveBeenLastCalledWith(expect.objectContaining({ source: 'web' }))
+    expect(conversation(wrapper).disabled).toBe(true)
+    expect(apiMocks.topicApi.getTopicMessages).not.toHaveBeenCalled()
+    expect(apiMocks.topicApi.getTopic).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="admin-topics-more"]').exists()).toBe(false)
+  })
+
   it('pages the administrator list so older conversations can be loaded', async () => {
     dataagentApiMock.listAdminTopics
       .mockResolvedValueOnce({ items: [makeTopic('topic-new', 'Newer')], total: 2, page: 1, page_size: 50 })
