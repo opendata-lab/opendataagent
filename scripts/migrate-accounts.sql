@@ -60,9 +60,13 @@ WHERE p.source = 'local';
 DELETE p FROM tmp_legacy_principal p
 JOIN da_user_identity i ON i.source = p.source AND i.subject = p.subject;
 
--- New accounts. First try the old user name (or the subject); a name that is
--- taken or shared by two principals falls back to <来源>_<标识>.
-UPDATE tmp_legacy_principal SET desired = LEFT(IF(legacy_name <> '', legacy_name, subject), 128);
+-- New accounts. The username follows the login rule (letters, digits, . _ @ + -):
+-- the old user name when it fits (old SSO names were often display names such as
+-- 张三, which stay the display name), else the subject; a name that is taken or
+-- shared by two principals falls back to <来源>_<标识>.
+UPDATE tmp_legacy_principal SET desired = LEFT(CASE
+    WHEN REGEXP_LIKE(legacy_name, '^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$', 'c') THEN legacy_name
+    ELSE subject END, 128);
 DROP TEMPORARY TABLE IF EXISTS tmp_desired_taken;
 CREATE TEMPORARY TABLE tmp_desired_taken (
     desired VARCHAR(128) COLLATE utf8mb4_unicode_ci NOT NULL PRIMARY KEY
@@ -101,11 +105,12 @@ WHERE p.desired IN (SELECT desired FROM tmp_desired_taken);
 
 -- ---------------------------------------------------------------------------
 -- 2. 回填旧会话归属（不区分大小写）
+-- 本脚本的 UPDATE 都写 updated_at = updated_at：列带 ON UPDATE CURRENT_TIMESTAMP，否则时间会变成迁移时刻。
 -- ---------------------------------------------------------------------------
 UPDATE da_agent_topic t
 JOIN da_user_identity i
   ON t.auth_user_id = CONCAT(i.source, ':', i.subject)
-SET t.user_id = i.user_id
+SET t.user_id = i.user_id, t.updated_at = t.updated_at
 WHERE t.user_id IS NULL AND t.auth_user_id <> '';
 
 -- ---------------------------------------------------------------------------
@@ -121,17 +126,20 @@ WHERE JSON_VALID(pr.visibility_json)
 
 UPDATE da_agent_profile
 SET visibility_json = JSON_OBJECT(
-    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(visibility_json, '$.mode')) = 'selected', 'selected', 'all'))
+    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(visibility_json, '$.mode')) = 'selected', 'selected', 'all')),
+    updated_at = updated_at
 WHERE JSON_VALID(visibility_json);
 
 UPDATE da_agent_draft
 SET draft_json = JSON_SET(draft_json, '$.visibility', JSON_OBJECT(
-    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(draft_json, '$.visibility.mode')) = 'selected', 'selected', 'all')))
+    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(draft_json, '$.visibility.mode')) = 'selected', 'selected', 'all'))),
+    updated_at = updated_at
 WHERE JSON_VALID(draft_json) AND JSON_EXTRACT(draft_json, '$.visibility') IS NOT NULL;
 
 UPDATE da_agent_draft
 SET published_json = JSON_SET(published_json, '$.visibility', JSON_OBJECT(
-    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(published_json, '$.visibility.mode')) = 'selected', 'selected', 'all')))
+    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(published_json, '$.visibility.mode')) = 'selected', 'selected', 'all'))),
+    updated_at = updated_at
 WHERE published_json IS NOT NULL AND JSON_VALID(published_json)
   AND JSON_EXTRACT(published_json, '$.visibility') IS NOT NULL;
 
