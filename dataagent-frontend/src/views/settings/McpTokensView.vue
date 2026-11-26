@@ -12,9 +12,8 @@
         <el-button
           type="primary"
           :icon="Plus"
-          tag="router-link"
-          :to="{ name: 'McpTokenCreate' }"
           data-testid="open-create-token"
+          @click="createOpen = true"
         >
           新建令牌
         </el-button>
@@ -64,6 +63,8 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <McpTokenCreateDialog v-model="createOpen" @created="loadTokens" />
   </div>
 </template>
 
@@ -73,6 +74,7 @@ import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
+import McpTokenCreateDialog from './McpTokenCreateDialog.vue'
 
 const STATUS_META = {
   active: { label: '有效', type: 'success' },
@@ -82,6 +84,7 @@ const STATUS_META = {
 const tokens = ref([])
 const loading = ref(false)
 const revokingId = ref(null)
+const createOpen = ref(false)
 
 const formatTime = (value) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '—')
 
