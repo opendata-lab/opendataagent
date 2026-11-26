@@ -132,7 +132,7 @@
         </el-popover>
       </div>
 
-      <el-scrollbar class="v2-session-scroll">
+      <el-scrollbar class="v2-session-scroll" @scroll="handleSessionScroll">
         <div class="v2-session-list">
           <button
             v-for="topic in filteredTopics"
@@ -161,6 +161,16 @@
             </span>
           </button>
           <div v-if="!filteredTopics.length" class="v2-empty-sessions">暂无话题</div>
+          <button
+            v-if="adminTopicsHasMore"
+            type="button"
+            class="v2-session-more"
+            data-testid="admin-topics-more"
+            :disabled="adminTopicsLoadingMore"
+            @click="loadMoreAdminTopics"
+          >
+            {{ adminTopicsLoadingMore ? '加载中...' : `加载更多（${topics.length} / ${adminTopicsTotal}）` }}
+          </button>
         </div>
       </el-scrollbar>
     </aside>
@@ -698,6 +708,11 @@ function currentAgentFilterId() {
 }
 
 let adminListSequence = 0
+const ADMIN_TOPIC_PAGE_SIZE = 50
+const adminTopicsPage = ref(1)
+const adminTopicsTotal = ref(0)
+const adminTopicsLoadingMore = ref(false)
+const adminTopicsHasMore = computed(() => usesAdminList.value && topics.value.length < adminTopicsTotal.value)
 
 async function loadTopics(options = {}) {
   const { selectDefault = true, skipRouteTopic = false } = options
@@ -768,12 +783,11 @@ function resetActiveConversationView() {
 async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true } = {}) {
   const seq = ++adminListSequence
   try {
-    const params = { page: 1, page_size: 50, source: filterSource.value }
-    const agentId = currentAgentFilterId()
-    if (agentId) params.agent_id = agentId
-    if (filterUser.value) params.user_id = Number(filterUser.value)
-    const data = await dataagentApi.listAdminTopics(params)
+    adminTopicsLoadingMore.value = false
+    const data = await dataagentApi.listAdminTopics(adminTopicParams(1))
     if (seq !== adminListSequence) return
+    adminTopicsPage.value = 1
+    adminTopicsTotal.value = Number(data?.total) || 0
     topics.value = (Array.isArray(data?.items) ? data.items : []).map(normalizeTopic).filter((topic) => topic.topic_id)
     const linkedId = openLinkedTopic ? routeTopicId() : ''
     if (linkedId) {
@@ -790,6 +804,44 @@ async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true }
   } catch {
     // non-fatal
   }
+}
+
+function adminTopicParams(page) {
+  const params = { page, page_size: ADMIN_TOPIC_PAGE_SIZE, source: filterSource.value }
+  const agentId = currentAgentFilterId()
+  if (agentId) params.agent_id = agentId
+  if (filterUser.value) params.user_id = Number(filterUser.value)
+  return params
+}
+
+// The admin listing spans every user's conversations, so it is paged: the next
+// page loads when the list is scrolled to the bottom or "加载更多" is clicked.
+async function loadMoreAdminTopics() {
+  if (!adminTopicsHasMore.value || adminTopicsLoadingMore.value) return
+  const seq = adminListSequence
+  const nextPage = adminTopicsPage.value + 1
+  adminTopicsLoadingMore.value = true
+  try {
+    const data = await dataagentApi.listAdminTopics(adminTopicParams(nextPage))
+    if (seq !== adminListSequence) return
+    adminTopicsPage.value = nextPage
+    adminTopicsTotal.value = Number(data?.total) || 0
+    const known = new Set(topics.value.map((topic) => topic.topic_id))
+    const more = (Array.isArray(data?.items) ? data.items : []).map(normalizeTopic)
+      .filter((topic) => topic.topic_id && !known.has(topic.topic_id))
+    topics.value = [...topics.value, ...more]
+  } catch {
+    // non-fatal: the button stays for another try
+  } finally {
+    if (seq === adminListSequence) adminTopicsLoadingMore.value = false
+  }
+}
+
+function handleSessionScroll({ scrollTop } = {}) {
+  if (!adminTopicsHasMore.value) return
+  const wrap = document.querySelector('.v2-session-scroll .el-scrollbar__wrap')
+  if (!wrap) return
+  if (scrollTop + wrap.clientHeight >= wrap.scrollHeight - 80) loadMoreAdminTopics()
 }
 
 function topicOwnerLabel(topic) {
@@ -1772,6 +1824,18 @@ watch(
 }
 
 .v2-empty-sessions { padding: 16px 10px; font-size: 13px; color: #8C8C8C; text-align: center; }
+.v2-session-more {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  color: #8C8C8C;
+  cursor: pointer;
+}
+.v2-session-more:hover:not(:disabled) { background: #F5F5F5; color: #595959; }
+.v2-session-more:disabled { cursor: default; }
 
 /* ── Main ────────────────────────────────────────────────────────────────── */
 .v2-main {
