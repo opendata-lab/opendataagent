@@ -95,6 +95,9 @@ def test_oauth_callback_auto_registers_and_ignores_hook_role_claim(monkeypatch):
             "sub": "u-900",
             "preferred_username": "mallory",
             "display_name": "Mallory",
+            # Only sub / preferred_username / display_name are read.
+            "name": "Ignored Name",
+            "username": "ignored_username",
             "email": "mallory@example.com",
             "email_verified": True,
             # Legacy role claim MUST be ignored!

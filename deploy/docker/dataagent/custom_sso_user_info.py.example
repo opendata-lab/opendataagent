@@ -18,8 +18,11 @@ access token，因此可像 FAB 一样直接 ``.get("userinfo")``。
 - 入参 ``token_response``：token endpoint 返回的完整 dict。
 - 入参 ``oauth_remotes``：provider → 已绑定 token 的同步 HTTP client；相对 URL
   基于 ``remote_app.api_base_url`` 解析，单次 HTTP 请求超时固定为 15 秒。
-- 返回 dict 必须含稳定 ``sub``；可选返回 ``username`` / ``preferred_username`` /
-  ``display_name`` / ``name``。
+- 返回 dict 只读三个字段，由钩子把 IdP 自己的字段翻译过来：
+  ``sub``（必填，稳定的身份标识）、``preferred_username``（登录用户名，英文、数字或
+  ``. _ @ + -``，与 OpenDataWorks 的用户名一致；缺省用 ``sub``）、``display_name``
+  （显示名，可为中文；缺省为用户名）。其他字段（``username``、``name`` 等）不读取。
+- 显示名只在账号的显示名为空或等于用户名时写入，用户自己改过的不覆盖。
 - 不要返回 ``role``：角色和管理员权限统一在 DataAgent 后台「用户管理 / 角色管理」
   维护，OAuth 钩子不再决定角色。
 - 钩子必须同步，DataAgent 会在线程中执行，避免阻塞 FastAPI 事件循环。
@@ -30,7 +33,7 @@ access token，因此可像 FAB 一样直接 ``.get("userinfo")``。
 
 
 def oauth_user_info(provider: str, token_response: dict, oauth_remotes: dict) -> dict:
-    """示例：自研 IdP 返回 {"code":0,"data":{"uid":...,"username":...,"nickname":...}}。"""
+    """示例：自研 IdP 返回 {"code":0,"data":{"uid":...,"username":...,"name":"张三"}}。"""
     if provider != "SSO":
         raise ValueError(f"unsupported OAuth provider: {provider}")
 
@@ -42,8 +45,6 @@ def oauth_user_info(provider: str, token_response: dict, oauth_remotes: dict) ->
     return {
         # 唯一标识优先取不可变字段（uid/sub），不要用邮箱/昵称等可变值。
         "sub": str(payload.get("uid") or payload.get("sub") or ""),
-        "username": str(payload.get("username") or payload.get("preferred_username") or ""),
-        "display_name": str(
-            payload.get("nickname") or payload.get("preferred_username") or payload.get("name") or ""
-        ),
+        "preferred_username": str(payload.get("username") or payload.get("preferred_username") or ""),
+        "display_name": str(payload.get("name") or payload.get("nickname") or ""),
     }

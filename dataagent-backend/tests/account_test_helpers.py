@@ -286,8 +286,8 @@ class FakeAccountStore:
         default_password_hash_fn: Callable[[], str],
     ) -> User:
         prof = dict(profile or {})
-        raw_username = str(prof.get("username") or prof.get("preferred_username") or subject).strip()
-        raw_display = str(prof.get("display_name") or prof.get("name") or "").strip()
+        raw_username = str(prof.get("username") or subject).strip()
+        raw_display = str(prof.get("display_name") or "").strip()
 
         existing = self.get_user_by_identity(source, subject)
         if existing is not None:
@@ -295,7 +295,7 @@ class FakeAccountStore:
                 raise AccountDisabledError("账号已停用")
             row = self.users[existing.id]
             row["last_login_at"] = _now_iso()
-            if not row["display_name"] and raw_display:
+            if raw_display and raw_display != row["display_name"] and row["display_name"] in ("", row["username"]):
                 row["display_name"] = raw_display
             return self._hydrate(row)
 
@@ -306,6 +306,8 @@ class FakeAccountStore:
             if not matched_user.is_active:
                 raise AccountDisabledError("账号已停用")
             self.add_identity(matched_user.id, source, subject)
+            if raw_display and raw_display != matched_row["display_name"] and matched_row["display_name"] in ("", matched_row["username"]):
+                matched_row["display_name"] = raw_display
             matched_row["last_login_at"] = _now_iso()
             return self._hydrate(matched_row)
 

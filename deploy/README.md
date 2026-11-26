@@ -143,7 +143,7 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
    ```
 4. 重启 `dataagent-backend`。
 
-平台分管理员和普通用户两级。管理员由上述命令设置，自定义角色只用于助手授权。个人资料显示用户名、显示名、本次登录方式与所属角色，并支持修改密码。OAuth 必须配置 `DEFAULT_USER_PASSWORD`，按 `OAUTH_USER_INFO` 返回的登录用户名绑定同名账号或登记普通账号。
+平台分管理员和普通用户两级。管理员由上述命令设置，自定义角色只用于助手授权。个人资料显示用户名、显示名、本次登录方式与所属角色，并支持修改密码。OAuth 必须配置 `DEFAULT_USER_PASSWORD`。`OAUTH_USER_INFO` 只返回三个字段：`sub`（身份标识）、`preferred_username`（登录用户名，与 OpenDataWorks 一致）、`display_name`（显示名，可为中文），IdP 字段由钩子自己翻译；按 `preferred_username` 绑定同名账号或登记普通账号，显示名为空或等于用户名时用 `display_name` 补全。
 
 从旧版本升级：
 

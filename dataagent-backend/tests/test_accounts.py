@@ -103,7 +103,7 @@ def test_link_or_register_auto_registration_and_conflict():
     store, admin, alice = install_fake_accounts()
 
     # 1. Brand new external user auto-registers with default password and 'user' role.
-    bob = link_or_register("SSO", "u-bob", {"preferred_username": "bob", "display_name": "鲍勃"})
+    bob = link_or_register("SSO", "u-bob", {"username": "bob", "display_name": "鲍勃"})
     assert bob.username == "bob"
     assert bob.display_name == "鲍勃"
     assert bob.role_keys == frozenset({ROLE_USER})
@@ -111,16 +111,23 @@ def test_link_or_register_auto_registration_and_conflict():
     assert authenticate_password("bob", TEST_DEFAULT_PASSWORD) is not None
 
     # 3. An external user name is the platform user name: SSO "alice" binds to alice.
-    assert link_or_register("SSO", "u-alice", {"preferred_username": "alice"}).id == alice.id
+    assert link_or_register("SSO", "u-alice", {"username": "alice"}).id == alice.id
 
     # 4. Same for a Widget host, including its "admin" (user decision 2026-11-24).
     assert link_or_register("odw", "alice", {"username": "alice"}).id == alice.id
     assert link_or_register("odw", "admin", {"username": "admin"}).id == admin.id
 
+    # 5. A display name equal to the username is unset and gets filled; a chosen one is kept.
+    carol = link_or_register("SSO", "u-carol", {"username": "carol"})
+    assert carol.display_name == "carol"
+    assert link_or_register("SSO", "u-carol", {"username": "carol", "display_name": "卡罗"}).display_name == "卡罗"
+    assert link_or_register("SSO", "u-carol", {"username": "carol", "display_name": "别名"}).display_name == "卡罗"
+    assert link_or_register("odw", "carol", {"username": "carol", "display_name": "别名"}).display_name == "卡罗"
+
     # 6. Disabled user is rejected on subsequent external login.
     store.update_user(bob.id, is_active=False)
     with pytest.raises(AccountDisabledError):
-        link_or_register("SSO", "u-bob", {"preferred_username": "bob"})
+        link_or_register("SSO", "u-bob", {"username": "bob"})
 
 
 def test_user_role_profile_and_grant_apis(monkeypatch):
@@ -393,6 +400,12 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             ids = list(pool.map(_register, range(4)))
         assert len(set(ids)) == 1
+
+        # The display name is filled while it is unset (empty or the username), never over a chosen one.
+        carol = link_or_register("SSO", "u-carol", {"username": "carol"})
+        assert carol.display_name == "carol"
+        assert link_or_register("SSO", "u-carol", {"username": "carol", "display_name": "卡罗"}).display_name == "卡罗"
+        assert link_or_register("SSO", "u-carol", {"username": "carol", "display_name": "别名"}).display_name == "卡罗"
 
         # The cutover is one-way: downgrade refuses and points at the backup restore.
         refused = subprocess.run(
