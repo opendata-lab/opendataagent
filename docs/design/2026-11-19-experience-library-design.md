@@ -42,19 +42,21 @@
 
 1. **知识 = 文档**：正文上限 20000 字；`content` 由 TEXT（65,535 字节，2 万汉字 utf8mb4 约 60KB，会超）改为 MEDIUMTEXT。前端支持上传 .md/.txt（浏览器读取后填入正文，不新增上传接口）。仍是 global/agent 范围、管理员维护。
 2. **记忆 = 短条目**：≤500 字。管理员可手动新增（直接 active，来源显示“手动添加”）；每日总结提炼的仍为 pending 待审核。
-3. **取消始终注入**：删除 `inject_mode` 列、1000 字预算及卡片/预览中的额度展示。迁移说明提醒管理员：原 always 的硬性规则应移入智能体系统提示词。
+3. **取消始终注入**：删除 `inject_mode` 列（连同响应模型 `Experience.inject_mode`、行映射 `_row_to_item`）、1000 字预算及卡片/预览中的额度展示。迁移说明提醒管理员：原 always 的硬性规则应移入智能体系统提示词。
 4. **检索（后端，MySQL 自带全文索引）**：
    - 在 `da_agent_experience(title, when_text, content)` 上建 `FULLTEXT ... WITH PARSER ngram`（MySQL 5.7.6+ 内置；本地 8.0.46 已确认插件 ACTIVE、`ngram_token_size=2`）。
-   - `search_experiences(agent_id, query, limit)`：`MATCH ... AGAINST (... IN NATURAL LANGUAGE MODE)` 排序，范围沿用 `active_experiences_for`（`status='active' AND (scope='global' OR agent_id=当前助手)`），不会读到其他助手的专属条目；低于阈值的丢弃。不手写切词与打分。
+   - `search_experiences(agent_id, query)`：可见范围 `status='active' AND (scope='global' OR (scope='agent' AND agent_id=%s))` 写在同一条 SQL 里、先过滤后取前 N，不会读到其他助手的专属条目；`MATCH ... AGAINST (... IN NATURAL LANGUAGE MODE)` 取正分命中，按分数、更新时间确定排序；知识与记忆分别限额。不设固定分数阈值：InnoDB 的 IDF 按全表算，条目很少时精确命中的分数也可能极低（Codex 2026-11-26 按 8.0.46 源码推算）。不手写切词与打分。
+   - ngram 语义：中英文都按两字片段匹配（`GMV`→gm/mv；`dwd_order` 可能因 `dw` 命中 `dwd_customer`）；单个汉字查询无结果；默认停用词会去掉含停用词字母的片段（如 `id`）。第一期接受，按标识符精确匹配记入 TODO。`ngram_token_size` 只能在启动参数改，改后需重建索引。
    - 查询文本：本轮问题 + 最近 1–2 条用户消息（`_build_history` 已有），解决“按渠道拆一下”这类追问丢上下文。
 5. **注入（Pi 官方扩展钩子 `before_agent_start`）**：
-   - 后端把检索结果随 `cell.init` 下发（新字段，如 `retrieved_context`）；`sdk-session.ts` 的资源加载器注册一个内联扩展（`loadExtensionFromFactory`），在 `before_agent_start` 返回 `message`（customType `dataagent-retrieval`）。
+   - 后端把检索结果随 `cell.init` 下发（新字段 `retrieved_context`，Python 侧 `PiRunContext` 与 `to_init_payload()` 同步加）；`sdk-session.ts` 用公开的 `DefaultResourceLoader`（`extensionFactories: [内联扩展]`、`noExtensions: true`、内存设置）预先加载扩展，自定义加载器的 `getExtensions()` 返回该结果（`loadExtensionFromFactory` 未从包入口导出，不能用；Codex 2026-11-26 核实）。扩展在 `before_agent_start` 返回 `message`（customType `dataagent-retrieval`）。
    - Pi 把该消息追加进对话记录、以 user 角色发给模型（`convertToLlm`），不改系统提示词，前缀缓存不受影响；它随会话存进断点存档（`cell.ts` 保存全部 entries），卡片恢复与会话恢复自然带上。
-   - 卡片恢复（prompt 为 interaction JSON）不下发检索结果，扩展不注入；`messageType !== "user"` 也跳过。
+   - 卡片恢复时 prompt 是 interaction JSON，但对 Pi 仍是 `messageType="user"`；由后端按同一任务的断点交互状态判断，不下发检索结果，扩展无内容即不注入。之后的普通新一轮照常检索。
+   - 已注入的内容随会话保留：管理员停用、改范围或删除条目只影响之后的检索，不撤回已在会话里的内容（与已生成的回答一致）。挂载目录每个执行段按当前可见条目重建，卡片恢复也重建；已删除的知识路径会读不到，模型按普通读失败处理。
    - 内容：命中记忆全文（top 5，合计 ≤2000 字）；命中知识只写“标题（适用条件）→ 路径”（≤20 篇）；无命中不注入。
    - 不用 `context` 钩子：它每次 LLM 调用临时改消息、不落盘，下一轮前文变化同样破坏缓存。
-6. **呈现与按需读取（Pi 自带 grep/read）**：沙箱只读挂载 `/opt/skills/_knowledge_memory/` 分 `knowledge/<id>.md`、`memory/<id>.md`，文件首部写标题与适用条件，仅含本助手可见条目；写入前建子目录，文件名只用整数 id。系统提示词（固定文本，不随问题变）说明：先看注入的相关条目，不足时 grep 这两个目录，长文档先 grep 定位再用 read 的 offset/limit 分段读。
-7. **预览**：智能体页预览可输入问题，显示会命中的记忆/知识及注入消息；不输入问题时显示条目列表。与运行时调用同一检索函数；注入文件准备移到 `asyncio.to_thread`。
+6. **呈现与按需读取（Pi 自带 grep/read）**：沙箱只读挂载 `/opt/skills/_knowledge_memory/` 分 `knowledge/`、`memory/` 两个子目录，文件名沿用现有的 `sha256(experience_id).md`（id 是 `exp_<hex>` 字符串，不是整数），由写文件、注入消息、预览共用一个路径函数；文件首部写标题与适用条件，仅含本助手可见条目；写入前建子目录。系统提示词（固定文本，不随问题变）说明：先看注入的相关条目，不足时 grep 这两个目录，长文档先 grep 定位再用 read 的 offset/limit 分段读。
+7. **预览**：智能体页预览可输入问题，显示会命中的记忆/知识及注入消息；不输入问题时显示条目列表。预览与运行共用资格判断（功能开关、排除每日总结助手）与最终的限额格式化函数，不只是共用检索；只输入单个问题的预览标注“单轮模拟（运行时还会结合最近对话）”；无问题时只返回条目元数据，不返回正文。注入文件准备移到 `asyncio.to_thread`。
 
 ### 扩展点与取舍
 
