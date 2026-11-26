@@ -670,7 +670,45 @@ describe('NL2SqlChatV2 URL location', () => {
     expect(dataagentApiMock.listAdminTopics).not.toHaveBeenCalled()
   })
 
-  it('keeps another user\'s open conversation read-only when the source filter leaves it out', async () => {
+  it('closes a user\'s open conversation when the chosen source hides it', async () => {
+    apiMocks.topicApi.listTopics.mockResolvedValue({
+      list: [{ ...makeTopic('topic-web', 'Web'), source: 'web' }, { ...makeTopic('topic-mcp', 'MCP'), source: 'remote' }]
+    })
+    const wrapper = mountChat()
+    await flushPromises()
+    await wrapper.findAll('.v2-session-item')[0].trigger('click')
+    await flushPromises()
+
+    await wrapper.get('#conversation-source').setValue('web')
+    await flushPromises()
+    expect(wrapper.get('.v2-session-item.active').text()).toContain('Web')
+
+    await wrapper.get('#conversation-source').setValue('remote')
+    await flushPromises()
+    expect(wrapper.find('.v2-session-item.active').exists()).toBe(false)
+  })
+
+  it('keeps the open conversation when the administrator\'s new source list still has it', async () => {
+    const mine = { ...makeTopic('topic-mine', 'Mine'), source: 'web', can_continue: true }
+    const theirs = { ...makeTopic('topic-other', 'Theirs'), source: 'widget', auth_display_name: 'Alice', can_continue: false }
+    dataagentApiMock.listAdminTopics
+      .mockResolvedValueOnce({ items: [mine, theirs], total: 2, page: 1, page_size: 50 })
+      .mockResolvedValueOnce({ items: [theirs], total: 1, page: 1, page_size: 50 })
+    const wrapper = mountChat({ admin: true })
+    await flushPromises()
+    await wrapper.findAll('.v2-session-item')[1].trigger('click')
+    await flushPromises()
+    apiMocks.topicApi.getTopicMessages.mockClear()
+
+    await wrapper.get('#conversation-source').setValue('widget')
+    await flushPromises()
+
+    expect(wrapper.get('.v2-session-item.active').text()).toContain('Theirs')
+    expect(conversation(wrapper).disabled).toBe(true)
+    expect(apiMocks.topicApi.getTopicMessages).not.toHaveBeenCalled()
+  })
+
+  it('closes the open conversation and shows an empty one when an administrator switches the source', async () => {
     dataagentApiMock.listAdminTopics
       .mockResolvedValueOnce({
         items: [
@@ -695,10 +733,13 @@ describe('NL2SqlChatV2 URL location', () => {
     await flushPromises()
 
     expect(dataagentApiMock.listAdminTopics).toHaveBeenLastCalledWith(expect.objectContaining({ source: 'web' }))
-    expect(conversation(wrapper).disabled).toBe(true)
+    // No conversation is open, so nothing is reloaded through the owner-only API.
+    expect(wrapper.find('.v2-session-item.active').exists()).toBe(false)
+    expect(wrapper.find('.v2-readonly-label').exists()).toBe(false)
+    expect(conversation(wrapper).disabled).toBe(false)
     expect(apiMocks.topicApi.getTopicMessages).not.toHaveBeenCalled()
     expect(apiMocks.topicApi.getTopic).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-testid="admin-topics-more"]').exists()).toBe(false)
+    expect(wrapper.findAll('.v2-session-title').map((node) => node.text())).toEqual(['Mine'])
   })
 
   it('pages the administrator list so older conversations can be loaded', async () => {
