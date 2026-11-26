@@ -297,6 +297,9 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
                 "INSERT INTO da_agent_draft (agent_id, draft_json, published_json, published_version) VALUES ('agent_default', %s, %s, 1)",
                 (draft_blob, pub_blob),
             )
+            # Old timestamps must survive the script (updated_at has ON UPDATE CURRENT_TIMESTAMP).
+            cur.execute("UPDATE da_agent_topic SET updated_at = '2026-01-02 03:04:05'")
+            cur.execute("UPDATE da_agent_draft SET updated_at = '2026-01-02 03:04:05'")
 
         # 2. Alembic: schema and built-in roles only; no legacy data is touched.
         subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=backend_dir, env=env, check=True)
@@ -358,6 +361,8 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
             cur.execute("SELECT topic_id, user_id FROM da_agent_topic ORDER BY topic_id")
             topics = {r["topic_id"]: r["user_id"] for r in cur.fetchall()}
             assert topics == {"t_admin": admin.id, "t_zhang": zhang_uid, "t_case": zhang_uid, "t_shared_old": None}
+            cur.execute("SELECT updated_at FROM da_agent_topic UNION SELECT updated_at FROM da_agent_draft")
+            assert [str(r["updated_at"]) for r in cur.fetchall()] == ["2026-01-02 03:04:05"]
 
             cur.execute("SELECT principal_id FROM da_agent_grant WHERE agent_id = 'agent_default' ORDER BY principal_id")
             assert [int(r["principal_id"]) for r in cur.fetchall()] == sorted([zhang_uid, lisi_uid])

@@ -101,11 +101,12 @@ WHERE p.desired IN (SELECT desired FROM tmp_desired_taken);
 
 -- ---------------------------------------------------------------------------
 -- 2. 回填旧会话归属（不区分大小写）
+-- 本脚本的 UPDATE 都写 updated_at = updated_at：列带 ON UPDATE CURRENT_TIMESTAMP，否则时间会变成迁移时刻。
 -- ---------------------------------------------------------------------------
 UPDATE da_agent_topic t
 JOIN da_user_identity i
   ON t.auth_user_id = CONCAT(i.source, ':', i.subject)
-SET t.user_id = i.user_id
+SET t.user_id = i.user_id, t.updated_at = t.updated_at
 WHERE t.user_id IS NULL AND t.auth_user_id <> '';
 
 -- ---------------------------------------------------------------------------
@@ -121,17 +122,20 @@ WHERE JSON_VALID(pr.visibility_json)
 
 UPDATE da_agent_profile
 SET visibility_json = JSON_OBJECT(
-    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(visibility_json, '$.mode')) = 'selected', 'selected', 'all'))
+    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(visibility_json, '$.mode')) = 'selected', 'selected', 'all')),
+    updated_at = updated_at
 WHERE JSON_VALID(visibility_json);
 
 UPDATE da_agent_draft
 SET draft_json = JSON_SET(draft_json, '$.visibility', JSON_OBJECT(
-    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(draft_json, '$.visibility.mode')) = 'selected', 'selected', 'all')))
+    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(draft_json, '$.visibility.mode')) = 'selected', 'selected', 'all'))),
+    updated_at = updated_at
 WHERE JSON_VALID(draft_json) AND JSON_EXTRACT(draft_json, '$.visibility') IS NOT NULL;
 
 UPDATE da_agent_draft
 SET published_json = JSON_SET(published_json, '$.visibility', JSON_OBJECT(
-    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(published_json, '$.visibility.mode')) = 'selected', 'selected', 'all')))
+    'mode', IF(JSON_UNQUOTE(JSON_EXTRACT(published_json, '$.visibility.mode')) = 'selected', 'selected', 'all'))),
+    updated_at = updated_at
 WHERE published_json IS NOT NULL AND JSON_VALID(published_json)
   AND JSON_EXTRACT(published_json, '$.visibility') IS NOT NULL;
 
