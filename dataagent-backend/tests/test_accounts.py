@@ -278,7 +278,8 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
                    ('t_admin', 'Admin', 'ct1', 'cc1', 'agent_default', 'web', '', '', '', 'local:admin', 'admin', 0),
                    ('t_zhang', 'Zhang', 'ct2', 'cc2', 'agent_default', 'web', '', '', '', 'SSO:u123', 'zhangsan', 0),
                    ('t_case', 'CaseDiff', 'ct3', 'cc3', 'agent_default', 'web', '', '', '', 'SSO:U123', 'zhangsan', 0),
-                   ('t_shared_old', 'OldShared', 'ct4', 'cc4', 'agent_default', 'widget', 'ontofoundry', 'ontofoundry:ws1:s1', '', '', '', 0)
+                   ('t_shared_old', 'OldShared', 'ct4', 'cc4', 'agent_default', 'widget', 'ontofoundry', 'ontofoundry:ws1:s1', '', '', '', 0),
+                   ('t_wangwu', 'Wangwu', 'ct5', 'cc5', 'agent_default', 'web', '', '', '', 'SSO:wangwu', '王五', 0)
                 """
             )
             cur.execute(
@@ -353,6 +354,10 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
             # The old user name is kept.
             assert users[zhang_uid]["username"] == "zhangsan"
             assert users[lisi_uid]["username"] == "lisi"
+            # A display-style old name (王五) is not a username: use the subject, keep the name for display.
+            wangwu_uid = identity[("SSO", "wangwu")]
+            cur.execute("SELECT username, display_name FROM da_user WHERE id = %s", (wangwu_uid,))
+            assert cur.fetchone() == {"username": "wangwu", "display_name": "王五"}
             # No shared password before the owner signs in.
             assert users[lisi_uid]["password_hash"] == ""
             cur.execute("SELECT r.role_key FROM da_user_role ur JOIN da_role r ON r.id = ur.role_id WHERE ur.user_id = %s", (lisi_uid,))
@@ -360,7 +365,8 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
 
             cur.execute("SELECT topic_id, user_id FROM da_agent_topic ORDER BY topic_id")
             topics = {r["topic_id"]: r["user_id"] for r in cur.fetchall()}
-            assert topics == {"t_admin": admin.id, "t_zhang": zhang_uid, "t_case": zhang_uid, "t_shared_old": None}
+            assert topics == {"t_admin": admin.id, "t_zhang": zhang_uid, "t_case": zhang_uid, "t_shared_old": None,
+                              "t_wangwu": wangwu_uid}
             cur.execute("SELECT updated_at FROM da_agent_topic UNION SELECT updated_at FROM da_agent_draft")
             assert [str(r["updated_at"]) for r in cur.fetchall()] == ["2026-01-02 03:04:05"]
 
