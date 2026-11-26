@@ -5,6 +5,7 @@
 # 用法：scripts/backup-db.sh [--output-dir <目录>]（默认 deploy/backups）
 # 结果：<目录>/dataagent-<时间>.sql.gz（数据库）和 <目录>/config-<时间>.tar.gz（deploy/.env 与 deploy/docker/dataagent/*.py）
 # 数据库连接沿用 deploy/.env，mysqldump 在 dataagent-backend 镜像内执行，宿主机无需安装 MySQL 客户端。
+# 升级时先把 .env 的 ODA_*_IMAGE 换成新版本并拉取镜像再备份：旧版 backend 镜像不带 mysqldump。
 
 set -euo pipefail
 
@@ -47,6 +48,7 @@ pushd "$DEPLOY_DIR" >/dev/null
 popd >/dev/null
 if ! gzip -dc "$DB_FILE" | tail -n 1 | grep -q "Dump completed"; then
     echo "❌ 数据库备份不完整，请检查上面的错误：$DB_FILE"
+    echo "   提示 mysqldump: not found 时，说明 .env 的 ODA_BACKEND_IMAGE 仍是旧版镜像：先换成新版本并拉取镜像，再备份。"
     exit 1
 fi
 
