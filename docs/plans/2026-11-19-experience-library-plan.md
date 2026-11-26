@@ -23,3 +23,16 @@
 ## 上线与回退
 
 先部署并执行 Alembic，再启动新后端/前端；无需额外服务或 Pi 重编译。部署开关仍控制总结/注入。回退先关闭注入，回退代码并降级迁移；知识与记忆降级后统一按旧经验解释，新增元数据会丢失，先备份表。仅本分支小步提交，不推送、不建 PR。
+
+## 2026-11-26 修订实施（草案，待评审）
+
+设计见 [修订](../design/2026-11-19-experience-library-design.md#2026-11-26-修订知识文档化全部按需读取运行前检索草案待评审)。单个 PR：
+
+- 后端 `core/experience.py`：按 kind 校验长度（knowledge 20000 / memory 500）；POST 允许 kind=memory（active）；删除 `inject_mode`、`MAX_INJECTED_CHARS`、always 分支；新增 `search_experiences`；`build_injection` 改为生成分目录文件 + 预检索节；`injection_preview` 接收 `question`。
+- Alembic：删除 `da_agent_experience.inject_mode`（downgrade 恢复为 on_demand）。
+- `core/task_executor.py`：把 `params.question` 传入注入准备。
+- API schema / `admin_routes.py`：去掉 inject_mode 字段，预览接口加 `question` 参数。
+- 前端：`KnowledgeMemoryView.vue`（知识大编辑器 + 上传、记忆新增按钮与说明）、`ExperienceFields.vue`、`entryForm.js`、`AgentExperienceCards.vue`（去额度、预览输入问题）。
+- 测试：长度校验、手动记忆直接生效、检索范围不含其他助手、bigram 排序、分目录文件、无命中不加节、迁移；前端上传填正文、无注入方式字段。
+- 本地端到端：上传几千字知识 + 若干记忆，提相关问题，确认提示词含命中记忆、模型 read/grep 知识文件并用于回答（沙箱内 grep 可达挂载目录需实测）。
+- TODO：知识切片与语义检索；运行中再检索（Pi `context` 钩子 / `search_memory` 工具）。
