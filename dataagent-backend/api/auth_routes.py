@@ -235,26 +235,19 @@ async def oauth_callback(provider: str, request: Request):
         logger.error("OAuth userinfo missing sub: keys=%s", sorted(str(key) for key in userinfo))
         return _terminal_oauth_redirect("oauth_missing_user_id")
 
-    display_name = ""
-    for claim in ("display_name", "name", "preferred_username"):
-        candidate = userinfo.get(claim)
-        if candidate in (None, ""):
-            continue
-        if not _valid_identity_text(candidate):
-            logger.error("OAUTH_USER_INFO returned invalid display claim=%s", claim)
-            return _terminal_oauth_redirect("oauth_user_info_failed")
-        display_name = candidate
-        break
-
+    # OAUTH_USER_INFO contract: sub (identity), preferred_username (login name),
+    # display_name (shown name). The hook maps the IdP's own fields onto these.
     preferred_username = userinfo.get("preferred_username")
-    if preferred_username not in (None, "") and not _valid_identity_text(preferred_username):
-        logger.error("OAUTH_USER_INFO returned invalid preferred_username")
-        return _terminal_oauth_redirect("oauth_user_info_failed")
+    display_name = userinfo.get("display_name")
+    for claim, value in (("preferred_username", preferred_username), ("display_name", display_name)):
+        if value not in (None, "") and not _valid_identity_text(value):
+            logger.error("OAUTH_USER_INFO returned invalid %s", claim)
+            return _terminal_oauth_redirect("oauth_user_info_failed")
 
     # Role claims from OAUTH_USER_INFO are deliberately ignored; roles live solely in MySQL.
     profile = {
         "username": preferred_username or oauth_sub,
-        "display_name": display_name or preferred_username or oauth_sub,
+        "display_name": display_name or "",
     }
     try:
         user = await anyio.to_thread.run_sync(

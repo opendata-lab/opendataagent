@@ -473,8 +473,14 @@ class AccountStore:
             raise ValueError("source and subject are required")
 
         prof = dict(profile or {})
-        raw_username = str(prof.get("username") or prof.get("preferred_username") or clean_subject).strip()
-        raw_display = str(prof.get("display_name") or prof.get("name") or "").strip()[:255]
+        raw_username = str(prof.get("username") or clean_subject).strip()
+        raw_display = str(prof.get("display_name") or "").strip()[:255]
+
+        def _fill_display(row: dict) -> bool:
+            # A display name the user set always wins. Empty, or the username
+            # itself (the default given at registration), counts as unset.
+            current = str(row.get("display_name") or "").strip()
+            return bool(raw_display) and raw_display != current and current in ("", str(row.get("username") or ""))
 
         for attempt in range(4):
             conn = self._connect()
@@ -498,8 +504,7 @@ class AccountStore:
                             raise AccountDisabledError("账号已停用")
                         updates = ["last_login_at = %s"]
                         params: list[Any] = [_utc_now()]
-                        # User-edited display_name always wins; only fill when empty.
-                        if not str(row.get("display_name") or "").strip() and raw_display:
+                        if _fill_display(row):
                             updates.append("display_name = %s")
                             params.append(raw_display)
                         cur.execute(
@@ -530,7 +535,7 @@ class AccountStore:
                         )
                         updates = ["last_login_at = %s"]
                         params = [_utc_now()]
-                        if not str(existing_row.get("display_name") or "").strip() and raw_display:
+                        if _fill_display(existing_row):
                             updates.append("display_name = %s")
                             params.append(raw_display)
                         cur.execute(

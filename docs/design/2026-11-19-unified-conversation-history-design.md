@@ -71,7 +71,7 @@ Widget 和 OAuth 通过各自的已验证身份查到 `42`。密码登录直接�
 
 Widget 保留现有 `userId` 参数。可信宿主传入的 `alice` 按上述来源规则匹配或创建 `username=alice`。宿主只给出账号名时，初始显示名用 `alice`。
 
-OAuth 用配置的提供方名称和 `OAUTH_USER_INFO` 返回的 `sub` 查询外部身份绑定。发现新身份时，以 `preferred_username`（缺省时用 `sub`）绑定平台同名账号，或自动登记普通用户。显示名用 `display_name` 或 `name` 补全，用户设置的显示名优先。OAuth 启用时必须配置 `DEFAULT_USER_PASSWORD`。[SCIM 用户名与显示名](https://www.rfc-editor.org/rfc/rfc7643.html#section-4.1.1) · [OIDC 标准声明](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims) · [OIDC 主体标识规则](https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability)
+OAuth 用配置的提供方名称和 `OAUTH_USER_INFO` 返回的 `sub` 查询外部身份绑定。发现新身份时，以 `preferred_username`（缺省时用 `sub`）绑定平台同名账号，或自动登记普通用户。显示名只读 `display_name`（钩子只返回 `sub`、`preferred_username`、`display_name` 三个字段，由钩子把 IdP 字段翻译过来，2026-11-26 起），账号显示名为空或等于用户名时补全，用户设置的显示名优先。OAuth 启用时必须配置 `DEFAULT_USER_PASSWORD`。[SCIM 用户名与显示名](https://www.rfc-editor.org/rfc/rfc7643.html#section-4.1.1) · [OIDC 标准声明](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims) · [OIDC 主体标识规则](https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability)
 
 ### 默认密码与主站登录
 
