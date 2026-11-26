@@ -670,6 +670,26 @@ describe('NL2SqlChatV2 URL location', () => {
     expect(dataagentApiMock.listAdminTopics).not.toHaveBeenCalled()
   })
 
+  it('pages the administrator list so older conversations can be loaded', async () => {
+    dataagentApiMock.listAdminTopics
+      .mockResolvedValueOnce({ items: [makeTopic('topic-new', 'Newer')], total: 2, page: 1, page_size: 50 })
+      .mockResolvedValueOnce({ items: [makeTopic('topic-old', 'Older')], total: 2, page: 2, page_size: 50 })
+    const wrapper = mountChat({ admin: true })
+    await flushPromises()
+
+    expect(dataagentApiMock.listAdminTopics).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, page_size: 50 }))
+    const more = wrapper.find('[data-testid="admin-topics-more"]')
+    expect(more.text()).toContain('1 / 2')
+    await more.trigger('click')
+    await flushPromises()
+
+    expect(dataagentApiMock.listAdminTopics).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 2, page_size: 50, agent_id: 'agent_default', source: '' })
+    )
+    expect(wrapper.findAll('.v2-session-title').map((node) => node.text())).toEqual(['Newer', 'Older'])
+    expect(wrapper.find('[data-testid="admin-topics-more"]').exists()).toBe(false)
+  })
+
   it('lets an administrator chat in their own conversation and read others without switching modes', async () => {
     localStorage.removeItem('nl2sql.artifactsPanelOpen')
     dataagentApiMock.listAdminTopics.mockResolvedValue({
