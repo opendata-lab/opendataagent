@@ -3,7 +3,7 @@
 # DataAgent 统一账号数据迁移
 # 功能：执行 scripts/migrate-accounts.sql，把旧会话、旧授权名单迁到统一账号（可重复执行）。
 # 用法：scripts/migrate-accounts.sh
-# 顺序：scripts/backup-db.sh → 换新镜像并 scripts/start.sh（Alembic 自动建表）→ 本脚本
+# 顺序：拉取新镜像（不启动）→ scripts/backup-db.sh（需要新镜像里的 mysqldump）→ scripts/start.sh（Alembic 自动建表）→ 本脚本
 #       → python -m core.accounts create-user --username admin --password '<密码>' --admin
 # 在 dataagent-backend 镜像内用 mysql 客户端执行，宿主机无需安装 MySQL 客户端。
 

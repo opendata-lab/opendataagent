@@ -147,19 +147,22 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
 
 从旧版本升级：
 
-1. 运行 `scripts/backup-db.sh`，在 `deploy/backups/` 生成数据库备份 `dataagent-<时间>.sql.gz` 和配置备份 `config-<时间>.tar.gz`（`.env` 与 `docker/dataagent/*.py`）。数据库备份由 backend 镜像内的 `mysqldump` 完成，宿主机不需要 MySQL 客户端。
-2. 在 `dataagent_config_docker.py` 中补充 `DEFAULT_USER_PASSWORD`（`LOCAL_ADMINS` / `ADMIN_USERS` 不再使用，可删除）。
-3. 换新镜像并执行 `scripts/start.sh`。backend 启动时 Alembic 迁移 `20261123_000042` 只建表：用户、外部身份、角色、助手授权，重建个人 MCP 访问令牌表（旧令牌作废，升级后重新申请），不改动旧数据。
-4. 运行 `scripts/migrate-accounts.sh`（执行 `scripts/migrate-accounts.sql`，可重复执行）：
+1. 先换镜像、后备份：把新版 `scripts/`、`deploy/` 同步到部署目录（离线包同步不会覆盖 `.env` 和现场 nginx 配置），`deploy/.env` 的 `ODA_*_IMAGE` 指向新版本，再 `docker compose -f deploy/docker-compose.yml pull`（离线包用 `scripts/load-images.sh`）并 `docker pull <ODA_SANDBOX_IMAGE>`。只拉取镜像，不要启动。
+   旧版 backend 镜像里没有 `mysqldump`，用旧镜像备份会失败（脚本报「数据库备份不完整」并退出）。
+2. 运行 `scripts/backup-db.sh`，在 `deploy/backups/` 生成数据库备份 `dataagent-<时间>.sql.gz` 和配置备份 `config-<时间>.tar.gz`（`.env` 与 `docker/dataagent/*.py`）。数据库备份在新版 backend 镜像的临时容器里用 `mysqldump` 完成，只读数据、不执行迁移，DataAgent 容器停着也能备份，宿主机不需要 MySQL 客户端。
+   拉不到新镜像时，可以用 MySQL 官方镜像导出：`docker run --rm mysql:8.0 sh -c 'MYSQL_PWD=<密码> mysqldump -h <MySQL 主机> -P <端口> -u <用户> --single-transaction --no-tablespaces --routines --triggers <库名>' | gzip > deploy/backups/dataagent-<时间>.sql.gz`（`-h` 不能填 `127.0.0.1`）。
+3. 在 `dataagent_config_docker.py` 中补充 `DEFAULT_USER_PASSWORD`（`LOCAL_ADMINS` / `ADMIN_USERS` 不再使用，可删除）。
+4. 执行 `scripts/start.sh`。backend 启动时 Alembic 迁移 `20261123_000042` 只建表：用户、外部身份、角色、助手授权，重建个人 MCP 访问令牌表（旧令牌作废，升级后重新申请），不改动旧数据。
+5. 运行 `scripts/migrate-accounts.sh`（执行 `scripts/migrate-accounts.sql`，可重复执行）：
    - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<用户名>` / `<来源>:<标识>`）建普通账号和外部身份，不设密码。用户名取标识（`SSO:zhangsan` → `zhangsan`），旧会话里记录的名字（常是中文显示名）作为显示名；`local:admin` 直接对应同名的 `admin` 账号。来源和标识不区分大小写，`SSO:u123` 与 `SSO:U123` 是同一用户；
    - 按外部身份回填旧会话归属，把已发布的 `allowed_users` 转为助手授权，助手配置和草稿只保留可见模式；
    - 「仅登录用户」改为「全部用户」；
    - 末尾列出账号数、已归属的旧会话、无归属会话和授权数，以及因用户名冲突没能建账号的旧用户。
-5. 设置管理员（原来的密码可以继续用，例如 `admin123`）：
+6. 设置管理员（原来的密码可以继续用，例如 `admin123`）：
    ```bash
    docker compose -f deploy/docker-compose.yml exec dataagent-backend python -m core.accounts create-user --username admin --password '<密码>' --admin
    ```
-   第 4、5 步顺序不限。核对第 4 步的结果后再开放访问；在此之前普通用户看不到自己的旧会话，「指定范围」助手也暂时不可用。
+   第 5、6 步顺序不限。核对第 5 步的结果后再开放访问；在此之前普通用户看不到自己的旧会话，「指定范围」助手也暂时不可用。
 
 该迁移不支持降级。需要回退时运行 `scripts/restore-db.sh deploy/backups/dataagent-<时间>.sql.gz`（会先清空库内全部表再导入），把 `deploy/.env` 的 `ODA_*_IMAGE` 改回旧版本，必要时从 `config-<时间>.tar.gz` 解压回旧配置，再执行 `scripts/start.sh`。
 
