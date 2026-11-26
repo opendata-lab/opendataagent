@@ -92,6 +92,11 @@
 - **现状**：Pi 直接使用 MCP 返回的工具名注册，没有按服务加命名空间，不同 MCP 的同名工具会冲突。插件设计里先用"冲突即拒绝"兜底。
 - **要做**：设计按服务加命名空间的方案，兼顾现有 MCP 配置和技能文档；本轮已实现重复/保留工具名明确拒绝。
 
+### 普通用户自建智能体、Skill 与 MCP（新功能）
+
+- **现状**（2026-11-26 核实 `97225d6`）：智能体、Skill、MCP 服务的创建、编辑、发布全部仅限管理员（`api/admin_routes.py` 的 `require_admin`）。资源都没有所有者。Skill 是全局 folder 命名空间，导入同名 Skill 会直接覆盖。MCP 的 stdio 在后端主机上执行命令。智能体的 `env_vars` 可以覆盖运行时保留变量。
+- **要做**：三类资源加上所有者和可见性（仅自己 / 指定用户或角色 / 所有人）；支持把看得到的智能体复制为自己的智能体；Skill 按 `(所有者, 名称)` 区分以避免重名覆盖；普通用户只能添加 http/sse MCP。属大型变更，约 9–11 个工作日、5 个 PR。前置条件是下方“Skill 包卫生”。设计第 11 节有三个问题待确认。来源：用户 2026-11-26 提出。[设计](design/2026-11-26-user-owned-agents-design.md) · [计划](plans/2026-11-26-user-owned-agents-plan.md)
+
 ### 智能体可查看并选择 MCP 工具（新功能）
 
 - **现状**（2026-11-04 核实）：智能体只能整体绑定 MCP 服务（`mcp_server_ids`），运行时注册该服务返回的全部工具，配置页看不到具体有哪些工具。`da_agent_profile.allowed_tools_json` 是旧 Claude SDK 时代的工具名列表（Skill/Bash/Read 等），Pi 运行时已不读取。Pi 自带的 MCP 探测入口（`dist/src/mcp/probe-cli.js`，后端 `resolve_mcp_probe_command`）可以列出服务的工具。
