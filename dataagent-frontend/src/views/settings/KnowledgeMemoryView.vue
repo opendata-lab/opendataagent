@@ -140,10 +140,10 @@ onMounted(async () => {
 onBeforeUnmount(() => { sequence++; clearTimeout(timer) })
 </script>
 <style scoped>
-.library-view { max-width: 1200px; margin: 0 auto; color: #1f2d3d; }
-.library-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 16px 0; }
-h1 { font-size: 22px; line-height: 1.4; margin: 0 0 8px; font-weight: 600; }
-.library-head p { margin: 0; font-size: 13px; }
+.library-view { color: #1f2d3d; }
+.library-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 0 0 12px; }
+h1 { font-size: 18px; line-height: 1.4; margin: 0 0 4px; font-weight: 600; }
+.library-head p { margin: 0; font-size: 13px; color: #6b7280; }
 .muted, .deployment-note { color: #64748b; }
 .deployment-note { margin: 0 0 12px; font-size: 12px; }
 .filters { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
