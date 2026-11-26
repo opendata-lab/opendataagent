@@ -780,7 +780,7 @@ function resetActiveConversationView() {
 
 // Administrators read every user's conversations for this assistant through the
 // admin listing; the per-row can_continue flag says which ones they may continue.
-async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true } = {}) {
+async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true, closeMissing = false } = {}) {
   const seq = ++adminListSequence
   try {
     adminTopicsLoadingMore.value = false
@@ -788,7 +788,13 @@ async function loadAdminTopics({ openLinkedTopic = false, selectDefault = true }
     if (seq !== adminListSequence) return
     adminTopicsPage.value = 1
     adminTopicsTotal.value = Number(data?.total) || 0
-    topics.value = (Array.isArray(data?.items) ? data.items : []).map(normalizeTopic).filter((topic) => topic.topic_id)
+    const loaded = (Array.isArray(data?.items) ? data.items : []).map(normalizeTopic).filter((topic) => topic.topic_id)
+    // Close before the list changes: for a moment without its row, another
+    // user's conversation would reload through the owner-only API (404).
+    if (closeMissing && activeTopicId.value && !loaded.some((topic) => topic.topic_id === activeTopicId.value)) {
+      closeConversationForFilter()
+    }
+    topics.value = loaded
     const linkedId = openLinkedTopic ? routeTopicId() : ''
     if (linkedId) {
       const validTopicId = await validateRequestedTopic(linkedId)
@@ -909,14 +915,28 @@ const suggestions = computed(() => {
 })
 
 // ── Source / filter ──────────────────────────────────────────────────────
+// A filter change keeps the open conversation when the new list still has it;
+// otherwise it closes and the empty new conversation shows.
+function closeConversationForFilter() {
+  activeTopicId.value = ''
+  activeTaskId.value = ''
+  pendingMessageId.value = ''
+  closeArtifactPreview()
+  replaceRouteTopic('')
+}
+
 function handleSourceChange(source) {
   if (source === filterSource.value) return
   filterSource.value = source
-  if (usesAdminList.value) loadAdminTopics({ selectDefault: false })
+  if (usesAdminList.value) {
+    loadAdminTopics({ selectDefault: false, closeMissing: true })
+  } else if (activeTopicId.value && !filteredTopics.value.some((topic) => topic.topic_id === activeTopicId.value)) {
+    closeConversationForFilter()
+  }
 }
 
 watch(filterUser, () => {
-  if (usesAdminList.value) loadAdminTopics({ selectDefault: false })
+  if (usesAdminList.value) loadAdminTopics({ selectDefault: false, closeMissing: true })
 })
 
 function resetFilters() {
