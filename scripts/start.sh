@@ -16,6 +16,8 @@ ENV_EXAMPLE="$DEPLOY_DIR/.env.example"
 
 # shellcheck source=/dev/null
 source "$LIB_DIR/container-runtime.sh"
+# shellcheck source=/dev/null
+source "$LIB_DIR/site-config.sh"
 
 read_env_value() {
     local key="$1"
@@ -156,15 +158,8 @@ echo ""
 # 先建好宿主机目录，避免 Docker 以 root 自动创建后产生属主困惑。
 mkdir -p "$DEPLOY_DIR/logs" 2>/dev/null || true
 
-# 确保宿主机 Nginx 配置文件存在，避免 Docker 将其作为目录自动创建
-if [ ! -f "$DEPLOY_DIR/docker/nginx/default.conf" ]; then
-    mkdir -p "$DEPLOY_DIR/docker/nginx" 2>/dev/null || true
-    if [ -f "$REPO_ROOT/dataagent-frontend/nginx.conf" ]; then
-        cp "$REPO_ROOT/dataagent-frontend/nginx.conf" "$DEPLOY_DIR/docker/nginx/default.conf"
-    else
-        touch "$DEPLOY_DIR/docker/nginx/default.conf"
-    fi
-fi
+# 现场 nginx 配置不存在时从模板生成（compose 绑定挂载缺文件会被 Docker 建成目录）。
+ensure_site_configs "$DEPLOY_DIR" || exit 1
 
 # 统一 DataAgent 运行时根目录为宿主机绝对路径，保证 backend 卷挂载与 daemon 使用的
 # child bind 源指向同一目录，支持用户在 .env 中自定义（含相对于 deploy/ 的相对路径）。

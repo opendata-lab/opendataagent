@@ -41,7 +41,7 @@ def test_compose_project_does_not_collide_with_other_deploy_directories():
 
 def test_nginx_deploy_config_synchronized_with_frontend():
     frontend_conf = (REPO_ROOT / "dataagent-frontend" / "nginx.conf").read_text(encoding="utf-8")
-    deploy_conf = (REPO_ROOT / "deploy" / "docker" / "nginx" / "default.conf").read_text(encoding="utf-8")
+    deploy_conf = (REPO_ROOT / "deploy" / "docker" / "nginx" / "default.conf.example").read_text(encoding="utf-8")
     assert frontend_conf == deploy_conf
     # Must preserve streaming headers for SSE
     for directive in ("proxy_buffering off", "chunked_transfer_encoding on",
@@ -73,7 +73,10 @@ def test_offline_package_carries_template_but_not_runtime_env(tmp_path: Path):
     for script in ("start.sh", "stop.sh", "restart.sh", "dump-logs.sh", "load-images.sh",
                    "load-package-and-start.sh", "migrate-from-opendataworks.sh", "lib/container-runtime.sh"):
         assert any(name.endswith(f"/scripts/{script}") for name in names), script
-    assert any(name.endswith("/deploy/docker/nginx/default.conf") for name in names)
+    # Site nginx config ships as a template only, so a package sync never overwrites the site's copy.
+    assert any(name.endswith("/deploy/docker/nginx/default.conf.example") for name in names)
+    assert not any(name.endswith("/deploy/docker/nginx/default.conf") for name in names)
+    assert any(name.endswith("/scripts/lib/site-config.sh") for name in names)
     assert not any("/scripts/run-dataagent" in name for name in names)
     for image in ("oda-frontend", "oda-backend", "oda-sandbox"):
         var = f"ODA_{image.split('-')[1].upper()}_IMAGE"
@@ -116,6 +119,9 @@ def test_start_exports_an_absolute_runtime_root_for_relative_settings(tmp_path: 
     shutil.copytree(REPO_ROOT / "scripts", root / "scripts")
     (root / "deploy").mkdir()
     shutil.copy(REPO_ROOT / "deploy" / "docker-compose.yml", root / "deploy" / "docker-compose.yml")
+    (root / "deploy" / "docker" / "nginx").mkdir(parents=True)
+    shutil.copy(REPO_ROOT / "deploy" / "docker" / "nginx" / "default.conf.example",
+                root / "deploy" / "docker" / "nginx" / "default.conf.example")
     (root / "deploy" / ".env").write_text("DATAAGENT_HOST_ROOT=../runtime/./data\n", encoding="utf-8")
 
     fake_bin = tmp_path / "bin"
@@ -137,6 +143,9 @@ def test_start_exports_an_absolute_runtime_root_for_relative_settings(tmp_path: 
     up_call = next(line for line in record.read_text().splitlines() if " up -d" in line)
     assert up_call.split()[0] == str(root / "runtime" / "data")
     assert (root / "deploy" / "logs").is_dir()
+    # First start creates the site nginx config from its template.
+    assert (root / "deploy" / "docker" / "nginx" / "default.conf").read_text() == \
+        (REPO_ROOT / "deploy" / "docker" / "nginx" / "default.conf.example").read_text()
 
 
 def test_offline_upgrade_takes_image_tags_from_the_package_and_keeps_other_settings(tmp_path: Path):
@@ -163,3 +172,18 @@ def test_offline_upgrade_takes_image_tags_from_the_package_and_keeps_other_setti
 
     env = (workdir / "oda-deployment" / "deploy" / ".env").read_text(encoding="utf-8")
     assert env == "DATAAGENT_MYSQL_PASSWORD=secret\nODA_BACKEND_IMAGE=oda-backend:1.1.0\nODA_SANDBOX_IMAGE=oda-sandbox:1.1.0\n"
+
+
+def test_site_nginx_config_is_created_from_template_and_never_overwritten(tmp_path):
+    lib = REPO_ROOT / "scripts" / "lib" / "site-config.sh"
+    nginx_dir = tmp_path / "docker" / "nginx"
+    nginx_dir.mkdir(parents=True)
+    (nginx_dir / "default.conf.example").write_text("template\n")
+
+    run = lambda: subprocess.run(["bash", "-c", f'source "{lib}" && ensure_site_configs "{tmp_path}"'], check=True)
+    run()
+    assert (nginx_dir / "default.conf").read_text() == "template\n"
+
+    (nginx_dir / "default.conf").write_text("site edit\n")
+    run()
+    assert (nginx_dir / "default.conf").read_text() == "site edit\n"
