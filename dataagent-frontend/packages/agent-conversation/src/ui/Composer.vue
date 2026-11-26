@@ -36,6 +36,9 @@
     </ul>
     <p v-if="uploadError" class="dac-upload-error" role="alert">{{ uploadError }}</p>
 
+    <!-- Docked on the input card's top edge: messages waiting to be sent. -->
+    <slot name="queue" />
+
     <div class="dac-input-card">
       <textarea
         ref="inputRef"

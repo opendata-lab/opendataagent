@@ -39,17 +39,6 @@
       >{{ text }}</button>
     </div>
 
-    <QueuePanel
-      v-if="queue.length"
-      :items="queue"
-      :active="conversation.isActive.value"
-      :paused="queuePaused"
-      :disabled="disabled"
-      @send-now="sendQueuedNow"
-      @edit="editQueued"
-      @remove="removeQueued"
-    />
-
     <Composer
       ref="composerRef"
       :model-value="conversation.draft.value"
@@ -68,6 +57,18 @@
       @permission-error="(error) => emit({ name: 'error', detail: { code: 'PERMISSION_MODE_FAILED', message: error?.message || '切换权限模式失败' } })"
     >
       <template #composer-overlay><slot name="composer-overlay" /></template>
+      <template #queue>
+        <QueuePanel
+          v-if="queue.length"
+          :items="queue"
+          :active="conversation.isActive.value"
+          :paused="queuePaused"
+          :disabled="disabled"
+          @send-now="sendQueuedNow"
+          @edit="editQueued"
+          @remove="removeQueued"
+        />
+      </template>
       <template #composer-actions><slot name="composer-actions" /></template>
       <template #composer-toolbar><slot name="composer-toolbar" /></template>
     </Composer>
