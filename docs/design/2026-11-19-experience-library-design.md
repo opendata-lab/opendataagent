@@ -35,26 +35,29 @@
 
 - 同类产品（GPTs / Claude Projects 的 Knowledge、扣子知识库）把“知识”定义为上传的长文档、检索使用；“记忆”指从对话沉淀的短条目（ChatGPT Memory、Windsurf memories）。现状两者都是 ≤500 字短条目，“知识”名不副实，用户理解成本高。
 - 现状 on_demand 索引知识与记忆混排取最新 30 条（`build_injection`、`MAX_INDEX_LINES`），记忆增多会把知识挤出索引。
-- “始终注入”与 1000 字预算让配置变复杂；用户决定（2026-11-26）全部改为按需读取，但要保证相关条目一定送到模型面前。
+- “始终注入”与 1000 字预算让配置变复杂；用户决定（2026-11-26）全部改为按需读取，但相关条目要一定送到模型面前。
+- 原则（用户 2026-11-26）：不自造轮子，优先用 Pi 与 MySQL 已有机制，降低后续改动面。
 
 ### 方案
 
-1. **知识 = 文档**：正文上限放宽到 20000 字（`content` 为 TEXT，无需改列），前端支持上传 .md/.txt（浏览器读取后填入正文，不新增上传接口）。仍是 global/agent 范围、管理员维护。
-2. **记忆 = 短条目**：≤500 字。管理员可手动新增（直接 active）；每日总结提炼的仍为 pending 待审核。记忆页注明“从对话中总结或手动添加的经验，生效后对相应助手的所有用户可用”，避免与个人记忆混淆。
-3. **取消始终注入**：删除 `inject_mode` 列、1000 字预算及卡片/预览中的额度展示；迁移把现有条目全部视为按需。
-4. **检索层（后端单一实现）**：新增 `search_experiences(agent_id, query, limit)`。
-   - 范围沿用 `active_experiences_for`：`status='active' AND (scope='global' OR agent_id=当前助手)`，不会读到其他助手的专属条目。
-   - 第一期打分：问题与条目做中文字二元组（bigram）重合度，标题与适用条件加权；无新依赖。后续换向量检索只改此函数。
-5. **触发层（第一期）**：`task_executor` 在每个任务启动前（现有注入位置）用 `params.question` 调用检索——
-   - 命中的记忆 top 5 全文写入系统提示词“可能相关的记忆”一节；
-   - 命中的知识只写“标题（适用条件）→ 路径”，正文由模型按需 read/grep；
-   - 无命中则不加该节。
-   这一步等价于运行前钩子，一定执行，不依赖模型主动检索。
-6. **呈现层**：沙箱只读挂载目录 `/opt/skills/_knowledge_memory/` 分为 `knowledge/<id>.md` 与 `memory/<id>.md`，每个文件首部写标题与适用条件；仅含本次助手可见的条目，执行段结束清理（沿用现有机制）。提示词告知：预检索不足时用 grep 搜索这两个目录、read 读取。知识 ≤50 篇时提示词列出文档目录，超过只给路径；记忆不逐条列出，只给条数与目录。
-7. **预览**：智能体页预览改为“输入一个问题 → 显示会命中的记忆/知识及最终提示词片段”，与运行时调用同一函数。
+1. **知识 = 文档**：正文上限 20000 字；`content` 由 TEXT（65,535 字节，2 万汉字 utf8mb4 约 60KB，会超）改为 MEDIUMTEXT。前端支持上传 .md/.txt（浏览器读取后填入正文，不新增上传接口）。仍是 global/agent 范围、管理员维护。
+2. **记忆 = 短条目**：≤500 字。管理员可手动新增（直接 active，来源显示“手动添加”）；每日总结提炼的仍为 pending 待审核。
+3. **取消始终注入**：删除 `inject_mode` 列、1000 字预算及卡片/预览中的额度展示。迁移说明提醒管理员：原 always 的硬性规则应移入智能体系统提示词。
+4. **检索（后端，MySQL 自带全文索引）**：
+   - 在 `da_agent_experience(title, when_text, content)` 上建 `FULLTEXT ... WITH PARSER ngram`（MySQL 5.7.6+ 内置；本地 8.0.46 已确认插件 ACTIVE、`ngram_token_size=2`）。
+   - `search_experiences(agent_id, query, limit)`：`MATCH ... AGAINST (... IN NATURAL LANGUAGE MODE)` 排序，范围沿用 `active_experiences_for`（`status='active' AND (scope='global' OR agent_id=当前助手)`），不会读到其他助手的专属条目；低于阈值的丢弃。不手写切词与打分。
+   - 查询文本：本轮问题 + 最近 1–2 条用户消息（`_build_history` 已有），解决“按渠道拆一下”这类追问丢上下文。
+5. **注入（Pi 官方扩展钩子 `before_agent_start`）**：
+   - 后端把检索结果随 `cell.init` 下发（新字段，如 `retrieved_context`）；`sdk-session.ts` 的资源加载器注册一个内联扩展（`loadExtensionFromFactory`），在 `before_agent_start` 返回 `message`（customType `dataagent-retrieval`）。
+   - Pi 把该消息追加进对话记录、以 user 角色发给模型（`convertToLlm`），不改系统提示词，前缀缓存不受影响；它随会话存进断点存档（`cell.ts` 保存全部 entries），卡片恢复与会话恢复自然带上。
+   - 卡片恢复（prompt 为 interaction JSON）不下发检索结果，扩展不注入；`messageType !== "user"` 也跳过。
+   - 内容：命中记忆全文（top 5，合计 ≤2000 字）；命中知识只写“标题（适用条件）→ 路径”（≤20 篇）；无命中不注入。
+   - 不用 `context` 钩子：它每次 LLM 调用临时改消息、不落盘，下一轮前文变化同样破坏缓存。
+6. **呈现与按需读取（Pi 自带 grep/read）**：沙箱只读挂载 `/opt/skills/_knowledge_memory/` 分 `knowledge/<id>.md`、`memory/<id>.md`，文件首部写标题与适用条件，仅含本助手可见条目；写入前建子目录，文件名只用整数 id。系统提示词（固定文本，不随问题变）说明：先看注入的相关条目，不足时 grep 这两个目录，长文档先 grep 定位再用 read 的 offset/limit 分段读。
+7. **预览**：智能体页预览可输入问题，显示会命中的记忆/知识及注入消息；不输入问题时显示条目列表。与运行时调用同一检索函数；注入文件准备移到 `asyncio.to_thread`。
 
 ### 扩展点与取舍
 
-- Pi SDK 提供扩展事件 `before_agent_start`（可拿到用户问题、改系统提示词）、`context`（每次 LLM 调用前改消息）、`tool_call`；当前 `sdk-session.ts` 以空扩展列表运行。第一期不用 Pi 钩子：任务粒度上后端预检索与 `before_agent_start` 等价，且检索逻辑只有一份（Python，可访问数据库、知道用户身份，预览与运行一致）。需要“运行中按新发现再检索”时，再加 Pi `context` 钩子或 `search_memory` 工具，两者经新增的 Pi→后端请求帧调用同一检索函数。
-- 代价：bigram 对改写/同义问法召回有限；模型仍可 grep 补查。知识文档多（数十篇、每篇上万字）时需切片与语义检索，记入 TODO。
-- 注入放系统提示词而非工具输出，避免工具结果里出现指令性文本触发模型的提示词注入告警。
+- 检索逻辑只在后端（可访问数据库与用户身份，预览与运行一致）；Pi 侧只负责按官方钩子注入，不含业务逻辑。
+- 后续若需“运行中按新发现再检索”，加一个 `search_memory` 工具，经 Pi→后端请求帧调用同一函数。
+- 换向量检索时只改 `search_experiences`。ngram 对同义改写召回有限；知识文档多（数十篇、每篇上万字）时需切片与语义检索，记入 TODO。

@@ -28,11 +28,13 @@
 
 设计见 [修订](../design/2026-11-19-experience-library-design.md#2026-11-26-修订知识文档化全部按需读取运行前检索草案待评审)。单个 PR：
 
-- 后端 `core/experience.py`：按 kind 校验长度（knowledge 20000 / memory 500）；POST 允许 kind=memory（active）；删除 `inject_mode`、`MAX_INJECTED_CHARS`、always 分支；新增 `search_experiences`；`build_injection` 改为生成分目录文件 + 预检索节；`injection_preview` 接收 `question`。
-- Alembic：删除 `da_agent_experience.inject_mode`（downgrade 恢复为 on_demand）。
-- `core/task_executor.py`：把 `params.question` 传入注入准备。
-- API schema / `admin_routes.py`：去掉 inject_mode 字段，预览接口加 `question` 参数。
-- 前端：`KnowledgeMemoryView.vue`（知识大编辑器 + 上传、记忆新增按钮与说明）、`ExperienceFields.vue`、`entryForm.js`、`AgentExperienceCards.vue`（去额度、预览输入问题）。
-- 测试：长度校验、手动记忆直接生效、检索范围不含其他助手、bigram 排序、分目录文件、无命中不加节、迁移；前端上传填正文、无注入方式字段。
-- 本地端到端：上传几千字知识 + 若干记忆，提相关问题，确认提示词含命中记忆、模型 read/grep 知识文件并用于回答（沙箱内 grep 可达挂载目录需实测）。
-- TODO：知识切片与语义检索；运行中再检索（Pi `context` 钩子 / `search_memory` 工具）。
+- Alembic：删除 `inject_mode`；`content` 改 MEDIUMTEXT；加 ngram FULLTEXT 索引（downgrade 反向）。
+- 后端 `core/experience.py`：按 kind 校验长度（knowledge 20000 / memory 500）；删除 `inject_mode`、`MAX_INJECTED_CHARS`、always 分支；新增 `search_experiences`（MATCH…AGAINST + 阈值 + 字数上限）；`build_injection` 生成分目录文件（先 mkdir，整数 id 文件名）；`collect_candidates` 不再传 inject_mode；`injection_preview` 接收可选 `question`。
+- `models/schemas.py`：`ExperienceCreateRequest.kind` 允许 memory；body 上限按 kind；删除 inject_mode 字段（创建与更新）。
+- `api/admin_routes.py`：预览接口加 `question` 参数。
+- `core/task_executor.py`：用本轮问题 + 最近 1–2 条用户消息检索，结果放入 cell init；卡片恢复不检索；注入准备用 `asyncio.to_thread`。
+- Pi：`protocol/frames.ts` 加 `retrieved_context`；`kernel/sdk-session.ts` 注册内联扩展，`before_agent_start` 返回 message；`npm run build`。
+- 前端：`KnowledgeMemoryView.vue`（知识大编辑器 + 上传，记忆新增按钮、说明、“手动添加”来源）、`ExperienceDrawer.vue`（加宽、按 kind 的提示）、`ExperienceFields.vue`、`entryForm.js`、`AgentExperienceCards.vue`（去额度、预览可输入问题）、`api/dataagent.js` `getExperienceInjectionPreview`。
+- 测试：长度校验；手动记忆直接生效；检索范围不含其他助手；中文与英文词（如 GMV、表名）都能命中；阈值与字数上限；追问用历史命中；卡片恢复不重复注入；Pi 扩展注入消息进入 checkpoint 且系统提示词不变；迁移 up/down；前端上传与预览。
+- 本地端到端（schema `dataagent_qa`）：上传几千字知识 + 若干记忆，提相关问题与追问，确认注入消息、模型 grep/read 知识文件并用于回答、第二轮缓存读取 token 正常。
+- TODO：知识切片与语义检索；运行中再检索（`search_memory` 工具）；确认生产 MySQL ≥5.7.6。
