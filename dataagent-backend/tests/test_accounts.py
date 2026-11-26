@@ -351,10 +351,12 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
 
             cur.execute("SELECT id, username, password_hash FROM da_user")
             users = {int(r["id"]): r for r in cur.fetchall()}
-            # The old user name is kept.
-            assert users[zhang_uid]["username"] == "zhangsan"
+            # The username is the subject; the old name becomes the display name.
+            assert users[zhang_uid]["username"].lower() == "u123"
+            cur.execute("SELECT display_name FROM da_user WHERE id = %s", (zhang_uid,))
+            assert cur.fetchone()["display_name"] == "zhangsan"
             assert users[lisi_uid]["username"] == "lisi"
-            # A display-style old name (王五) is not a username: use the subject, keep the name for display.
+            # 王五 stays the display name.
             wangwu_uid = identity[("SSO", "wangwu")]
             cur.execute("SELECT username, display_name FROM da_user WHERE id = %s", (wangwu_uid,))
             assert cur.fetchone() == {"username": "wangwu", "display_name": "王五"}

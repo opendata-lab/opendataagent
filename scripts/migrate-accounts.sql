@@ -60,13 +60,11 @@ WHERE p.source = 'local';
 DELETE p FROM tmp_legacy_principal p
 JOIN da_user_identity i ON i.source = p.source AND i.subject = p.subject;
 
--- New accounts. The username follows the login rule (letters, digits, . _ @ + -):
--- the old user name when it fits (old SSO names were often display names such as
--- 张三, which stay the display name), else the subject; a name that is taken or
--- shared by two principals falls back to <来源>_<标识>.
-UPDATE tmp_legacy_principal SET desired = LEFT(CASE
-    WHEN REGEXP_LIKE(legacy_name, '^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$', 'c') THEN legacy_name
-    ELSE subject END, 128);
+-- New accounts. The username is the subject (the login id: SSO:zhangsan →
+-- zhangsan); the old name (often a display name such as 张三) becomes the
+-- display name. A name that is taken or shared by two principals falls back to
+-- <来源>_<标识>.
+UPDATE tmp_legacy_principal SET desired = LEFT(subject, 128);
 DROP TEMPORARY TABLE IF EXISTS tmp_desired_taken;
 CREATE TEMPORARY TABLE tmp_desired_taken (
     desired VARCHAR(128) COLLATE utf8mb4_unicode_ci NOT NULL PRIMARY KEY

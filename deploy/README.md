@@ -151,7 +151,7 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
 2. 在 `dataagent_config_docker.py` 中补充 `DEFAULT_USER_PASSWORD`（`LOCAL_ADMINS` / `ADMIN_USERS` 不再使用，可删除）。
 3. 换新镜像并执行 `scripts/start.sh`。backend 启动时 Alembic 迁移 `20261123_000042` 只建表：用户、外部身份、角色、助手授权，重建个人 MCP 访问令牌表（旧令牌作废，升级后重新申请），不改动旧数据。
 4. 运行 `scripts/migrate-accounts.sh`（执行 `scripts/migrate-accounts.sql`，可重复执行）：
-   - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<用户名>` / `<来源>:<标识>`）建普通账号和外部身份，不设密码；`local:admin` 直接对应同名的 `admin` 账号。来源和标识不区分大小写，`SSO:u123` 与 `SSO:U123` 是同一用户；
+   - 为旧会话和已发布助手名单中出现的每个旧用户（`local:<用户名>` / `<来源>:<标识>`）建普通账号和外部身份，不设密码。用户名取标识（`SSO:zhangsan` → `zhangsan`），旧会话里记录的名字（常是中文显示名）作为显示名；`local:admin` 直接对应同名的 `admin` 账号。来源和标识不区分大小写，`SSO:u123` 与 `SSO:U123` 是同一用户；
    - 按外部身份回填旧会话归属，把已发布的 `allowed_users` 转为助手授权，助手配置和草稿只保留可见模式；
    - 「仅登录用户」改为「全部用户」；
    - 末尾列出账号数、已归属的旧会话、无归属会话和授权数，以及因用户名冲突没能建账号的旧用户。
