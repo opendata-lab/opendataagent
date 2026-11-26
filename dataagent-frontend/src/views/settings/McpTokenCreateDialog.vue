@@ -1,16 +1,15 @@
 <template>
-  <section class="mcp-token-create" aria-labelledby="mcp-token-create-title">
-    <el-button tag="router-link" :to="{ name: 'McpTokens' }" :icon="ArrowLeft" link type="primary">
-      返回访问令牌
-    </el-button>
-
-    <h1 id="mcp-token-create-title" ref="heading" tabindex="-1">
-      {{ createdToken ? '令牌已创建' : '新建访问令牌' }}
-    </h1>
-
+  <el-dialog
+    v-model="open"
+    :title="createdToken ? '令牌已创建' : '新建访问令牌'"
+    width="min(520px, calc(100vw - 32px))"
+    append-to-body
+    :close-on-click-modal="!createdToken"
+    @closed="reset"
+  >
     <template v-if="createdToken">
-      <p class="mcp-token-notice">请复制并保存完整令牌。离开此页面后，完整令牌无法再次查看。</p>
-      <el-form label-position="top">
+      <p class="mcp-token-notice">请复制并保存完整令牌。关闭后，完整令牌无法再次查看。</p>
+      <el-form label-position="top" @submit.prevent>
         <el-form-item label="访问令牌">
           <div class="mcp-token-result">
             <el-input
@@ -34,7 +33,7 @@
       </section>
     </template>
 
-    <el-form v-else label-position="top" @submit.prevent="submitCreate">
+    <el-form v-else label-position="top" data-testid="create-token-form" @submit.prevent="submitCreate">
       <el-form-item label="令牌名称" required :error="nameError">
         <el-input
           v-model="createForm.name"
@@ -45,35 +44,40 @@
           @input="nameError = ''"
         />
       </el-form-item>
-      <el-button
-        type="primary"
-        native-type="submit"
-        :loading="creating"
-        data-testid="submit-create-token"
-      >
-        创建
-      </el-button>
     </el-form>
-  </section>
+
+    <template #footer>
+      <el-button v-if="createdToken" type="primary" data-testid="close-create-token" @click="open = false">完成</el-button>
+      <template v-else>
+        <el-button @click="open = false">取消</el-button>
+        <el-button type="primary" :loading="creating" data-testid="submit-create-token" @click="submitCreate">
+          创建
+        </el-button>
+      </template>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, CopyDocument } from '@element-plus/icons-vue'
+import { CopyDocument } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
 import { copyText } from '@/utils/clipboard'
 import { stringifyMcpClientConfig } from '@/utils/mcpClientConfig'
 import { downloadTextFile } from '@/utils/tableExport'
 
+// configAgentId: when set (opened from an assistant's MCP dialog), the new token
+// can be exported straight into that assistant's MCP configuration.
 const props = defineProps({ configAgentId: String })
+const open = defineModel({ type: Boolean, required: true })
+const emit = defineEmits(['created'])
 
 const createForm = reactive({ name: '' })
 const nameError = ref('')
 const creating = ref(false)
 const createdToken = ref('')
 const configAgent = ref(null)
-const heading = ref(null)
 const mcpConfig = computed(() => (
   createdToken.value && configAgent.value?.remote_mcp_path
     ? stringifyMcpClientConfig(configAgent.value.name, configAgent.value.remote_mcp_path, createdToken.value)
@@ -93,10 +97,9 @@ async function submitCreate() {
   }
   creating.value = true
   try {
-    const { token } = await dataagentApi.createMcpToken({ name })
+    const { item, token } = await dataagentApi.createMcpToken({ name })
     createdToken.value = token
-    await nextTick()
-    heading.value?.focus()
+    emit('created', { item, token })
   } catch (error) {
     if (!error?.__odwNotified) {
       ElMessage.error(error?.response?.data?.detail || error?.message || '创建令牌失败')
@@ -128,6 +131,12 @@ function downloadConfig() {
   downloadTextFile('mcp.json', mcpConfig.value, 'application/json')
 }
 
+function reset() {
+  createForm.name = ''
+  nameError.value = ''
+  createdToken.value = ''
+}
+
 watch(() => props.configAgentId, async (agentId, _, onCleanup) => {
   configAgent.value = null
   if (!agentId) return
@@ -143,18 +152,6 @@ watch(() => props.configAgentId, async (agentId, _, onCleanup) => {
 </script>
 
 <style scoped>
-.mcp-token-create {
-  max-width: 560px;
-  color: #1f2937;
-}
-
-.mcp-token-create h1 {
-  margin: 18px 0 22px;
-  color: #0f172a;
-  font-size: 24px;
-  line-height: 1.3;
-}
-
 .mcp-token-notice {
   margin: 0 0 20px;
   color: #475569;

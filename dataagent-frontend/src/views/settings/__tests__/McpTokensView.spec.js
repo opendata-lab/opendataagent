@@ -1,4 +1,4 @@
-import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ElementPlus from 'element-plus'
 
@@ -26,7 +26,7 @@ vi.mock('element-plus', async (importOriginal) => ({
 }))
 
 import McpTokensView from '../McpTokensView.vue'
-import McpTokenCreateView from '../McpTokenCreateView.vue'
+import McpTokenCreateDialog from '../McpTokenCreateDialog.vue'
 
 const activeToken = {
   id: 1,
@@ -48,10 +48,18 @@ const revokedToken = {
   status: 'revoked'
 }
 
+// Dialogs teleport to <body>; read the newest copy.
+const last = (selector) => [...document.body.querySelectorAll(selector)].at(-1)
+const typeName = (value) => {
+  const input = last('[data-testid="token-name-input"]')
+  input.value = value
+  input.dispatchEvent(new Event('input'))
+}
+
 const mountView = async (View = McpTokensView, props = {}) => {
   const wrapper = mount(View, {
     props,
-    global: { plugins: [ElementPlus], stubs: { RouterLink: RouterLinkStub } },
+    global: { plugins: [ElementPlus] },
     attachTo: document.body
   })
   await flushPromises()
@@ -92,49 +100,56 @@ describe('MCP token pages', () => {
     wrapper.unmount()
   })
 
-  it('links from the token list to the dedicated creation page', async () => {
+  it('opens the creation dialog from the token list and reloads the list after creating', async () => {
+    apiMocks.createMcpToken.mockResolvedValueOnce({ item: activeToken, token: 'dak_new_test_token' })
     const wrapper = await mountView()
-    const link = wrapper.getComponent(RouterLinkStub)
-    expect(link.text()).toBe('新建令牌')
-    expect(link.props('to')).toEqual({ name: 'McpTokenCreate' })
+    const dialog = wrapper.getComponent(McpTokenCreateDialog)
+    expect(dialog.props('modelValue')).toBe(false)
+
+    await wrapper.get('[data-testid="open-create-token"]').trigger('click')
+    expect(dialog.props('modelValue')).toBe(true)
+
+    await flushPromises()
+    typeName('Client')
+    last('[data-testid="submit-create-token"]').click()
+    await flushPromises()
+
+    expect(apiMocks.createMcpToken).toHaveBeenCalledWith({ name: 'Client' })
+    expect(apiMocks.listMcpTokens).toHaveBeenCalledTimes(2)
+    expect(last('[data-testid="created-token-value"]').value).toBe('dak_new_test_token')
     wrapper.unmount()
   })
 
-  it('creates a token with no expiry and shows it on the creation page', async () => {
-    const createdItem = {
-      id: 3,
-      name: '新客户端',
-      token_prefix: 'dak_new123',
-      created_at: '2026-11-22T08:00:00Z',
-      last_used_at: null,
-      revoked_at: null,
-      status: 'active'
-    }
+  it('creates a token with no expiry and shows it once in the dialog', async () => {
     apiMocks.createMcpToken.mockResolvedValueOnce({
-      item: createdItem,
+      item: { ...activeToken, id: 3, name: '新客户端' },
       token: 'dak_new123_full_secret_token'
     })
 
-    const wrapper = await mountView(McpTokenCreateView)
-    expect(wrapper.get('h1').text()).toBe('新建访问令牌')
+    const wrapper = await mountView(McpTokenCreateDialog, { modelValue: true })
+    const body = document.body
+    await flushPromises()
+    expect(body.textContent).toContain('新建访问令牌')
 
-    await wrapper.get('form').trigger('submit')
+    last('[data-testid="submit-create-token"]').click()
+    await flushPromises()
     expect(apiMocks.createMcpToken).not.toHaveBeenCalled()
 
-    await wrapper.get('[data-testid="token-name-input"]').setValue('  新客户端  ')
-    expect(wrapper.find('[data-testid="token-expiry-select"]').exists()).toBe(false)
-    await wrapper.get('form').trigger('submit')
+    typeName('  新客户端  ')
+    expect(last('[data-testid="token-expiry-select"]')).toBeUndefined()
+    last('[data-testid="submit-create-token"]').click()
     await flushPromises()
 
-    expect(apiMocks.createMcpToken).toHaveBeenCalledWith({
-      name: '新客户端'
+    expect(apiMocks.createMcpToken).toHaveBeenCalledWith({ name: '新客户端' })
+    expect(wrapper.emitted('created')[0][0]).toEqual({
+      item: { ...activeToken, id: 3, name: '新客户端' },
+      token: 'dak_new123_full_secret_token'
     })
+    expect(last('[data-testid="created-token-value"]').value).toBe('dak_new123_full_secret_token')
+    expect(body.textContent).toContain('令牌已创建')
+    expect(body.textContent).toContain('无法再次查看')
 
-    expect(wrapper.get('[data-testid="created-token-value"]').element.value).toBe('dak_new123_full_secret_token')
-    expect(wrapper.get('h1').text()).toBe('令牌已创建')
-    expect(wrapper.text()).toContain('无法再次查看')
-
-    await wrapper.get('[data-testid="copy-created-token"]').trigger('click')
+    last('[data-testid="copy-created-token"]').click()
     await flushPromises()
     expect(copyTextMock).toHaveBeenCalledWith('dak_new123_full_secret_token')
     expect(messageMocks.success).toHaveBeenCalledWith('已复制令牌')
@@ -147,13 +162,14 @@ describe('MCP token pages', () => {
     apiMocks.getAgentProfile.mockResolvedValue({ name: 'Sales', remote_mcp_path: path })
     apiMocks.createMcpToken.mockResolvedValueOnce({ item: activeToken, token: 'dak_new_test_token' })
 
-    const wrapper = await mountView(McpTokenCreateView, { configAgentId: 'agent_sales' })
-    await wrapper.get('[data-testid="token-name-input"]').setValue('Client')
-    await wrapper.get('form').trigger('submit')
+    const wrapper = await mountView(McpTokenCreateDialog, { modelValue: true, configAgentId: 'agent_sales' })
+    typeName('Client')
+    last('[data-testid="submit-create-token"]').click()
     await flushPromises()
 
-    const copyButton = wrapper.findAll('button').find((button) => button.text() === '复制 MCP 配置')
-    await copyButton.trigger('click')
+    const copyButton = [...document.body.querySelectorAll('button')].find((button) => button.textContent.trim() === '复制 MCP 配置')
+    copyButton.click()
+    await flushPromises()
     expect(apiMocks.createMcpToken).toHaveBeenCalledWith({ name: 'Client' })
     expect(JSON.parse(copyTextMock.mock.lastCall[0])).toEqual({
       mcpServers: {

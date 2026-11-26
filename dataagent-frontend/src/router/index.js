@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { normalizeAgentId, withAgentContext } from './agentContext'
+import { withAgentContext } from './agentContext'
 
 // Legacy `?tab=` values mapped onto the canonical, user-facing page paths.
 const LEGACY_TAB_TO_PATH = {
@@ -159,13 +159,6 @@ export const routes = [
         name: 'McpTokens',
         component: () => import('@/views/settings/McpTokensView.vue'),
         meta: { tab: 'mcp-tokens', title: '访问令牌' }
-      },
-      {
-        path: 'mcp-tokens/new',
-        name: 'McpTokenCreate',
-        component: () => import('@/views/settings/McpTokenCreateView.vue'),
-        props: (route) => ({ configAgentId: normalizeAgentId(route.query.agent_id) }),
-        meta: { tab: 'mcp-tokens', title: '新建访问令牌' }
       },
       {
         path: 'profile',

@@ -31,14 +31,7 @@
               title="刷新令牌"
               @click="refreshTokens"
             />
-            <RouterLink
-              v-if="!tokens.length"
-              class="chat-mcp-token-link"
-              :to="{ name: 'McpTokenCreate', query: { agent_id: agentId } }"
-              target="_blank"
-              rel="noopener"
-              title="在新标签页创建令牌"
-            >新增令牌</RouterLink>
+            <el-button link type="primary" class="chat-mcp-token-link" @click="createOpen = true">新增令牌</el-button>
           </div>
           <template v-if="selectedToken">
             <el-input
@@ -68,6 +61,7 @@
         </el-form-item>
       </template>
     </el-form>
+    <McpTokenCreateDialog v-model="createOpen" :config-agent-id="agentId" @created="onTokenCreated" />
     <template #footer>
       <el-button :disabled="!canExport" @click="downloadConfig">下载 JSON</el-button>
       <el-button type="primary" :disabled="!canExport" @click="copyConfig">复制配置</el-button>
@@ -83,6 +77,7 @@ import { dataagentApi } from '@/api/dataagent'
 import { copyText } from '@/utils/clipboard'
 import { stringifyMcpClientConfig } from '@/utils/mcpClientConfig'
 import { downloadTextFile } from '@/utils/tableExport'
+import McpTokenCreateDialog from '@/views/settings/McpTokenCreateDialog.vue'
 
 const props = defineProps({ agentId: { type: String, required: true } })
 const open = defineModel({ type: Boolean, required: true })
@@ -94,6 +89,7 @@ const tokens = ref([])
 const refreshingTokens = ref(false)
 const tokenId = ref()
 const tokenInput = ref('')
+const createOpen = ref(false)
 
 const selectedToken = computed(() => tokens.value.find(({ id }) => id === tokenId.value))
 const validToken = computed(() => {
@@ -144,6 +140,19 @@ async function refreshTokens() {
     if (!error?.__odwNotified) ElMessage.error('刷新令牌失败，请重试')
   } finally {
     refreshingTokens.value = false
+  }
+}
+
+// A token created here is selected and filled in, so the config is ready to copy.
+async function onTokenCreated({ item, token }) {
+  try {
+    await loadTokens()
+  } catch {
+    return
+  }
+  if (tokens.value.some(({ id }) => id === item?.id)) {
+    tokenId.value = item.id
+    tokenInput.value = token
   }
 }
 
