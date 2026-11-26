@@ -88,7 +88,7 @@ scripts/load-package-and-start.sh --package .   # 加载镜像；deploy/.env 不
 旧的 `agent_interactive_*`／`agent_background_*` 配置名已删除：写在 `DATAAGENT_SETTINGS` 中会启动失败，写成
 环境变量会被忽略，升级时改成上表名称。Pi 无活动超时 `dataagent_run_idle_timeout_seconds` 为 300 秒。
 SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。反向代理的读写超时必须大于总超时（1800 秒）。
-`deploy/docker-compose.yml` 将宿主机 `deploy/docker/nginx/default.conf` 挂载到前端容器 `/etc/nginx/conf.d/default.conf:ro`（读写超时默认 1860 秒），方便现场直接按需调整反向代理路由、流式超时、域名或证书，修改后执行 `scripts/restart.sh` 即可生效，无需重新构建前端镜像。
+`deploy/docker-compose.yml` 将宿主机 `deploy/docker/nginx/default.conf` 挂载到前端容器 `/etc/nginx/conf.d/default.conf:ro`（读写超时默认 1860 秒），方便现场直接按需调整反向代理路由、流式超时、域名或证书，修改后执行 `scripts/restart.sh` 即可生效，无需重新构建前端镜像。这个文件是现场配置：仓库和离线包只带 `default.conf.example`，`scripts/start.sh` 首次启动时复制一份，之后把新包同步到部署目录也不会覆盖（与 `.env` 相同）；升级说明提到模板有变化时，对照 `.example` 手工合并。
 
 ## 运行时目录与沙箱
 
@@ -185,10 +185,9 @@ MCP 会话属于令牌所有者，可在网页上看到并续聊。运行采用�
 | --- | --- |
 | `/dataagent/widget/` | `http://<DataAgent 主机>:8901/widget/` |
 | `/api/v1/dataagent/` | `http://<DataAgent 主机>:8900/api/v1/dataagent/` |
-| `/api/v1/nl2sql-admin/` | `http://<DataAgent 主机>:8900/api/v1/nl2sql-admin/` |
 | `/api/v1/nl2sql/` | `http://<DataAgent 主机>:8900/api/v1/nl2sql/`（关闭缓冲，读写超时大于 1800 秒） |
 
-上传类接口需要 `client_max_body_size 25m`。OpenDataWorks 的 `deploy/docker/nginx/frontend.conf` 已带注释示例。
+上传类接口需要 `client_max_body_size 25m`。OpenDataWorks 的 `deploy/docker/nginx/frontend.conf.example` 已带注释示例。
 
 ## 从 OpenDataWorks 内置部署迁移
 

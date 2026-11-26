@@ -10,6 +10,8 @@ topic_*/
 *.log
 .DS_Store
 deploy/docker/dataagent/dataagent_config_docker.py
+# 现场 nginx 配置：首次启动由 default.conf.example 生成，升级不覆盖
+deploy/docker/nginx/default.conf
 deploy/logs/
 deploy/backups/
 deploy/docker-images/

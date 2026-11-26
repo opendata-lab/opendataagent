@@ -127,6 +127,7 @@ log "Copying deploy/ content to package deploy/"
 tar -C "$REPO_ROOT/deploy" \
     --exclude='./.env' \
     --exclude='.env' \
+    --exclude='./docker/nginx/default.conf' \
     --exclude='docker-images/*.tar' \
     --exclude='logs' \
     --exclude='backups' \
