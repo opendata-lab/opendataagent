@@ -256,6 +256,12 @@
 
 - **运行时与沙箱方案评审补齐（文档修订，2026-11-03）**：对照[静态评审报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)的 R1–R8 共 8 项问题，已在[设计文档](design/2026-11-03-agent-runtime-sandbox-architecture-design.md)（3.2–3.6、4.1–4.2 节）与[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)（Step 0–Step 5）中逐项补齐机制、涉及文件与验收标准；代码实现与凭据无关冒烟已完成，真实 provider 验收单列上方。
 
+### 全栈时区统一（新）
+
+- **现状**（2026-11-26 核实）：沙箱跑在 UTC、系统提示词无当前日期，北京时间 0–8 点模型日期错一天；数据库时间有三种写法（MySQL 时钟、Python UTC、后端容器本地时区），同一行可差 8 小时（`da_agent_sdk_record`、`da_user`、定时消息等）；接口时间格式不统一，前端按浏览器时区解析。生产 MySQL 时区待确认。
+- **要做**：存储统一 UTC，接口统一带 `Z`，前端按业务时区（`DATAAGENT_TIMEZONE`，默认 Asia/Shanghai）显示；沙箱 `TZ` 与提示词日期；历史数据迁移。分两个 PR。下方“Widget 历史时间显示为负数”随 PR 2 解决。
+- **来源**：用户 2026-11-26；Neon 排查（`~/.agents/handoffs/2026-11-26-neon-timezone-audit/`）。[设计](design/2026-11-26-timezone-unification-design.md) · [计划](plans/2026-11-26-timezone-unification-plan.md)
+
 ### Widget 历史时间显示为负数
 
 - **现状**（2026-11-20，单助手 MCP 端到端测试截图）：平台登录模式的 Widget 历史列表把刚刚的会话显示为「-1天前」，网页 Chat 同一会话显示正常。疑似把无时区的数据库时间按浏览器本地时区解析。
