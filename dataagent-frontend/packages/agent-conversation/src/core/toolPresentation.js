@@ -19,15 +19,6 @@ const firstFilled = (...values) => {
   return ''
 }
 
-const hasWord = (text, word) => {
-  const normalized = String(text || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-  if (!normalized) return false
-  return normalized.split(/\s+/).includes(String(word || '').toLowerCase())
-}
-
 export const parseToolInput = (value) => {
   if (isPlainObject(value)) return value
   if (typeof value === 'string') {
@@ -44,6 +35,51 @@ const buildSearchDetail = ({ pattern, directory, path, description }) => {
     return `${pattern} · ${directory || path}`
   }
   return firstFilled(pattern, directory, path, description)
+}
+
+// The runtime's built-in tools (Pi: bash/read/write/edit/ls/grep/find; older
+// SDK records: Glob/Skill), matched by exact name, case-insensitively.
+const BUILTIN_KINDS = {
+  bash: 'shell',
+  read: 'read',
+  write: 'edit',
+  edit: 'edit',
+  ls: 'list',
+  grep: 'search',
+  find: 'search',
+  glob: 'search',
+  skill: 'skill'
+}
+
+// Runtime tools that are not file traces but still deserve their own label and icon.
+const SPECIAL_TOOLS = {
+  askuserquestion: { label: '向用户提问', icon: 'question' },
+  exitplanmode: { label: '提交计划', icon: 'plan' }
+}
+
+// Icons only (never labels) for other tools, from the action words in their name.
+const ICON_WORDS = [
+  ['sql', ['query', 'sql']],
+  ['search', ['search', 'find', 'lookup']],
+  ['list', ['list']],
+  ['download', ['export', 'download']],
+  ['read', ['get', 'describe', 'ddl', 'schema', 'metadata', 'read']],
+  ['chart', ['chart', 'plot', 'image']],
+  ['edit', ['write', 'update', 'create', 'delete']]
+]
+
+const nameWords = (name) => String(name || '')
+  .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  .toLowerCase()
+  .split(/[^a-z0-9]+/)
+  .filter(Boolean)
+
+export const iconKindFromName = (name) => {
+  const words = new Set(nameWords(name))
+  for (const [icon, keys] of ICON_WORDS) {
+    if (keys.some((key) => words.has(key))) return icon
+  }
+  return 'tool'
 }
 
 const SKILL_LAUNCH_OUTPUT_RE = /^Launching skill(?::\s*(.+))?$/i
@@ -131,58 +167,19 @@ export const describeToolAction = (tool = {}) => {
     input.note
   )
 
-  const isMcp = lowerName.startsWith('mcp__')
-
-  let kind = 'tool'
-  if (isMcp) {
-    // Keep MCP tools generic; never let substrings like "search"/"read" in the
-    // qualified name (mcp__server__tool) misclassify them as file traces.
-    kind = 'tool'
-  } else if (lowerName.includes('skill') || skillName) {
-    kind = 'skill'
-  } else if (
-    lowerName.includes('bash')
-    || lowerName.includes('shell')
-    || lowerName.includes('terminal')
-    || lowerName.includes('run_command')
-    || command
-  ) {
-    kind = 'shell'
-  } else if (
-    lowerName.includes('replace')
-    || lowerName.includes('write')
-    || lowerName.includes('edit')
-    || lowerName.includes('apply_patch')
-  ) {
-    kind = 'edit'
-  } else if (
-    lowerName.includes('grep')
-    || hasWord(lowerName, 'glob')
-    || lowerName.includes('search')
-    || lowerName.includes('find_by_name')
-    || lowerName.includes('find_file')
-    || (pattern && (directory || path))
-  ) {
-    kind = 'search'
-  } else if (
-    hasWord(lowerName, 'ls')
-    || lowerName.includes('list_dir')
-    || lowerName.includes('list_directory')
-    || lowerName.includes('list_files')
-    || lowerName.includes('listdir')
-    || directory
-  ) {
-    kind = 'list'
-  } else if (
-    hasWord(lowerName, 'read')
-    || lowerName.includes('read_file')
-    || lowerName.includes('readfile')
-    || lowerName.includes('view')
-    || lowerName.includes('cat')
-    || path
-  ) {
-    kind = 'read'
+  // Text follows the tool's real identity: only the runtime's own tools get a
+  // fixed Chinese label; every other tool (MCP, custom) is shown by its name.
+  // MCP tools arrive without an mcp__ prefix, so names are never guessed from
+  // substrings like "search" or "read".
+  let kind = BUILTIN_KINDS[lowerName] || 'tool'
+  if (kind === 'tool' && (lowerName === '' || lowerName === 'tool')) {
+    // Older runtimes recorded some calls under a generic "Tool" name; only for
+    // that name does the input say what the call was.
+    if (skillName) kind = 'skill'
+    else if (command) kind = 'shell'
   }
+  const special = SPECIAL_TOOLS[lowerName]
+  const iconKind = kind !== 'tool' ? kind : (special?.icon || iconKindFromName(name))
 
   // Render MCP tool names (mcp__<server>__<tool>) as "<server> / <tool>"
   // instead of the raw double-underscore identifier.
@@ -196,7 +193,7 @@ export const describeToolAction = (tool = {}) => {
     search: '搜索文件',
     edit: '修改文件',
     skill: '执行技能',
-    tool: displayName ? `执行工具：${displayName}` : '执行工具'
+    tool: special?.label || (displayName ? `执行工具：${displayName}` : '执行工具')
   }
 
   let detail = ''
@@ -218,6 +215,7 @@ export const describeToolAction = (tool = {}) => {
 
   return {
     kind,
+    iconKind,
     label: labelMap[kind],
     detail,
     preview: detail,
