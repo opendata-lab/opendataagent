@@ -108,3 +108,25 @@ def test_explicit_failed_operation_is_a_durable_reusable_result(task):
     cached = store.claim_confirmed_operation(topic_id=topic_id, task_id=task_id, request_id='request-1')
     assert cached['operation_status'] == 'done'
     assert cached['operation_result'] == result
+
+
+def test_deleting_a_topic_removes_its_event_records():
+    store = TopicTaskStore()
+    topic_id = store.create_topic(title="delete-records-test")["topic_id"]
+    task_id = store.create_task(topic_id=topic_id,prompt="test",provider_id="local-test",model="stub",
+        debug=False,timeout_seconds=1800,sql_read_timeout_seconds=300,sql_write_timeout_seconds=60)["task_id"]
+    store.mark_task_running(task_id)
+    commit_card(store,topic_id,task_id)
+
+    def count():
+        conn = store._connect(database=store._schema_name())
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS n FROM da_agent_sdk_record WHERE topic_id = %s",(topic_id,))
+                return cur.fetchone()["n"]
+        finally:
+            conn.close()
+
+    assert count() > 0
+    store.delete_topic(topic_id)
+    assert count() == 0

@@ -1002,6 +1002,10 @@ class TopicTaskStore(SessionCheckpointStore):
         conn = self._connect(database=self._schema_name())
         try:
             with conn.cursor() as cur:
+                # Messages, tasks, queues and checkpoints cascade through their
+                # foreign keys; the event log has none, so it goes explicitly.
+                # Widget behaviour events are kept on purpose for analysis.
+                cur.execute("DELETE FROM da_agent_sdk_record WHERE topic_id = %s", (topic_id,))
                 cur.execute("DELETE FROM da_agent_topic WHERE topic_id = %s", (topic_id,))
             conn.commit()
         finally:
