@@ -248,7 +248,6 @@ class TaskCoordinator:
                         workspace_before=workspace_before,
                         provider_id=str(task.get("provider_id") or ""),
                         model=str(task.get("model") or ""),
-                        database_hint=str(task.get("database_hint") or "") or None,
                         debug=bool(task.get("debug")),
                         timeout_seconds=int(task.get("timeout_seconds") or 0),
                         sql_read_timeout_seconds=int(task.get("sql_read_timeout_seconds") or 0),

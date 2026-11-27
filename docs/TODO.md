@@ -10,6 +10,12 @@
 
 ## DataAgent 运行时与插件
 
+### 调用方仍在传已废弃的 `execution_mode`
+
+- **现状**（2026-11-27 核实）：DataAgent 早已忽略提交接口的 `execution_mode`，但 OntoFoundry（`apps/api/src/ontofoundry_api/services/dataagent.py` 的 `deliver_message`）与 OpenDataWorks（`frontend/src/views/datastudio/composables/useMetadataGeneration.js`）仍在发送。
+- **要做**：在两个仓库删掉该字段及相关传参；DataAgent 侧无需改动。
+- **来源**：移除 `database` 提示参数时顺带核对调用方，2026-11-27。
+
 ### 撤销本会话的工具授权入口
 
 - **现状**（2026-11-26）：写操作审批已支持“本会话内允许此工具”（存入 `da_agent_topic.approved_tools_json`，仅限非破坏性 MCP 工具，新会话自动重置），但会话菜单尚无手动撤销已授权工具的入口。

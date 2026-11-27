@@ -57,7 +57,7 @@ def _task(store, *, question, answer, status="finished", feedback="", agent=AGEN
                                is_agent_preview=preview, context=context)
     store.made.append(topic["topic_id"])
     task = store.create_task(topic_id=topic["topic_id"], prompt=question, provider_id="local-test", model="stub",
-        database_hint=None, debug=False, timeout_seconds=1800, sql_read_timeout_seconds=300, sql_write_timeout_seconds=60)
+        debug=False, timeout_seconds=1800, sql_read_timeout_seconds=300, sql_write_timeout_seconds=60)
     store.append_user_message(topic_id=topic["topic_id"], task_id=task["task_id"], content=question)
     message = store.ensure_assistant_message(topic_id=topic["topic_id"], task_id=task["task_id"], status=status)
     store.update_assistant_message(topic_id=topic["topic_id"], task_id=task["task_id"], status=status, content=answer)
@@ -132,7 +132,7 @@ def test_daily_digest_starts_once_per_agent_and_collects_candidates(store, monke
     async def fake_submit(**kwargs):
         submitted.append(kwargs)
         task = store.create_task(topic_id=kwargs["topic_id"], prompt=kwargs["message_content"], provider_id="local-test",
-            model="stub", database_hint=None, debug=False, timeout_seconds=1800, sql_read_timeout_seconds=300,
+            model="stub", debug=False, timeout_seconds=1800, sql_read_timeout_seconds=300,
             sql_write_timeout_seconds=60)
         store.append_user_message(topic_id=kwargs["topic_id"], task_id=task["task_id"], content=kwargs["message_content"])
         return {}

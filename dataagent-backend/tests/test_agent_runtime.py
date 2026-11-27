@@ -50,7 +50,6 @@ def test_system_prompt_template_is_markdown_file():
 
 def test_build_system_prompt_reads_markdown_and_appends_runtime_context():
     prompt = agent_runtime._build_system_prompt(
-        "example",
         {"enabled_folders": ["example-business-knowledge", "example-platform-tools"]},
     )
 
@@ -61,7 +60,7 @@ def test_build_system_prompt_reads_markdown_and_appends_runtime_context():
     assert "# 交付" in prompt
     assert "# 运行时上下文" in prompt
     assert "当前已启用：example-business-knowledge、example-platform-tools" in prompt
-    assert "用户显式提供的 database hint: example" in prompt
+    assert "database hint" not in prompt
     assert "dataagent-nl2sql" not in prompt
     assert "通用 SQL skill" not in prompt
     assert "run_sql.py" not in prompt
@@ -73,7 +72,7 @@ def test_build_system_prompt_reads_markdown_and_appends_runtime_context():
     assert "workflow_publish_record" not in prompt
 
 def test_build_system_prompt_includes_methodology_and_non_negotiables():
-    prompt = agent_runtime._build_system_prompt(None, {"enabled_folders": ["example-business-knowledge"]})
+    prompt = agent_runtime._build_system_prompt({"enabled_folders": ["example-business-knowledge"]})
 
     required_fragments = [
         "企业级智能问数 Data Agent",
@@ -90,7 +89,6 @@ def test_build_system_prompt_includes_methodology_and_non_negotiables():
 
 def test_build_system_prompt_omits_generic_model_known_methodology():
     prompt = agent_runtime._build_system_prompt(
-        None,
         {"enabled_folders": ["example-business-knowledge", "example-platform-tools"]},
     )
 
@@ -146,16 +144,16 @@ def test_build_system_prompt_includes_business_date_and_timezone_without_clock_t
     monkeypatch.setattr(agent_runtime, "datetime", FixedDateTime)
 
     monkeypatch.setattr(agent_runtime, "get_settings", lambda: SimpleNamespace(dataagent_timezone="Asia/Shanghai"))
-    prompt_shanghai = agent_runtime._build_system_prompt(None, {"enabled_folders": ["example"]})
+    prompt_shanghai = agent_runtime._build_system_prompt({"enabled_folders": ["example"]})
     assert "- 当前日期：2026-11-27（时区：Asia/Shanghai）" in prompt_shanghai
     assert "01:30" not in prompt_shanghai
 
     monkeypatch.setattr(agent_runtime, "get_settings", lambda: SimpleNamespace(dataagent_timezone="America/Los_Angeles"))
-    prompt_la = agent_runtime._build_system_prompt(None, {"enabled_folders": ["example"]})
+    prompt_la = agent_runtime._build_system_prompt({"enabled_folders": ["example"]})
     assert "- 当前日期：2026-11-26（时区：America/Los_Angeles）" in prompt_la
     assert "09:30" not in prompt_la
 
 
 def test_agent_role_prompt_follows_runtime_context_under_role_heading():
-    prompt = agent_runtime._build_system_prompt("db1", {"enabled_folders": []}, {"system_prompt": "你是财务助手"})
-    assert prompt.index("# 运行时上下文") < prompt.index("用户显式提供的 database hint: db1") < prompt.index("# 角色设定\n你是财务助手")
+    prompt = agent_runtime._build_system_prompt({"enabled_folders": []}, {"system_prompt": "你是财务助手"})
+    assert prompt.index("# 运行时上下文") < prompt.index("# 角色设定\n你是财务助手")

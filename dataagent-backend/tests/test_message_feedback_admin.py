@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(os.environ.get("DATAAGENT_TEST_MYSQL") != "1", r
 def _turn(store: TopicTaskStore, *, agent_id: str, question: str, context=None) -> tuple[str, str]:
     topic = store.create_topic(title=question, agent_snapshot={"agent_id": agent_id, "name": agent_id}, context=context)
     task = store.create_task(topic_id=topic["topic_id"], prompt=question, provider_id="local-test", model="stub",
-        database_hint=None, debug=False, timeout_seconds=1800, sql_read_timeout_seconds=300, sql_write_timeout_seconds=60)
+        debug=False, timeout_seconds=1800, sql_read_timeout_seconds=300, sql_write_timeout_seconds=60)
     store.append_user_message(topic_id=topic["topic_id"], task_id=task["task_id"], content=question)
     answer = store.ensure_assistant_message(topic_id=topic["topic_id"], task_id=task["task_id"], status="finished")
     return topic["topic_id"], answer["message_id"]

@@ -32,7 +32,6 @@ def _dedupe_strings(values: Any) -> list[str]:
     return result
 
 def _build_system_prompt(
-    database_hint: str | None,
     skill_runtime: dict[str, Any] | None = None,
     agent_snapshot: dict[str, Any] | None = None,
 ) -> str:
@@ -49,8 +48,6 @@ def _build_system_prompt(
         "- 目录：工作区 `/mnt/workspace`（可写，交付文件放 `output/`）；临时文件 `/tmp`；"
         "已保存结果 `/mnt/results` 与技能 `/opt/skills` 只读。",
     ]
-    if database_hint:
-        lines.append(f"- 用户显式提供的 database hint: {database_hint}")
     custom_prompt = str((agent_snapshot or {}).get("system_prompt") or "").strip()
     if custom_prompt:
         lines.extend(["", "# 角色设定", custom_prompt])

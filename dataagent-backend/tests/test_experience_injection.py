@@ -107,7 +107,7 @@ def test_executor_uses_existing_skill_mount_without_registering_entry_as_skill(m
         return SimpleNamespace(terminal_status="success", answer="ok", error_message="", usage={}, error_code="")
     monkeypatch.setattr(executor, "execute_pi_run", run)
     params = executor.TaskExecutionInput(task_id="task", topic_id="topic", question="q", history=[],
-        provider_id="p", model="m", database_hint=None, agent_snapshot={"agent_id": agent_id})
+        provider_id="p", model="m", agent_snapshot={"agent_id": agent_id})
     if fail:
         with pytest.raises(RuntimeError, match="model unavailable"):
             asyncio.run(executor._execute_task_stream(params))

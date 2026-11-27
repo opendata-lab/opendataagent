@@ -381,7 +381,6 @@ async def api_deliver_message(payload: DeliverMessageRequest, request: Request):
             message_content=content,
             provider_id=payload.provider_id,
             model=payload.model,
-            database_hint=payload.database,
             debug=bool(payload.debug),
             agent_id=payload.agent_id,
         )
@@ -404,7 +403,6 @@ async def api_create_task(payload: CreateTaskRequest, request: Request):
             message_content=payload.message_content,
             provider_id=payload.provider_id,
             model=payload.model,
-            database_hint=payload.database,
             debug=bool(payload.debug),
             agent_id=payload.agent_id,
         )
