@@ -26,15 +26,13 @@
 
 ## 2026-11-26 修订实施（草案，待评审）
 
-设计见 [修订](../design/2026-11-19-experience-library-design.md#2026-11-26-修订只保留知识全部按需读取运行前检索草案待评审)。单个 PR：
+设计见 [修订](../design/2026-11-19-experience-library-design.md#2026-11-26-修订只保留知识目录加按需读取草案待评审)。单个 PR：
 
-- Alembic：删除 `kind`、`inject_mode`（memory 行原样保留为知识）；`content` 改 MEDIUMTEXT（保留字符集、排序规则与可空性）；用 `mysql_prefix="FULLTEXT"`、`mysql_with_parser="ngram"` 建索引（首次建 FULLTEXT 会重建表，表小可接受）。downgrade：先查 `OCTET_LENGTH(content) > 65535` 的行，有则拒绝降级并提示；`kind` 按来源恢复（有来源对话的为 memory，其余 knowledge），`inject_mode` 恢复为 on_demand（原值不保留，迁移说明写明）。MySQL DDL 会隐式提交，迁移拆成每步可单独重跑。发布：迁移与新后端同一次部署，不支持旧后端跑在新表上。
-- 后端 `core/experience.py`：正文上限 20000；删除 kind / inject_mode 相关校验与分支、`MAX_INJECTED_CHARS`；pending 状态只允许每日总结产生的条目；新增 `search_knowledge`（MATCH…AGAINST + 正分 + 条数与字数上限）；`build_injection` 生成单目录文件（先 mkdir，沿用 sha256 文件名，路径函数共用）；`collect_candidates` 不再传 kind / inject_mode；`injection_preview` 接收可选 `question`；`INJECTION_FOLDER` 改为 `_knowledge`。
-- `models/schemas.py`：删除请求与响应模型中的 kind、inject_mode；body 上限 20000（PATCH 只改状态时不校验正文）；`_row_to_item` 同步。
-- `api/admin_routes.py`：列表去掉 kind 筛选；预览接口加 `question` 参数。
-- `core/task_executor.py` / `core/pi_runtime.py`：在执行器清空历史之前，从 `params.history` 取最近 1–2 条用户消息与本轮问题拼成检索文本（截断长度）；结果放入 `PiRunContext.retrieved_context` 并经 `to_init_payload()` 下发；同一任务的卡片恢复不检索；挂载目录每段照常重建；注入准备用 `asyncio.to_thread`。
-- Pi：`protocol/frames.ts` 加 `retrieved_context`；`kernel/sdk-session.ts` 用 `DefaultResourceLoader({ extensionFactories, noExtensions: true, settingsManager: 内存设置 })` 加载内联扩展并 `reload()`，自定义加载器 `getExtensions()` 返回其结果；扩展在 `before_agent_start` 返回 message；`npm run build`。
-- 前端：`KnowledgeMemoryView.vue`（单一知识列表：来源与状态筛选、待审核入口、大编辑器 + 上传；文案“知识与记忆”→“知识”）、`router/index.js`（删除 `/memories` 路由与菜单项，待审核数显示在“知识”菜单上）、`ExperienceDrawer.vue`（加宽、去 kind）、`ExperienceFields.vue`、`entryForm.js`、`AgentExperienceCards.vue`（去额度、预览可输入问题）、`api/dataagent.js` `getExperienceInjectionPreview`、`IntelligentQueryView.vue` 中的相关文案。
-- 测试：长度校验（含 PATCH 只改状态）；管理员添加直接生效、每日总结为待审核；检索范围不含其他助手、停用与待审核不命中；ngram 用例：库里只有 1 条时精确命中、所有条目都含查询词、`GMV`、`dwd_order` 与 `dwd_customer`、单字查询；短条目给全文、长文档给路径、字数与条数上限；追问用历史命中；卡片恢复不重复注入但挂载重建；Pi 扩展注入消息进入 checkpoint、以 user 角色发出且系统提示词不变；预览与运行在功能关闭、每日总结助手时一致；迁移 up/down（含 memory 行转换、超长行拒绝降级）；前端上传、审核与预览。
-- 本地端到端（schema `dataagent_qa`）：上传几千字知识 + 审核通过几条每日总结知识，提相关问题与追问，确认注入消息、模型 grep/read 知识文件并用于回答、第二轮缓存读取 token 正常。
-- TODO：知识切片与语义检索；运行中再检索（`search_knowledge` 工具）；表名等标识符精确匹配；确认生产 MySQL ≥5.7.6。
+- Alembic：删除 `kind`、`inject_mode`（memory 行原样保留为知识）；`content` 改 MEDIUMTEXT（保留字符集、排序规则与可空性）。downgrade：先查 `OCTET_LENGTH(content) > 65535` 的行，有则拒绝降级并提示；`kind` 按来源恢复（有来源对话的为 memory，其余 knowledge），`inject_mode` 恢复为 on_demand（原值不保留，迁移说明写明）。MySQL DDL 会隐式提交，每步可单独重跑。发布：迁移与新后端同一次部署。
+- 后端 `core/experience.py`：正文上限 20000；删除 kind / inject_mode 校验与分支、always 注入与 `MAX_INJECTED_CHARS`；pending 只允许每日总结产生；`build_injection` 只生成目录（上限 100 条，超出注明数量）与文件；提示词加入“扩展关键词 grep、分段 read”的说明；`collect_candidates` 不再传 kind / inject_mode；`INJECTION_FOLDER` 改为 `_knowledge`；`injection_preview` 增加资格判断结果。
+- `models/schemas.py`：删除请求与响应模型中的 kind、inject_mode；body 上限 20000（PATCH 只改状态时不校验正文）。
+- `api/admin_routes.py`：列表去掉 kind 筛选。
+- 前端：`KnowledgeMemoryView.vue`（单一知识列表：来源与状态筛选、待审核入口、大编辑器 + 上传；文案“知识与记忆”→“知识”）、`router/index.js`（删除 `/memories` 路由与菜单项，待审核数显示在“知识”菜单上）、`ExperienceDrawer.vue`（加宽、去 kind）、`ExperienceFields.vue`、`entryForm.js`、`AgentExperienceCards.vue`（去额度）、`IntelligentQueryView.vue` 中的相关文案。
+- 测试：长度校验（含 PATCH 只改状态）；管理员添加直接生效、每日总结为待审核；目录不含其他助手专属、停用与待审核条目；目录上限与超出提示；文件与目录路径一致；预览与运行在功能关闭、每日总结助手时一致；迁移 up/down（含 memory 行转换、超长行拒绝降级）；前端上传与审核。
+- 本地端到端（schema `dataagent_qa`）：上传几千字知识 + 审核通过几条每日总结知识，用口语化问题提问（不含知识原词），确认模型看目录或扩展关键词 grep 找到知识、分段 read 并用于回答。
+- TODO（`docs/TODO.md`）：运行前检索 + Pi 钩子注入（见设计“后续”）；通用钩子与插件机制；知识切片与语义检索。
