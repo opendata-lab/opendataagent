@@ -112,7 +112,7 @@ dataagent_router = APIRouter(prefix="/api/v1/dataagent")
 def _readable_agent_payload(profile: dict) -> dict:
     visibility = profile.get("visibility") or {}
     path = ""
-    if profile.get("remote_mcp_enabled") and remote_mcp_policy.enabled():
+    if profile.get("remote_mcp_enabled"):
         path = remote_mcp_policy.endpoint("", profile["agent_id"])
     return {**profile, "visibility_mode": str(visibility.get("mode") or "all"), "remote_mcp_path": path}
 

@@ -234,10 +234,8 @@ export class EventNormalizer {
         // Python adapter and the frontend, but nothing emitted it: token usage
         // was simply never recorded for a Pi turn while it was for an SDK one.
         //
-        // The shape is deliberately the Anthropic-style snake_case the frontend
-        // already normalizes (messageUsage.normalizeUsage reads input_tokens /
-        // output_tokens / cache_*), not pi-ai's camelCase Usage. Emitting the
-        // raw shape would keep the display blank.
+        // The frontend expects snake_case fields such as input_tokens,
+        // output_tokens and cache_*.
         const usage = extractUsage(piEvent.message);
         if (usage) {
           events.push(this.sm.createEvent("usage.updated", { turn_id: this.currentTurnId, usage }));

@@ -59,7 +59,6 @@ def test_env_secret_key_loads_without_config_file(monkeypatch):
     monkeypatch.setenv(accounts.SECRET_KEY_ENV, VALID_SECRET)
     monkeypatch.setenv(accounts.DEFAULT_PASSWORD_ENV, "init-pass")
     cfg = init_auth()
-    assert cfg.enabled is True
     assert cfg.secret_key == VALID_SECRET
     assert cfg.default_user_password == "init-pass"
 

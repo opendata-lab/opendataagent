@@ -223,27 +223,6 @@ class SkillAdminStore:
             conn.close()
         return self._normalize_document_row(row, include_content=True) if row else None
 
-    def get_document_by_path(self, relative_path: str) -> dict[str, Any] | None:
-        self._ensure_ready()
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, relative_path, file_name, category, content_type, current_content, current_hash,
-                           current_version_id, version_count, last_change_source, last_change_summary,
-                           created_at, updated_at
-                    FROM da_skill_document
-                    WHERE relative_path = %s
-                    LIMIT 1
-                    """,
-                    (relative_path,),
-                )
-                row = cur.fetchone()
-        finally:
-            conn.close()
-        return self._normalize_document_row(row, include_content=True) if row else None
-
     def rename_document_path(self, old_relative_path: str, new_relative_path: str):
         self._ensure_ready()
         old_path = str(old_relative_path or "").replace("\\", "/").strip("/")

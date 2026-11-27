@@ -372,9 +372,6 @@ export function createNl2SqlApiClient(options = {}) {
     },
     deleteAgent(agentId) {
       return dataagentRequest.delete(`/agents/${encodeURIComponent(agentId)}`)
-    },
-    getCapabilities() {
-      return dataagentRequest.get('/agents/capabilities')
     }
   }
 
@@ -387,10 +384,7 @@ export function createNl2SqlApiClient(options = {}) {
     adminApi,
     authApi,
     agentApi,
-    eventApi,
-    health() {
-      return runtimeRequest.get('/health')
-    }
+    eventApi
   }
 }
 

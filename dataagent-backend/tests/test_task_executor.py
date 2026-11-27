@@ -73,7 +73,6 @@ async def test_executor_forwards_approved_tools_and_builds_permission_card_field
     monkeypatch.setattr(task_executor, "_build_mcp_servers", lambda *a, **kw: {})
     monkeypatch.setattr(task_executor, "execute_pi_run", fake_execute_pi_run)
     monkeypatch.setattr(task_executor, "get_settings", lambda: SimpleNamespace(
-        query_result_limit=100,
         dataagent_timezone="Asia/Shanghai",
         dataagent_experience_injection_enabled=False,
         dataagent_ask_user_question_enabled=True,

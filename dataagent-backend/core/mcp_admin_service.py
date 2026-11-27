@@ -358,27 +358,3 @@ def resolve_runtime_mcp_servers(
         url = str(row.get("url") or "")
         resolved[server_id] = {"type": transport, "url": url, "headers": headers}
     return resolved
-
-
-async def discover_tool_annotations(servers: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Discover each run's tools with the same transport as the Pi runtime."""
-    annotations: dict[str, dict[str, Any]] = {}
-    for name, config in servers.items():
-        process = await asyncio.create_subprocess_exec(
-            *resolve_mcp_probe_command(get_settings()),
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(process.communicate(
-                json.dumps({"name": name, **config}).encode()), MCP_DETECTION_PROCESS_TIMEOUT_SECONDS)
-            result = json.loads(stdout)
-            for tool_name, hints in (result.get("tool_annotations") or {}).items():
-                annotations[f"mcp__{name}__{tool_name}"] = dict(hints or {})
-        except Exception:
-            # Unknown annotations require confirmation; discovery never grants access.
-            logger.warning("MCP annotation discovery failed server=%s", name, exc_info=True)
-        finally:
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
-    return annotations

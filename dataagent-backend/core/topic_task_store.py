@@ -523,21 +523,6 @@ class TopicTaskStore(SessionCheckpointStore):
         row = cur.fetchone() or {}
         return int(row.get("last_message_seq") or 0)
 
-    def _next_task_seq(self, cur, task_id: str) -> int:
-        cur.execute(
-            """
-            UPDATE da_agent_task
-            SET last_event_seq = last_event_seq + 1,
-                heartbeat_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE task_id = %s
-            """,
-            (task_id,),
-        )
-        cur.execute("SELECT last_event_seq FROM da_agent_task WHERE task_id = %s LIMIT 1", (task_id,))
-        row = cur.fetchone() or {}
-        return int(row.get("last_event_seq") or 0)
-
     def record_widget_events(
         self,
         events: list[dict[str, Any]],
@@ -1669,27 +1654,6 @@ class TopicTaskStore(SessionCheckpointStore):
             conn.close()
         return [self._normalize_task_row(row) for row in rows]
 
-    def has_active_child_task(self, parent_task_id: str) -> bool:
-        self._ensure_ready()
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT 1
-                    FROM da_agent_task
-                    WHERE from_task_id = %s
-                      AND task_status IN ('waiting', 'running')
-                      AND finished_at IS NULL
-                    LIMIT 1
-                    """,
-                    (parent_task_id,),
-                )
-                row = cur.fetchone()
-        finally:
-            conn.close()
-        return bool(row)
-
     def record_task_system_prompt(self, task_id: str, content: str) -> str | None:
         """Store the effective system prompt once per content and point the task at it.
 
@@ -1849,12 +1813,6 @@ class TopicTaskStore(SessionCheckpointStore):
         )
         return self.get_task(task_id)
 
-    def get_pending_permission_request_id(self, task_id: str) -> str | None:
-        """Return the request_id of the latest permission_request record for a task
-        that has no corresponding permission_decision yet, or None."""
-        pending = self.get_pending_permission_request(task_id)
-        return str(pending.get("request_id") or "") if pending else None
-
     def get_pending_permission_request(self, task_id: str) -> dict[str, Any] | None:
         """Return the latest permission request that has not been decided yet."""
         self._ensure_ready()
@@ -1894,43 +1852,8 @@ class TopicTaskStore(SessionCheckpointStore):
                 }
         return None
 
-    def append_permission_decision_record(
-        self,
-        *,
-        task_id: str,
-        request_id: str,
-        decision: str,
-        note: str = "",
-        decided_at: str = "",
-    ) -> bool:
-        """Append a durable permission_decision SDK record if the request is still pending."""
-        pending = self.get_pending_permission_request(task_id)
-        if not pending or str(pending.get("request_id") or "") != str(request_id or ""):
-            return False
-        normalized = normalize_permission_decision(decision)
-        self.append_sdk_record(
-            task_id=task_id,
-            topic_id=str(pending.get("topic_id") or ""),
-            turn_index=int(pending.get("turn_index") or 0),
-            record_type="permission_decision",
-            event_type=None,
-            data={
-                "request_id": str(request_id),
-                "decision": normalized,
-                "note": str(note or ""),
-                "decided_at": decided_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            },
-        )
-        return True
-
     def get_current_permission_interaction(self, *, task_id: str, request_id: str) -> dict[str, Any] | None:
         return self._get_interaction(task_id=task_id, request_id=request_id, kind="permission")
-
-    def get_resolved_permission_decision(self, *, task_id: str, request_id: str) -> str | None:
-        interaction = self.get_current_permission_interaction(task_id=task_id, request_id=request_id)
-        if not interaction or str(interaction.get("status") or "") != "resolved":
-            return None
-        return str(interaction.get("decision") or "") or None
 
     def append_permission_decision_if_waiting(
         self,
@@ -1959,12 +1882,6 @@ class TopicTaskStore(SessionCheckpointStore):
             waiting_status="waiting_permission",
             payload=payload,
         )
-
-    def get_pending_question_request_id(self, task_id: str) -> str | None:
-        """Return the request_id of the latest ``question_request`` record for a
-        task that has no corresponding ``question_answer`` yet, or None."""
-        pending = self.get_pending_question_request(task_id)
-        return str(pending.get("request_id") or "") if pending else None
 
     def get_pending_question_request(self, task_id: str) -> dict[str, Any] | None:
         """Return the latest ask-user question that has not been answered yet."""
@@ -2005,41 +1922,8 @@ class TopicTaskStore(SessionCheckpointStore):
                 }
         return None
 
-    def append_question_answer_record(
-        self,
-        *,
-        task_id: str,
-        request_id: str,
-        answers: Any,
-        answered_at: str = "",
-    ) -> bool:
-        """Append a durable ``question_answer`` SDK record if the request is still pending."""
-        pending = self.get_pending_question_request(task_id)
-        if not pending or str(pending.get("request_id") or "") != str(request_id or ""):
-            return False
-        self.append_sdk_record(
-            task_id=task_id,
-            topic_id=str(pending.get("topic_id") or ""),
-            turn_index=int(pending.get("turn_index") or 0),
-            record_type="question_answer",
-            event_type=None,
-            data={
-                "request_id": str(request_id),
-                "answers": answers if isinstance(answers, list) else [],
-                "answered_at": answered_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            },
-        )
-        return True
-
     def get_current_question_interaction(self, *, task_id: str, request_id: str) -> dict[str, Any] | None:
         return self._get_interaction(task_id=task_id, request_id=request_id, kind="question")
-
-    def get_resolved_question_answer(self, *, task_id: str, request_id: str) -> list[dict[str, Any]] | None:
-        interaction = self.get_current_question_interaction(task_id=task_id, request_id=request_id)
-        if not interaction or str(interaction.get("status") or "") != "resolved":
-            return None
-        answers = interaction.get("answers")
-        return answers if isinstance(answers, list) else []
 
     def append_question_answer_if_waiting(
         self,
@@ -2062,27 +1946,6 @@ class TopicTaskStore(SessionCheckpointStore):
                 "source": str(source or "user"),
             },
         )
-
-    def has_resolved_waiting_interaction(self, task_id: str) -> bool:
-        self._ensure_ready()
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT record_type
-                    FROM da_agent_sdk_record
-                    WHERE task_id = %s
-                      AND record_type IN ('permission_decision', 'question_answer')
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """,
-                    (task_id,),
-                )
-                row = cur.fetchone()
-        finally:
-            conn.close()
-        return bool(row)
 
     def _get_interaction(self, *, task_id: str, request_id: str, kind: str) -> dict[str, Any] | None:
         request_id = str(request_id or "").strip()
@@ -3223,39 +3086,6 @@ class TopicTaskStore(SessionCheckpointStore):
             "total": int(total_row.get("total") or 0),
             "list": [self._normalize_schedule_log_row(row) for row in rows],
         }
-
-    def create_recovery_task(self, parent_task_id: str) -> dict[str, Any] | None:
-        parent = self.get_task(parent_task_id)
-        if not parent:
-            return None
-        if self.has_active_child_task(parent_task_id):
-            return None
-        replacement = self.create_task(
-            topic_id=str(parent.get("topic_id") or ""),
-            prompt=str(parent.get("prompt") or ""),
-            provider_id=str(parent.get("provider_id") or ""),
-            model=str(parent.get("model") or ""),
-            debug=bool(parent.get("debug")),
-            timeout_seconds=int(parent.get("timeout_seconds") or 0),
-            sql_read_timeout_seconds=int(parent.get("sql_read_timeout_seconds") or 0),
-            sql_write_timeout_seconds=int(parent.get("sql_write_timeout_seconds") or 0),
-            from_task_id=parent_task_id,
-            source_queue_id=str(parent.get("source_queue_id") or "") or None,
-            source_schedule_id=str(parent.get("source_schedule_id") or "") or None,
-            source_schedule_log_id=str(parent.get("source_schedule_log_id") or "") or None,
-            agent_snapshot=parent.get("agent_snapshot"),
-        )
-        self.finish_task(
-            task_id=parent_task_id,
-            task_status="suspended",
-            error={"code": "task_recovered", "message": f"任务租约已过期，已转移到 {replacement.get('task_id')}"},
-        )
-        self.ensure_assistant_message(
-            topic_id=str(replacement.get("topic_id") or ""),
-            task_id=str(replacement.get("task_id") or ""),
-            status="waiting",
-        )
-        return replacement
 
     def _normalize_topic_row(self, row: dict[str, Any], *, include_messages: bool) -> dict[str, Any]:
         snapshot = normalize_agent_snapshot(row.get("agent_snapshot_json") or row.get("agent_snapshot") or default_agent_payload())

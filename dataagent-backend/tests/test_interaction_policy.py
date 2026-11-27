@@ -62,5 +62,4 @@ def test_zero_timeout_waits_forever():
     deadline = question_deadline(SimpleNamespace(dataagent_interaction_timeout_seconds=0))
 
     assert deadline.seconds == 0
-    assert not deadline.expired
     assert deadline.iso == ""

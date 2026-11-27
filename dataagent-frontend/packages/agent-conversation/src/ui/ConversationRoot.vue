@@ -163,9 +163,8 @@ const conversation = useConversation({
 
 // Without these the two waiting states have no exit: a run parked on
 // waiting_permission renders a card nobody can answer, and stays parked.
-// DataAgent moves a topic to this mode once its plan is approved
-// (`permission_gate.POST_PLAN_MODE`); the picker follows so it does not keep
-// showing `plan` and send the next message as another plan.
+// The picker follows the topic's mode after plan approval so the next
+// message does not start another plan.
 const POST_PLAN_MODE = 'acceptEdits'
 
 const onDecide = async ({ taskId, requestId, decision, note, remember, plan }) => {

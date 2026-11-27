@@ -504,13 +504,6 @@ _seed_lock = threading.Lock()
 _builtin_agents_seeded = False
 
 
-def reset_builtin_agent_seed() -> None:
-    """Forget that the built-in seed already ran. Test hook."""
-    global _builtin_agents_seeded
-    with _seed_lock:
-        _builtin_agents_seeded = False
-
-
 def _seed_builtin_agent_profiles() -> None:
     store = get_agent_profile_store()
     store.init_schema()
@@ -559,48 +552,6 @@ def list_agent_profiles() -> list[dict[str, Any]]:
 def get_agent_profile(agent_id: str) -> dict[str, Any] | None:
     ensure_builtin_agent_profiles()
     return get_agent_profile_store().get_profile(str(agent_id or "").strip())
-
-
-def create_agent_profile(payload: dict[str, Any], *, available_skill_folders: set[str] | None = None) -> dict[str, Any]:
-    skill_folders = available_skill_folders
-    if skill_folders is None:
-        skill_folders = set(_dedupe_strings((payload or {}).get("skill_folders")))
-    normalized = normalize_agent_profile_payload(
-        payload,
-        available_skill_folders=skill_folders,
-        available_mcp_server_ids=available_mcp_server_ids(),
-    )
-    normalized["agent_id"] = _new_agent_id()
-    normalized["is_default"] = False
-    return get_agent_profile_store().save_profile(normalized)
-
-
-def update_agent_profile(
-    agent_id: str,
-    payload: dict[str, Any],
-    *,
-    available_skill_folders: set[str] | None = None,
-) -> dict[str, Any]:
-    existing = get_agent_profile(agent_id)
-    if not existing:
-        raise ValueError("agent not found")
-    skill_folders = available_skill_folders
-    if skill_folders is None:
-        skill_folders = set(_dedupe_strings((payload or {}).get("skill_folders") or existing.get("skill_folders")))
-    normalized = normalize_agent_profile_payload(
-        payload,
-        existing=existing,
-        available_skill_folders=skill_folders,
-        available_mcp_server_ids=available_mcp_server_ids(),
-    )
-    normalized["agent_id"] = existing["agent_id"]
-    normalized["is_default"] = bool(existing.get("is_default"))
-    normalized["is_builtin"] = bool(existing.get("is_builtin"))
-    return get_agent_profile_store().save_profile(normalized)
-
-
-def delete_agent_profile(agent_id: str) -> bool:
-    return get_agent_profile_store().delete_profile(str(agent_id or "").strip())
 
 
 def agent_capabilities(skill_documents: list[dict[str, Any]]) -> dict[str, Any]:

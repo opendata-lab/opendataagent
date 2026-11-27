@@ -145,47 +145,6 @@ class _FakeStore:
         topic = self.topics.get(topic_id) or {}
         return normalize_permission_mode(topic.get("permission_mode"))
 
-    def get_pending_permission_request_id(self, task_id: str) -> str | None:
-        pending = self.get_pending_permission_request(task_id)
-        return str(pending.get("request_id") or "") if pending else None
-
-    def get_pending_permission_request(self, task_id: str) -> dict | None:
-        closed = set()
-        for rec in reversed(self.sdk_records.get(task_id, [])):
-            data = rec.get("data") or {}
-            request_id = str(data.get("request_id") or "")
-            if not request_id:
-                continue
-            if rec.get("record_type") == "permission_decision":
-                closed.add(request_id)
-                continue
-            if rec.get("record_type") == "permission_request" and request_id not in closed:
-                return {
-                    "request_id": request_id,
-                    "topic_id": rec.get("topic_id") or "",
-                    "turn_index": int(rec.get("turn_index") or 0),
-                }
-        return None
-
-    def append_permission_decision_record(self, *, task_id: str, request_id: str, decision: str, note: str = "", decided_at: str = ""):
-        pending = self.get_pending_permission_request(task_id)
-        if not pending or pending.get("request_id") != request_id:
-            return False
-        self.append_sdk_record(
-            task_id=task_id,
-            topic_id=pending.get("topic_id") or "",
-            turn_index=int(pending.get("turn_index") or 0),
-            record_type="permission_decision",
-            event_type=None,
-            data={
-                "request_id": request_id,
-                "decision": decision,
-                "note": note,
-                "decided_at": decided_at or _now(),
-            },
-        )
-        return True
-
     def get_current_permission_interaction(self, *, task_id: str, request_id: str):
         return self._get_interaction(task_id=task_id, request_id=request_id, kind="permission")
 

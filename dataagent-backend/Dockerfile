@@ -1,7 +1,7 @@
 # ---- Pi Cell build stage ----------------------------------------------
 # Built here so the backend image can spawn the Node data plane as a child
-# process when DATAAGENT_RUNTIME_KIND=pi_agent_core. NODE_ENV is deliberately
-# left unset: npm's `omit` config defaults to ["dev"] when NODE_ENV=production,
+# process. NODE_ENV is deliberately left unset: npm's `omit` config defaults
+# to ["dev"] when NODE_ENV=production,
 # which would drop typescript and break the build below.
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS pi-cell
 WORKDIR /build

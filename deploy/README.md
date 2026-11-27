@@ -87,6 +87,12 @@ scripts/load-package-and-start.sh --package .   # 加载镜像；deploy/.env 不
 
 旧的 `agent_interactive_*`／`agent_background_*` 配置名已删除：写在 `DATAAGENT_SETTINGS` 中会启动失败，写成
 环境变量会被忽略，升级时改成上表名称。Pi 无活动超时 `dataagent_run_idle_timeout_seconds` 为 300 秒。
+
+启动时会校验外部配置中的 `DATAAGENT_SETTINGS` 键名。升级前请从中删除
+`app_name`、`claude_max_tokens`、`agent_wait_timeout_seconds`、`mysql_database`、
+`max_few_shot_examples`、`max_schema_tables`、`max_business_rules`、`query_result_limit`、
+`dataagent_runtime_kind`。会话库继续使用 `session_mysql_database`，环境变量 `MYSQL_DATABASE` 仍可指定会话库。
+
 SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。反向代理的读写超时必须大于总超时（1800 秒）。
 `deploy/docker-compose.yml` 将宿主机 `deploy/docker/nginx/default.conf` 挂载到前端容器 `/etc/nginx/conf.d/default.conf:ro`（读写超时默认 1860 秒），方便现场直接按需调整反向代理路由、流式超时、域名或证书，修改后执行 `scripts/restart.sh` 即可生效，无需重新构建前端镜像。这个文件是现场配置：仓库和离线包只带 `default.conf.example`，`scripts/start.sh` 首次启动时复制一份，之后把新包同步到部署目录也不会覆盖（与 `.env` 相同）；升级说明提到模板有变化时，对照 `.example` 手工合并。
 
@@ -103,25 +109,6 @@ SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。反向�
 - `DATAAGENT_DOCKER_SOCKET` 只挂到 backend。Pi/MCP/模型编排在控制面；沙箱没有凭据或 socket，默认没有网络。第一次基础工具调用创建容器，同段复用，卡片、结束、取消及命令超时均销毁。不支持宿主工具执行回退。
 - `ODA_SANDBOX_IMAGE` 必须预先拉取/加载，`scripts/start.sh` 不会为按需容器拉取镜像。在线升级除 Compose pull 外须执行 `docker pull <配置的 oda-sandbox 镜像>`。
 - Skill 存放在命名卷 `opendataagent_dataagent-skills`，入口按内置技能内容版本同步通用技能，管理员导入的其它技能保留。新事件存于 MySQL，旧 home/logs 文件保留供回退。
-
-## 本次架构升级与回退
-
-先关闭入口并排空运行任务，备份 MySQL、runtime 目录和 skills 卷。使用新版镜像、现有配置和卷运行一次性命令（覆盖 entrypoint，避免启动协调器）：
-
-```sh
-docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint sh dataagent-backend -c \
-  'alembic upgrade head && python scripts/migrate_runtime_results.py'
-```
-
-迁移把 `workspace/.dataagent/results` 的旧 JSONL 转为同名标准 JSON，保留原文件，重复执行不覆盖；原始缓存缺少的元数据明确标记。旧内存等待任务改为 suspended。随后 `scripts/start.sh`，核对 topic 创建、Pi 工具及卡片续聊。
-
-回退同样先关闭入口、停止新版 backend，使用**新版镜像**运行：
-
-```sh
-docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint python dataagent-backend scripts/prepare_runtime_rollback.py
-```
-
-该脚本仅接受 revision 32，关闭等待卡片并将版本戳恢复为 31，保留 checkpoint 表和结果。恢复旧 Compose/镜像后启动；旧版使用历史文本，不恢复新版卡片或工具上下文。新 results 不自动转成旧分页缓存。再次升级保留表结构并清空旧 SDK 快照，从完整文本历史重建；避免漏掉回退期间新增消息。运行 root 的一次性命令后，正常入口会重新修正文件属主。
 
 ## 登录配置
 

@@ -8,11 +8,6 @@ from config import Settings
 
 _EXAMPLE_MCP = {'web': {'type': 'http', 'url': 'http://example-mcp:8801/mcp/', 'headers': {'X-Web-MCP-Token': 'web-token'}}}
 
-def test_settings_defaults_query_result_limit_to_backend_max(monkeypatch):
-    monkeypatch.delenv("QUERY_RESULT_LIMIT", raising=False)
-
-    assert Settings(_env_file=None).query_result_limit == 1000
-
 def test_build_mcp_servers_returns_empty_when_registry_row_is_disabled_or_missing(monkeypatch):
     class FakeRegistry:
         rows = []

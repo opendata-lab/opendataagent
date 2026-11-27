@@ -11,14 +11,6 @@ from typing import Any
 _identity: ContextVar[dict[str, str]] = ContextVar("agent_identity", default={})
 
 
-def identity_headers(user_id: int | None, agent_id: str) -> dict[str, str]:
-    if not agent_id:
-        raise ValueError("缺少智能体身份")
-    if user_id is None or isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
-        raise ValueError("数据库访问需要登录用户")
-    return {"X-Agent-User-Id": str(user_id), "X-Agent-Id": agent_id}
-
-
 def current_headers() -> dict[str, str]:
     return dict(_identity.get())
 

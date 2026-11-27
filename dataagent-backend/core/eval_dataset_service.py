@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from core.eval_contract import canonical_bytes, dataset_hash, parse_jsonl, validate
+from core.eval_contract import canonical_bytes, parse_jsonl, validate
 from core.eval_store import get_eval_store
 
 
@@ -47,18 +47,3 @@ def export_dataset(dataset_id: str) -> tuple[str, bytes]:
     data = canonical_bytes(rows)
     safe_name = str(ds.get("name") or dataset_id).replace("/", "_").replace(" ", "_")
     return f"{safe_name}.jsonl", data
-
-
-def refresh_dataset_hash(dataset_id: str) -> str:
-    """Recompute hash from current DB cases and update the dataset row."""
-    store = get_eval_store()
-    rows = store.get_case_full_json(dataset_id)
-    h = dataset_hash(rows)
-    with store._conn() as conn:
-        store._refresh_dataset_stats(conn, dataset_id, h, len(rows))
-    return h
-
-
-def validate_cases(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Thin wrapper exposing contract validation to routes."""
-    return validate(rows)

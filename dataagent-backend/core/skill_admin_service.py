@@ -918,10 +918,6 @@ def _managed_skill_entries() -> list[tuple[str, int, int]]:
     return entries
 
 
-def managed_skill_files() -> list[str]:
-    return [entry[0] for entry in _managed_skill_entries()]
-
-
 def _skill_folder_name(relative_path: str) -> str:
     normalized = str(relative_path or "").replace("\\", "/").strip("/")
     if not normalized:
@@ -1078,13 +1074,6 @@ def _migrate_document_paths_to_discovery_root(store, documents: list[dict[str, A
 
 _reindex_lock = threading.Lock()
 _indexed_signature: tuple[tuple[str, int, int], ...] | None = None
-
-
-def reset_disk_index_signature() -> None:
-    """Forget the last indexed disk state, forcing the next scan to do full work."""
-    global _indexed_signature
-    with _reindex_lock:
-        _indexed_signature = None
 
 
 def reindex_documents_from_disk(

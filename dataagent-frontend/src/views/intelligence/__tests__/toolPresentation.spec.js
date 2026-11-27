@@ -1,4 +1,4 @@
-import { describeToolAction, extractToolSkillName } from '../toolPresentation'
+import { describeToolAction, extractToolSkillName } from '../../../../packages/agent-conversation/src/core/toolPresentation.js'
 
 describe('toolPresentation', () => {
   it('infers skill traces from generic tool calls when a skill identifier is present', () => {
