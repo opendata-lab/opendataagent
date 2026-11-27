@@ -34,7 +34,7 @@
 - `api/admin_routes.py`：列表去掉 kind 筛选；预览接口加 `question` 参数。
 - `core/task_executor.py` / `core/pi_runtime.py`：在执行器清空历史之前，从 `params.history` 取最近 1–2 条用户消息与本轮问题拼成检索文本（截断长度）；结果放入 `PiRunContext.retrieved_context` 并经 `to_init_payload()` 下发；同一任务的卡片恢复不检索；挂载目录每段照常重建；注入准备用 `asyncio.to_thread`。
 - Pi：`protocol/frames.ts` 加 `retrieved_context`；`kernel/sdk-session.ts` 用 `DefaultResourceLoader({ extensionFactories, noExtensions: true, settingsManager: 内存设置 })` 加载内联扩展并 `reload()`，自定义加载器 `getExtensions()` 返回其结果；扩展在 `before_agent_start` 返回 message；`npm run build`。
-- 前端：`KnowledgeMemoryView.vue`（单一知识列表：来源与状态筛选、待审核入口、大编辑器 + 上传；文案“知识与记忆”→“知识”）、`router/index.js` 菜单文案、`ExperienceDrawer.vue`（加宽、去 kind）、`ExperienceFields.vue`、`entryForm.js`、`AgentExperienceCards.vue`（去额度、预览可输入问题）、`api/dataagent.js` `getExperienceInjectionPreview`、`IntelligentQueryView.vue` 中的相关文案。
+- 前端：`KnowledgeMemoryView.vue`（单一知识列表：来源与状态筛选、待审核入口、大编辑器 + 上传；文案“知识与记忆”→“知识”）、`router/index.js`（删除 `/memories` 路由与菜单项，待审核数显示在“知识”菜单上）、`ExperienceDrawer.vue`（加宽、去 kind）、`ExperienceFields.vue`、`entryForm.js`、`AgentExperienceCards.vue`（去额度、预览可输入问题）、`api/dataagent.js` `getExperienceInjectionPreview`、`IntelligentQueryView.vue` 中的相关文案。
 - 测试：长度校验（含 PATCH 只改状态）；管理员添加直接生效、每日总结为待审核；检索范围不含其他助手、停用与待审核不命中；ngram 用例：库里只有 1 条时精确命中、所有条目都含查询词、`GMV`、`dwd_order` 与 `dwd_customer`、单字查询；短条目给全文、长文档给路径、字数与条数上限；追问用历史命中；卡片恢复不重复注入但挂载重建；Pi 扩展注入消息进入 checkpoint、以 user 角色发出且系统提示词不变；预览与运行在功能关闭、每日总结助手时一致；迁移 up/down（含 memory 行转换、超长行拒绝降级）；前端上传、审核与预览。
 - 本地端到端（schema `dataagent_qa`）：上传几千字知识 + 审核通过几条每日总结知识，提相关问题与追问，确认注入消息、模型 grep/read 知识文件并用于回答、第二轮缓存读取 token 正常。
 - TODO：知识切片与语义检索；运行中再检索（`search_knowledge` 工具）；表名等标识符精确匹配；确认生产 MySQL ≥5.7.6。
