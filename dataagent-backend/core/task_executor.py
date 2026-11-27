@@ -126,7 +126,7 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
     # Plan, accept-edits and bypass are choices a person makes for a session.
     mode = normalize_permission_mode(params.permission_mode) if params.interactive else "default"
     plan_approved = bool(state.get("plan_approved"))
-    runtime_env = {"DATAAGENT_PYTHON_BIN":"/usr/local/bin/python", "SKILLS_ROOT_DIR":"/opt/skills",
+    runtime_env = {"TZ": cfg.dataagent_timezone, "DATAAGENT_PYTHON_BIN":"/usr/local/bin/python", "SKILLS_ROOT_DIR":"/opt/skills",
         "DATAAGENT_SKILL_ROOT": "/opt/skills/" + str(skills.get("primary_folder") or ""),
         "DATAAGENT_ENABLED_SKILLS": ",".join(roots),
         "DATAAGENT_ENABLED_SKILL_ROOTS":json.dumps({name:f"/opt/skills/{name}" for name in roots}),

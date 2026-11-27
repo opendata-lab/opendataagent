@@ -16,3 +16,9 @@ def test_backend_no_longer_installs_claude_engine():
     requirements = REQUIREMENTS.read_text(encoding="utf-8").splitlines()
 
     assert not any(line.startswith("claude-agent-sdk") for line in requirements)
+
+
+def test_backend_installs_tzdata_for_zoneinfo():
+    requirements = REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+
+    assert any(line.strip().startswith("tzdata") for line in requirements)
