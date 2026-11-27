@@ -53,7 +53,7 @@ def _build_system_prompt(
         lines.append(f"- 用户显式提供的 database hint: {database_hint}")
     custom_prompt = str((agent_snapshot or {}).get("system_prompt") or "").strip()
     if custom_prompt:
-        lines.extend(["", "# 智能体系统提示词", custom_prompt])
+        lines.extend(["", "# 角色设定", custom_prompt])
     return "\n".join(lines)
 
 def resolve_agent_skill_runtime(

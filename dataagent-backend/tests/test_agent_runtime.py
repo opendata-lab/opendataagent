@@ -154,3 +154,8 @@ def test_build_system_prompt_includes_business_date_and_timezone_without_clock_t
     prompt_la = agent_runtime._build_system_prompt(None, {"enabled_folders": ["example"]})
     assert "- 当前日期：2026-11-26（时区：America/Los_Angeles）" in prompt_la
     assert "09:30" not in prompt_la
+
+
+def test_agent_role_prompt_follows_runtime_context_under_role_heading():
+    prompt = agent_runtime._build_system_prompt("db1", {"enabled_folders": []}, {"system_prompt": "你是财务助手"})
+    assert prompt.index("# 运行时上下文") < prompt.index("用户显式提供的 database hint: db1") < prompt.index("# 角色设定\n你是财务助手")
