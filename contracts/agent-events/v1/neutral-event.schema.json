@@ -54,7 +54,8 @@
         "properties": {
           "payload": {
             "properties": {
-              "awaiting_approval": { "type": "boolean" }
+              "awaiting_approval": { "type": "boolean" },
+              "not_executed": { "type": "boolean" }
             }
           }
         }

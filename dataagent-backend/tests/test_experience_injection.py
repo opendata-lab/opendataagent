@@ -80,7 +80,8 @@ def test_executor_uses_existing_skill_mount_without_registering_entry_as_skill(m
     workspace = tmp_path / "topic" / "workspace"
     workspace.mkdir(parents=True)
     monkeypatch.setattr(executor, "prepare_topic_workspace", lambda *a, **k: workspace)
-    store = SimpleNamespace(get_session_checkpoint=lambda _: None, record_task_system_prompt=lambda *a: None)
+    store = SimpleNamespace(get_session_checkpoint=lambda _: None, record_task_system_prompt=lambda *a: None,
+                            get_topic_approved_tools=lambda _: [])
     monkeypatch.setattr(executor, "get_topic_task_store", lambda: store)
     monkeypatch.setattr(executor, "active_experiences_for", lambda _: [entry("ondemand", mode="on_demand")])
     monkeypatch.setattr(executor, "_build_system_prompt", lambda *a: "system")

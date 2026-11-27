@@ -185,6 +185,9 @@ export function reducePiEvent(state, record) {
         if (data.awaiting_approval) {
           block.awaiting_approval = true
           delete block.approval_status
+        } else if (data.not_executed) {
+          delete block.awaiting_approval
+          block.approval_status = 'not_executed'
         } else {
           delete block.awaiting_approval
           delete block.approval_status

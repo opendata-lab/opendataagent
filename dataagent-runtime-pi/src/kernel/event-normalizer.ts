@@ -50,6 +50,7 @@ export class EventNormalizer {
   private turnHasTools = false;
   private contentCounter = 0;
   private readonly awaitingApprovalIds = new Set<string>();
+  private readonly notExecutedIds = new Set<string>();
 
   constructor(
     private readonly sm: RunStateMachine,
@@ -76,6 +77,13 @@ export class EventNormalizer {
   public markAwaitingApproval(toolCallId: string): void {
     if (toolCallId) {
       this.awaitingApprovalIds.add(toolCallId);
+    }
+  }
+
+  /** A call blocked because another call in the same turn parked: it never ran. */
+  public markNotExecuted(toolCallId: string): void {
+    if (toolCallId) {
+      this.notExecutedIds.add(toolCallId);
     }
   }
 
@@ -187,7 +195,8 @@ export class EventNormalizer {
       case "tool_execution_end": {
         const toolCallId = String(piEvent.toolCallId ?? "");
         const awaitingApproval = this.awaitingApprovalIds.delete(toolCallId);
-        if (awaitingApproval) {
+        const notExecuted = this.notExecutedIds.delete(toolCallId);
+        if (awaitingApproval || notExecuted) {
           this.uiResults?.take(toolCallId);
           events.push(
             this.sm.createEvent("tool.completed", {
@@ -196,7 +205,7 @@ export class EventNormalizer {
               tool_name: piEvent.toolName,
               output: null,
               is_error: false,
-              awaiting_approval: true,
+              ...(awaitingApproval ? { awaiting_approval: true } : { not_executed: true }),
             })
           );
           break;

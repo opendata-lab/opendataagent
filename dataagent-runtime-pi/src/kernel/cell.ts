@@ -338,7 +338,11 @@ export class Cell {
           }
         };
       agent.beforeToolCall = async (context) => {
-          if (parked || segmentError) return { block: true, reason: parked ? "Not executed: waiting for user" : segmentError };
+          if (parked) {
+            normalizer.markNotExecuted(String(context.toolCall?.id ?? ""));
+            return { block: true, reason: "Not executed: waiting for user" };
+          }
+          if (segmentError) return { block: true, reason: segmentError };
           toolCalls += 1;
           if (toolCalls > init.limits.max_tool_calls) {
             limitDenial = `已达到本次任务工具调用上限 ${init.limits.max_tool_calls}`;

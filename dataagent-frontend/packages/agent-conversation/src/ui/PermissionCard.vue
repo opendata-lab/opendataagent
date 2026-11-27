@@ -82,12 +82,15 @@ const riskLabel = computed(() => {
   if (effectiveRisk.value === 'critical') return '高危操作'
   return '写操作'
 })
-const hasPreview = computed(() => props.block.payload_preview != null && typeof props.block.payload_preview === 'object')
+// A tool card's payload also carries routing fields (server_identity,
+// annotations, tool_call_id); users only need the arguments.
+const preview = computed(() => props.block.payload_preview?.arguments ?? props.block.payload_preview)
+const hasPreview = computed(() => preview.value != null && typeof preview.value === 'object')
 const prettyPreview = computed(() => {
   try {
-    return JSON.stringify(props.block.payload_preview, null, 2)
+    return JSON.stringify(preview.value, null, 2)
   } catch {
-    return String(props.block.payload_preview)
+    return String(preview.value)
   }
 })
 const resultLabel = computed(() => {

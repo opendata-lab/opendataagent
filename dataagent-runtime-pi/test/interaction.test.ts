@@ -121,6 +121,23 @@ function writeMcpServer(name = "write-fixture") {
   return { name, type: "stdio", command: process.execPath, args: ["-e", MCP_WRITE_FIXTURE] };
 }
 
+test("a call skipped because another call in the same turn parked completes as not_executed, not an error", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "oda-approve-"));
+  t.after(() => { fs.rmSync(root,{recursive:true,force:true}); fs.rmSync(root+"-results",{recursive:true,force:true}); });
+  const events: NeutralAgentEvent[] = [];
+  const cell = new Cell(scripted([[{ name: "create_table", arguments: { name: "a" } }, { name: "create_table", arguments: { name: "b" } }]]));
+  const parked = await cell.run(init(root, { mcp_servers: [writeMcpServer()] }), e => events.push(e));
+
+  assert.equal(parked.terminal_status, "parked", parked.error);
+  const completed = events.filter(e => e.type === "tool.completed");
+  assert.equal(completed.length, 2);
+  const [waiting, skipped] = completed;
+  assert.equal(waiting.payload.awaiting_approval, true);
+  assert.equal(skipped.payload.not_executed, true);
+  assert.equal(skipped.payload.is_error, false);
+  assert.equal(skipped.payload.awaiting_approval, undefined);
+});
+
 test("write approval marks awaiting_approval without error and resumes with original tool_call_id", async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oda-approve-"));
   t.after(() => { fs.rmSync(root,{recursive:true,force:true}); fs.rmSync(root+"-results",{recursive:true,force:true}); });

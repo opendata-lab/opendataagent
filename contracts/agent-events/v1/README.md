@@ -96,6 +96,10 @@ continue to use `tool_name`.
 confirmation. Resuming the approved call reuses the same `tool_call_id` so
 readers update the existing row in place instead of appending a second one.
 
+`payload.not_executed` is an optional boolean set to `true` (with `is_error:
+false`) for a call that was skipped because another call in the same turn is
+waiting for the user; readers show it as not executed rather than failed.
+
 ## Failure messages
 
 `run.failed.payload.message` is written for end users and never carries an

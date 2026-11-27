@@ -6,6 +6,23 @@ import ToolOutput from '../ui/ToolOutput.vue'
 import ConversationRoot from '../ui/ConversationRoot.vue'
 
 describe('approval UX single-row tool lifecycle', () => {
+  it('shows a call skipped while another call waits as 未执行, not 执行失败', () => {
+    const state = createChatState()
+    processV2Record(state, { record_type: 'agent_event', event_type: 'turn.started', data: { turn_id: 'turn-1' } })
+    processV2Record(state, {
+      record_type: 'agent_event',
+      event_type: 'tool.started',
+      data: { turn_id: 'turn-1', tool_call_id: 'call-2', tool_name: 'create_table', input: { name: 'b' } },
+    })
+    processV2Record(state, {
+      record_type: 'agent_event',
+      event_type: 'tool.completed',
+      data: { turn_id: 'turn-1', tool_call_id: 'call-2', tool_name: 'create_table', output: null, is_error: false, not_executed: true },
+    })
+    const [block] = state.blocks.filter((b) => b.type === 'tool_use')
+    expect(blockToToolProp(block).status).toBe('not_executed')
+  })
+
   it('merges awaiting -> allow -> executing -> executed into one tool row', () => {
     const state = createChatState()
     processV2Record(state, { record_type: 'agent_event', event_type: 'turn.started', data: { turn_id: 'turn-1' } })

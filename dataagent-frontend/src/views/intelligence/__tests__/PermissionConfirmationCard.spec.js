@@ -279,3 +279,23 @@ describe('PermissionConfirmationCard session allow and deny note', () => {
     expect(deniedWithNote.get('.v2-perm-result').text()).toBe('✕ 已拒绝：换个表名')
   })
 })
+
+describe('PermissionConfirmationCard argument preview', () => {
+  it('shows only the tool arguments, not routing fields', () => {
+    const wrapper = mount(PermissionConfirmationCard, {
+      props: {
+        block: writeBlock({
+          payload_preview: {
+            tool_call_id: 'call-1',
+            tool_name: 'create_table',
+            arguments: { name: 'dwd_orders' },
+            annotations: { readOnlyHint: false },
+            server_identity: 'srv1',
+          },
+        }),
+      },
+    })
+    const text = wrapper.find('.v2-perm-preview pre').text()
+    expect(JSON.parse(text)).toEqual({ name: 'dwd_orders' })
+  })
+})

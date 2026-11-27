@@ -1872,6 +1872,93 @@
           "text": "好的，已保留临时表。"
         }
       ]
+    },
+    {
+      "name": "pi call skipped while another call waits for approval shows not executed",
+      "records": [
+        {
+          "seq_id": 1,
+          "record_type": "agent_event",
+          "event_type": "turn.started",
+          "data": {
+            "turn_id": "turn-1"
+          }
+        },
+        {
+          "seq_id": 2,
+          "record_type": "agent_event",
+          "event_type": "tool.started",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "input": {
+              "name": "a"
+            }
+          }
+        },
+        {
+          "seq_id": 3,
+          "record_type": "agent_event",
+          "event_type": "tool.started",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-2",
+            "tool_name": "create_table",
+            "input": {
+              "name": "b"
+            }
+          }
+        },
+        {
+          "seq_id": 4,
+          "record_type": "agent_event",
+          "event_type": "tool.completed",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "output": null,
+            "is_error": false,
+            "awaiting_approval": true
+          }
+        },
+        {
+          "seq_id": 5,
+          "record_type": "agent_event",
+          "event_type": "tool.completed",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-2",
+            "tool_name": "create_table",
+            "output": null,
+            "is_error": false,
+            "not_executed": true
+          }
+        }
+      ],
+      "expected": [
+        {
+          "kind": "tool_use",
+          "tool_name": "create_table",
+          "input": {
+            "name": "a"
+          },
+          "output": null,
+          "is_error": false,
+          "awaiting_approval": true
+        },
+        {
+          "kind": "tool_use",
+          "tool_name": "create_table",
+          "input": {
+            "name": "b"
+          },
+          "output": null,
+          "is_error": false,
+          "approval_status": "not_executed"
+        }
+      ]
     }
   ]
 }

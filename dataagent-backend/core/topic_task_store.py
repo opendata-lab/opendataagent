@@ -280,6 +280,9 @@ def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                     if data.get("awaiting_approval"):
                         block["awaiting_approval"] = True
                         block.pop("approval_status", None)
+                    elif data.get("not_executed"):
+                        block.pop("awaiting_approval", None)
+                        block["approval_status"] = "not_executed"
                     else:
                         block.pop("awaiting_approval", None)
                         block.pop("approval_status", None)

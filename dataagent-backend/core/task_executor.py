@@ -204,9 +204,10 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
                     deadline = plan_deadline(cfg,snapshot).iso if kind == "plan" else ""
                     annotations = data.get("annotations") if isinstance(data.get("annotations"), dict) else {}
                     destructive = kind != "plan" and annotations.get("destructiveHint") is True
-                    display_name = data.get("tool_title") or data["tool_name"]
+                    tool_name = "ExitPlanMode" if kind == "plan" else data["tool_name"]
+                    display_name = data.get("tool_title") or tool_name
                     card={"record_type":"permission_request","data":{"request_id":request_id,
-                        "tool_name":"ExitPlanMode" if kind == "plan" else data["tool_name"],
+                        "tool_name":tool_name,
                         "risk_level":"plan" if kind == "plan" else "high",
                         "title":"请确认执行计划" if kind == "plan" else f"{display_name} 需要你确认",
                         "summary":data.get("plan") or display_name,

@@ -18,8 +18,20 @@ def test_no_optional_basic_tool_contract():
     assert 'allowed_tools' not in TaskExecutionInput.__dataclass_fields__
 
 
+PERMISSION_PAYLOAD = {
+    "tool_call_id": "call-1",
+    "tool_name": "drop_table",
+    "tool_title": "删除表",
+    "arguments": {"name": "tmp"},
+    "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    "server_name": "dw",
+    "server_identity": "srv1",
+}
+
+
 @pytest.mark.asyncio
-async def test_executor_forwards_approved_tools_and_builds_permission_card_fields(monkeypatch, tmp_path):
+@pytest.mark.parametrize("kind,payload", [("permission", PERMISSION_PAYLOAD), ("plan", {"plan": "1. 建表"})])
+async def test_executor_forwards_approved_tools_and_builds_permission_card_fields(monkeypatch, tmp_path, kind, payload):
     captured = {}
     committed = []
 
@@ -42,19 +54,7 @@ async def test_executor_forwards_approved_tools_and_builds_permission_card_field
         captured["init_payload"] = ctx.to_init_payload()
         await segment_handler(
             {"header": {}, "entries": [], "leaf_id": None, "turns": 1, "tool_calls": 1},
-            {
-                "kind": "permission",
-                "request_id": "run1:call-1",
-                "payload": {
-                    "tool_call_id": "call-1",
-                    "tool_name": "drop_table",
-                    "tool_title": "删除表",
-                    "arguments": {"name": "tmp"},
-                    "annotations": {"readOnlyHint": False, "destructiveHint": True},
-                    "server_name": "dw",
-                    "server_identity": "srv1",
-                },
-            },
+            {"kind": kind, "request_id": "run1:call-1", "payload": payload},
             0.5,
             None,
         )
@@ -102,6 +102,13 @@ async def test_executor_forwards_approved_tools_and_builds_permission_card_field
     assert captured["init_payload"]["approved_tools"] == ["srv1:create_table"]
     assert len(committed) == 1
     card_data = committed[0]["card"]["data"]
+    if kind == "plan":
+        # Plan cards carry no tool_name in the payload (regression: KeyError 'tool_name').
+        assert card_data["tool_name"] == "ExitPlanMode"
+        assert card_data["title"] == "请确认执行计划"
+        assert card_data["summary"] == "1. 建表"
+        assert card_data["destructive"] is False
+        return
     assert card_data["title"] == "删除表 需要你确认"
     assert card_data["tool_title"] == "删除表"
     assert card_data["tool_call_id"] == "call-1"
