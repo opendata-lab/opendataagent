@@ -62,8 +62,18 @@ export interface ConversationBlock {
   tool_id?: string
   tool_name?: string
   tool_title?: string
+  tool_call_id?: string
+  awaiting_approval?: boolean
+  approval_status?: 'denied' | 'not_executed' | ''
+  destructive?: boolean
   request_id?: string
   [key: string]: unknown
+}
+
+export interface PermissionDecisionPayload {
+  decision: 'allow' | 'deny'
+  note?: string
+  remember?: 'session'
 }
 
 /**

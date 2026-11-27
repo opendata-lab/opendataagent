@@ -200,10 +200,12 @@ describe('PermissionConfirmationCard plan rendering', () => {
   it('leaves non-plan confirmation cards as plain-text summaries with tool details', () => {
     const wrapper = mount(PermissionConfirmationCard, { props: { block: writeBlock() } })
     expect(wrapper.find('.dac-plan').exists()).toBe(false)
+    expect(wrapper.get('.v2-perm-title').text()).toBe('example_create_table 需要你确认')
     expect(wrapper.get('.v2-perm-summary').text()).toBe('新建表 dwd_user_order_di')
     expect(wrapper.get('.v2-perm-tool').text()).toContain('example_create_table')
     const buttons = wrapper.findAll('.v2-perm-btn').map((b) => b.text())
     expect(buttons).toContain('允许')
+    expect(buttons).toContain('本会话内允许此工具')
     expect(buttons).toContain('拒绝')
   })
 })
@@ -211,15 +213,89 @@ describe('PermissionConfirmationCard plan rendering', () => {
 describe('PermissionConfirmationCard tool title', () => {
   it('names the tool by its Chinese title and keeps the real name beside it', () => {
     const wrapper = mount(PermissionConfirmationCard, {
-      props: { block: writeBlock({ tool_name: 'create_ticket', tool_title: '创建工单', title: '请确认写操作', summary: '创建工单' }) },
+      props: { block: writeBlock({ tool_name: 'create_ticket', tool_title: '创建工单', title: '创建工单 需要你确认', summary: '创建工单' }) },
     })
     // A third-party server picks its own title; the real name guards against a misleading one.
+    expect(wrapper.get('.v2-perm-title').text()).toBe('创建工单 需要你确认')
     expect(wrapper.find('.v2-perm-tool').text()).toBe('工具：创建工单（create_ticket）')
     expect(wrapper.find('.v2-perm-summary').exists()).toBe(false)
   })
 
   it('falls back to the tool name when there is no title', () => {
     const wrapper = mount(PermissionConfirmationCard, { props: { block: writeBlock() } })
+    expect(wrapper.get('.v2-perm-title').text()).toBe('example_create_table 需要你确认')
     expect(wrapper.find('.v2-perm-tool').text()).toBe('工具：example_create_table')
+  })
+})
+
+describe('PermissionConfirmationCard session allow and deny note', () => {
+  it('emits remember="session" when allowing a non-destructive tool for this session', async () => {
+    const wrapper = mount(PermissionConfirmationCard, {
+      props: { block: writeBlock({ destructive: false, tool_name: 'create_table', tool_title: '创建表' }) },
+    })
+    await wrapper.get('.v2-perm-btn.allow-session').trigger('click')
+    expect(wrapper.emitted('decide')[0]).toEqual([
+      { requestId: 'req-2', decision: 'allow', remember: 'session' },
+    ])
+  })
+
+  it('hides the session-allow option for destructive tools', () => {
+    const wrapper = mount(PermissionConfirmationCard, {
+      props: { block: writeBlock({ destructive: true, tool_name: 'drop_table', tool_title: '删除表' }) },
+    })
+    expect(wrapper.find('.v2-perm-btn.allow-session').exists()).toBe(false)
+    expect(wrapper.find('.v2-perm-btn.allow').exists()).toBe(true)
+    expect(wrapper.find('.v2-perm-btn.deny').exists()).toBe(true)
+  })
+
+  it('allows denying with an optional note or directly without a note', async () => {
+    const withNote = mount(PermissionConfirmationCard, { props: { block: writeBlock() } })
+    await withNote.get('.v2-perm-btn.deny').trigger('click')
+    const input = withNote.get('.v2-perm-deny-input')
+    expect(input.attributes('placeholder')).toBe('告诉智能体换个做法（可选）')
+    await input.setValue('改为创建临时表')
+    await withNote.get('.v2-perm-btn.deny-confirm').trigger('click')
+    expect(withNote.emitted('decide')[0]).toEqual([
+      { requestId: 'req-2', decision: 'deny', note: '改为创建临时表' },
+    ])
+
+    const withoutNote = mount(PermissionConfirmationCard, { props: { block: writeBlock() } })
+    await withoutNote.get('.v2-perm-btn.deny').trigger('click')
+    await withoutNote.get('.v2-perm-btn.deny-confirm').trigger('click')
+    expect(withoutNote.emitted('decide')[0]).toEqual([
+      { requestId: 'req-2', decision: 'deny' },
+    ])
+  })
+
+  it('renders resolved labels including session allow and deny note', () => {
+    const allowedSession = mount(PermissionConfirmationCard, {
+      props: { block: writeBlock({ decision: 'allow', remember: 'session' }) },
+    })
+    expect(allowedSession.get('.v2-perm-result').text()).toBe('✓ 已允许执行（本会话内不再询问）')
+
+    const deniedWithNote = mount(PermissionConfirmationCard, {
+      props: { block: writeBlock({ decision: 'deny', note: '换个表名' }) },
+    })
+    expect(deniedWithNote.get('.v2-perm-result').text()).toBe('✕ 已拒绝：换个表名')
+  })
+})
+
+describe('PermissionConfirmationCard argument preview', () => {
+  it('shows only the tool arguments, not routing fields', () => {
+    const wrapper = mount(PermissionConfirmationCard, {
+      props: {
+        block: writeBlock({
+          payload_preview: {
+            tool_call_id: 'call-1',
+            tool_name: 'create_table',
+            arguments: { name: 'dwd_orders' },
+            annotations: { readOnlyHint: false },
+            server_identity: 'srv1',
+          },
+        }),
+      },
+    })
+    const text = wrapper.find('.v2-perm-preview pre').text()
+    expect(JSON.parse(text)).toEqual({ name: 'dwd_orders' })
   })
 })

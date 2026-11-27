@@ -49,6 +49,8 @@ export class EventNormalizer {
   private currentTurnId = "turn-0";
   private turnHasTools = false;
   private contentCounter = 0;
+  private readonly awaitingApprovalIds = new Set<string>();
+  private readonly notExecutedIds = new Set<string>();
 
   constructor(
     private readonly sm: RunStateMachine,
@@ -70,6 +72,19 @@ export class EventNormalizer {
 
   public get turnId(): string {
     return this.currentTurnId;
+  }
+
+  public markAwaitingApproval(toolCallId: string): void {
+    if (toolCallId) {
+      this.awaitingApprovalIds.add(toolCallId);
+    }
+  }
+
+  /** A call blocked because another call in the same turn parked: it never ran. */
+  public markNotExecuted(toolCallId: string): void {
+    if (toolCallId) {
+      this.notExecutedIds.add(toolCallId);
+    }
   }
 
   public toolStarted(toolCallId: string, toolName: string, input: unknown): NeutralAgentEvent | null {
@@ -178,10 +193,27 @@ export class EventNormalizer {
         break;
       }
       case "tool_execution_end": {
+        const toolCallId = String(piEvent.toolCallId ?? "");
+        const awaitingApproval = this.awaitingApprovalIds.delete(toolCallId);
+        const notExecuted = this.notExecutedIds.delete(toolCallId);
+        if (awaitingApproval || notExecuted) {
+          this.uiResults?.take(toolCallId);
+          events.push(
+            this.sm.createEvent("tool.completed", {
+              turn_id: this.currentTurnId,
+              tool_call_id: piEvent.toolCallId,
+              tool_name: piEvent.toolName,
+              output: null,
+              is_error: false,
+              ...(awaitingApproval ? { awaiting_approval: true } : { not_executed: true }),
+            })
+          );
+          break;
+        }
         // Prefer the copy captured before folding: piEvent.result is the model's
         // digest whenever the result was large, and persisting that is what lost
         // charts and tables from history.
-        const uiCopy = this.uiResults?.take(String(piEvent.toolCallId ?? "")) ?? null;
+        const uiCopy = this.uiResults?.take(toolCallId) ?? null;
         const { output, output_meta } = uiCopy
           ? { output: uiCopy.output, output_meta: uiCopy.meta }
           : unwrapToolResult(piEvent.result);

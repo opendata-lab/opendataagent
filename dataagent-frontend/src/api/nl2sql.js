@@ -222,12 +222,14 @@ export function createNl2SqlApiClient(options = {}) {
     cancelTask(taskId) {
       return runtimeRequest.post(`/tasks/${taskId}/cancel`)
     },
-    submitPermissionDecision(taskId, requestId, decision, note = '') {
-      return runtimeRequest.post(`/tasks/${taskId}/permission-decision`, {
+    submitPermissionDecision(taskId, requestId, decision, note = '', remember = undefined) {
+      const body = {
         request_id: requestId,
         decision,
         note,
-      })
+      }
+      if (remember) body.remember = remember
+      return runtimeRequest.post(`/tasks/${taskId}/permission-decision`, body)
     },
     submitQuestionAnswer(taskId, requestId, answers = []) {
       return runtimeRequest.post(`/tasks/${taskId}/question-answer`, {

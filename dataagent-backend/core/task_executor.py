@@ -167,6 +167,7 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         if not params.interactive:
             system_prompt += "\n" + (Path(__file__).parents[1]/"prompts/non_interactive_mode.md").read_text()
         await asyncio.to_thread(store.record_task_system_prompt,params.task_id,system_prompt)
+        approved_tools = await asyncio.to_thread(store.get_topic_approved_tools, params.topic_id)
         servers = _build_mcp_servers(cfg,(snapshot or {}).get("mcp_server_ids"),agent_snapshot=snapshot)
         ctx = PiRunContext(task_id=params.task_id,topic_id=params.topic_id,run_id=run_id,
             provider_id=provider_id,api_format=api_format,model=model,system_prompt=system_prompt,
@@ -174,6 +175,7 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
             provider_env=provider_env,runtime_env=runtime_env,sandbox=sandbox,results_dir=str(results),
             session_checkpoint={key:saved[key] for key in ("header","entries","leaf_id")} if saved else None,
             plan_approved=plan_approved,resume_operation=operation,permission_mode=mode,
+            approved_tools=approved_tools,
             turn_offset=int(previous_usage.get("turns",0)),
             allow_questions=cfg.dataagent_ask_user_question_enabled,
             interactive=params.interactive,
@@ -200,10 +202,18 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
                     card={"record_type":"question_request","data":{"request_id":request_id,"questions":data["questions"],"deadline_at":deadline}}
                 else:
                     deadline = plan_deadline(cfg,snapshot).iso if kind == "plan" else ""
+                    annotations = data.get("annotations") if isinstance(data.get("annotations"), dict) else {}
+                    destructive = kind != "plan" and annotations.get("destructiveHint") is True
+                    tool_name = "ExitPlanMode" if kind == "plan" else data["tool_name"]
+                    display_name = data.get("tool_title") or tool_name
                     card={"record_type":"permission_request","data":{"request_id":request_id,
-                        "tool_name":"ExitPlanMode" if kind == "plan" else data["tool_name"],
-                        "risk_level":"plan" if kind == "plan" else "high","title":"请确认执行计划" if kind == "plan" else "请确认写操作",
-                        "summary":data.get("plan") or data.get("tool_title") or data["tool_name"],"payload_preview":data,"deadline_at":deadline}}
+                        "tool_name":tool_name,
+                        "risk_level":"plan" if kind == "plan" else "high",
+                        "title":"请确认执行计划" if kind == "plan" else f"{display_name} 需要你确认",
+                        "summary":data.get("plan") or display_name,
+                        "payload_preview":data,"deadline_at":deadline,
+                        "destructive":destructive}}
+                    if data.get("tool_call_id"): card["data"]["tool_call_id"]=str(data["tool_call_id"])
                     if data.get("tool_title"): card["data"]["tool_title"]=data["tool_title"]
                     if kind == "plan": next_state["plan_approved"]=False
                 next_state["interaction"]["deadline_at"] = deadline

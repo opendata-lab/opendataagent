@@ -1618,6 +1618,347 @@
           "text": "Full answer"
         }
       ]
+    },
+    {
+      "name": "pi tool awaiting approval then allowed and executed merges into one row",
+      "records": [
+        {
+          "seq_id": 1,
+          "record_type": "agent_event",
+          "event_type": "turn.started",
+          "data": {
+            "turn_id": "turn-1"
+          }
+        },
+        {
+          "seq_id": 2,
+          "record_type": "agent_event",
+          "event_type": "tool.started",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "tool_title": "创建表",
+            "input": {
+              "name": "dwd_orders"
+            }
+          }
+        },
+        {
+          "seq_id": 3,
+          "record_type": "agent_event",
+          "event_type": "tool.completed",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "output": null,
+            "is_error": false,
+            "awaiting_approval": true
+          }
+        },
+        {
+          "seq_id": 4,
+          "record_type": "permission_request",
+          "event_type": null,
+          "data": {
+            "request_id": "run1:call-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "tool_title": "创建表",
+            "risk_level": "high",
+            "title": "创建表 需要你确认",
+            "summary": "创建表",
+            "destructive": false
+          }
+        },
+        {
+          "seq_id": 5,
+          "record_type": "permission_decision",
+          "event_type": null,
+          "data": {
+            "request_id": "run1:call-1",
+            "decision": "allow",
+            "note": "",
+            "source": "user"
+          }
+        },
+        {
+          "seq_id": 6,
+          "record_type": "agent_event",
+          "event_type": "tool.started",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "tool_title": "创建表",
+            "input": {
+              "name": "dwd_orders"
+            }
+          }
+        },
+        {
+          "seq_id": 7,
+          "record_type": "agent_event",
+          "event_type": "tool.completed",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "output": [
+              {
+                "type": "text",
+                "text": "created"
+              }
+            ],
+            "is_error": false
+          }
+        },
+        {
+          "seq_id": 8,
+          "record_type": "agent_event",
+          "event_type": "run.completed",
+          "data": {
+            "terminal_status": "success"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "kind": "tool_use",
+          "tool_name": "create_table",
+          "tool_title": "创建表",
+          "input": {
+            "name": "dwd_orders"
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "created"
+            }
+          ],
+          "is_error": false
+        },
+        {
+          "kind": "permission_request",
+          "tool_name": "create_table",
+          "tool_title": "创建表",
+          "tool_call_id": "call-1",
+          "destructive": false,
+          "risk_level": "high",
+          "title": "创建表 需要你确认",
+          "summary": "创建表",
+          "decision": "allow"
+        }
+      ]
+    },
+    {
+      "name": "pi tool awaiting approval then denied marks tool denied",
+      "records": [
+        {
+          "seq_id": 1,
+          "record_type": "agent_event",
+          "event_type": "turn.started",
+          "data": {
+            "turn_id": "turn-1"
+          }
+        },
+        {
+          "seq_id": 2,
+          "record_type": "agent_event",
+          "event_type": "tool.started",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-2",
+            "tool_name": "drop_table",
+            "tool_title": "删除表",
+            "input": {
+              "name": "tmp_orders"
+            }
+          }
+        },
+        {
+          "seq_id": 3,
+          "record_type": "agent_event",
+          "event_type": "tool.completed",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-2",
+            "tool_name": "drop_table",
+            "output": null,
+            "is_error": false,
+            "awaiting_approval": true
+          }
+        },
+        {
+          "seq_id": 4,
+          "record_type": "permission_request",
+          "event_type": null,
+          "data": {
+            "request_id": "run1:call-2",
+            "tool_call_id": "call-2",
+            "tool_name": "drop_table",
+            "tool_title": "删除表",
+            "risk_level": "high",
+            "title": "删除表 需要你确认",
+            "summary": "删除表",
+            "destructive": true
+          }
+        },
+        {
+          "seq_id": 5,
+          "record_type": "permission_decision",
+          "event_type": null,
+          "data": {
+            "request_id": "run1:call-2",
+            "decision": "deny",
+            "note": "保留临时表",
+            "source": "user"
+          }
+        },
+        {
+          "seq_id": 6,
+          "record_type": "agent_event",
+          "event_type": "turn.started",
+          "data": {
+            "turn_id": "turn-2"
+          }
+        },
+        {
+          "seq_id": 7,
+          "record_type": "agent_event",
+          "event_type": "content.delta",
+          "data": {
+            "turn_id": "turn-2",
+            "content_id": "c-0",
+            "kind": "answer",
+            "delta": "好的，已保留临时表。"
+          }
+        },
+        {
+          "seq_id": 8,
+          "record_type": "agent_event",
+          "event_type": "run.completed",
+          "data": {
+            "terminal_status": "success"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "kind": "tool_use",
+          "tool_name": "drop_table",
+          "tool_title": "删除表",
+          "input": {
+            "name": "tmp_orders"
+          },
+          "output": null,
+          "is_error": false,
+          "approval_status": "denied"
+        },
+        {
+          "kind": "permission_request",
+          "tool_name": "drop_table",
+          "tool_title": "删除表",
+          "tool_call_id": "call-2",
+          "destructive": true,
+          "risk_level": "high",
+          "title": "删除表 需要你确认",
+          "summary": "删除表",
+          "decision": "deny"
+        },
+        {
+          "kind": "text",
+          "text": "好的，已保留临时表。"
+        }
+      ]
+    },
+    {
+      "name": "pi call skipped while another call waits for approval shows not executed",
+      "records": [
+        {
+          "seq_id": 1,
+          "record_type": "agent_event",
+          "event_type": "turn.started",
+          "data": {
+            "turn_id": "turn-1"
+          }
+        },
+        {
+          "seq_id": 2,
+          "record_type": "agent_event",
+          "event_type": "tool.started",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "input": {
+              "name": "a"
+            }
+          }
+        },
+        {
+          "seq_id": 3,
+          "record_type": "agent_event",
+          "event_type": "tool.started",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-2",
+            "tool_name": "create_table",
+            "input": {
+              "name": "b"
+            }
+          }
+        },
+        {
+          "seq_id": 4,
+          "record_type": "agent_event",
+          "event_type": "tool.completed",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "output": null,
+            "is_error": false,
+            "awaiting_approval": true
+          }
+        },
+        {
+          "seq_id": 5,
+          "record_type": "agent_event",
+          "event_type": "tool.completed",
+          "data": {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-2",
+            "tool_name": "create_table",
+            "output": null,
+            "is_error": false,
+            "not_executed": true
+          }
+        }
+      ],
+      "expected": [
+        {
+          "kind": "tool_use",
+          "tool_name": "create_table",
+          "input": {
+            "name": "a"
+          },
+          "output": null,
+          "is_error": false,
+          "awaiting_approval": true
+        },
+        {
+          "kind": "tool_use",
+          "tool_name": "create_table",
+          "input": {
+            "name": "b"
+          },
+          "output": null,
+          "is_error": false,
+          "approval_status": "not_executed"
+        }
+      ]
     }
   ]
 }

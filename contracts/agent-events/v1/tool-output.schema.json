@@ -10,6 +10,14 @@
     "tool_call_id": { "type": "string", "minLength": 1 },
     "tool_name": { "type": "string", "minLength": 1 },
     "is_error": { "type": "boolean" },
+    "awaiting_approval": {
+      "type": "boolean",
+      "description": "True when the call was intercepted to wait for user confirmation before execution."
+    },
+    "not_executed": {
+      "type": "boolean",
+      "description": "True when the call was skipped because another call in the same turn is waiting for the user."
+    },
     "output": {
       "description": "String, SDK content-block array, or a platform object carrying a top-level `kind`. Wrapping any of these breaks chart and table detection.",
       "anyOf": [

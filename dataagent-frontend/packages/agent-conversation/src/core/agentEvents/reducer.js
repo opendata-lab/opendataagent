@@ -153,6 +153,18 @@ export function reducePiEvent(state, record) {
     }
 
     case AgentEventType.TOOL_STARTED: {
+      const existing = _findToolBlock(state, data.tool_call_id)
+      if (existing) {
+        if (data.tool_name) existing.name = String(data.tool_name)
+        if (typeof data.tool_title === 'string' && data.tool_title) existing.tool_title = data.tool_title
+        if (Object.prototype.hasOwnProperty.call(data, 'input')) existing.input = data.input ?? null
+        existing.output = null
+        existing.is_error = false
+        delete existing.awaiting_approval
+        delete existing.approval_status
+        existing.status = 'streaming'
+        break
+      }
       const turn = _turnForEvent(state, data)
       if (!turn) break
       const block = _newBlock(turn, 'tool_use')
@@ -170,6 +182,16 @@ export function reducePiEvent(state, record) {
       if (block) {
         block.output = data.output ?? null
         block.is_error = Boolean(data.is_error)
+        if (data.awaiting_approval) {
+          block.awaiting_approval = true
+          delete block.approval_status
+        } else if (data.not_executed) {
+          delete block.awaiting_approval
+          block.approval_status = 'not_executed'
+        } else {
+          delete block.awaiting_approval
+          delete block.approval_status
+        }
         block.status = 'done'
       }
       break
@@ -221,6 +243,10 @@ export function reducePiEvent(state, record) {
     }
     for (const block of state.blocks) {
       if (block.status === 'streaming') block.status = 'done'
+      if (block.type === 'tool_use' && block.awaiting_approval) {
+        delete block.awaiting_approval
+        block.approval_status = 'not_executed'
+      }
     }
   }
 }

@@ -166,7 +166,9 @@ export class Cell {
         remainingMs: () => deadline - Date.now(),
         readTimeoutMs: Number(init.runtime_env.DATAAGENT_SQL_READ_TIMEOUT_SECONDS || 300) * 1000,
         writeTimeoutMs: Number(init.runtime_env.DATAAGENT_SQL_WRITE_TIMEOUT_SECONDS || 60) * 1000 });
+      const mcpToolsByName = new Map<string, any>(mcpBridge.tools.map((tool: any) => [String(tool.name), tool]));
       const mcpAnnotations = new Map(mcpBridge.tools.map((tool: any) => [String(tool.name), tool.mcpAnnotations ?? {}]));
+      const approvedTools = new Set((init.approved_tools ?? []).map((key) => String(key || "").trim()).filter(Boolean));
       // Cache retention must reach the stream options, not merely the init
       // frame: pi-ai defaults to "short" whenever the option is absent.
       const { model, streamFn } = this.modelFactory(
@@ -336,7 +338,11 @@ export class Cell {
           }
         };
       agent.beforeToolCall = async (context) => {
-          if (parked || segmentError) return { block: true, reason: parked ? "Not executed: waiting for user" : segmentError };
+          if (parked) {
+            normalizer.markNotExecuted(String(context.toolCall?.id ?? ""));
+            return { block: true, reason: "Not executed: waiting for user" };
+          }
+          if (segmentError) return { block: true, reason: segmentError };
           toolCalls += 1;
           if (toolCalls > init.limits.max_tool_calls) {
             limitDenial = `已达到本次任务工具调用上限 ${init.limits.max_tool_calls}`;
@@ -348,13 +354,18 @@ export class Cell {
           }
           // Second line of defence. The tools enforce the boundary themselves,
           // but a tool added later must not be able to skip it by forgetting.
+          const toolCallId = String(context.toolCall?.id ?? "");
           const toolName = String(context.toolCall?.name ?? "");
           const args = (context.toolCall?.arguments ?? {}) as Record<string, unknown>;
           const hints = mcpAnnotations.get(toolName);
           const isMcp = mcpAnnotations.has(toolName);
-          const write = isMcp && (hints?.readOnlyHint !== true || hints?.destructiveHint === true);
+          const mcpTool = mcpToolsByName.get(toolName);
+          const destructive = hints?.destructiveHint === true;
+          const write = isMcp && (hints?.readOnlyHint !== true || destructive);
           const mode = planApproved ? "acceptEdits" : init.permission_mode ?? "default";
-          const needsApproval = write && mode !== "bypassPermissions" && (mode !== "acceptEdits" || hints?.destructiveHint === true);
+          const toolKey = mcpTool?.mcpServerIdentity ? `${mcpTool.mcpServerIdentity}:${toolName}` : "";
+          const sessionApproved = !destructive && Boolean(toolKey && approvedTools.has(toolKey));
+          const needsApproval = write && !sessionApproved && mode !== "bypassPermissions" && (mode !== "acceptEdits" || destructive);
           const reason =
             planMode && !planApproved && (write || ["write", "edit"].includes(toolName))
               ? `计划模式：批准计划前不能调用 ${toolName}。先调用 ExitPlanMode 提交计划，批准后再执行。`
@@ -367,7 +378,7 @@ export class Cell {
                 turn_id: normalizer.turnId,
                 // The reducer locates the tool block by this id; without it a
                 // denied call renders as a call that never finished.
-                tool_call_id: String(context.toolCall?.id ?? ""),
+                tool_call_id: toolCallId,
                 tool_name: toolName,
                 reason,
               })
@@ -375,11 +386,13 @@ export class Cell {
             return { block: true, reason };
           }
           if (needsApproval) {
-            park("permission", String(context.toolCall?.id ?? ""), {
+            normalizer.markAwaitingApproval(toolCallId);
+            park("permission", toolCallId, {
+              tool_call_id: toolCallId,
               tool_name: toolName, arguments: args, annotations: hints, plan_approved: planApproved,
               ...(toolTitles.get(toolName) ? { tool_title: toolTitles.get(toolName) } : {}),
-              server_name: (mcpBridge!.tools.find((tool: any) => tool.name === toolName) as any)?.mcpServerName,
-              server_identity: (mcpBridge!.tools.find((tool: any) => tool.name === toolName) as any)?.mcpServerIdentity,
+              server_name: mcpTool?.mcpServerName,
+              server_identity: mcpTool?.mcpServerIdentity,
             });
             return { block: true, reason: "Not executed: waiting for approval" };
           }
@@ -459,9 +472,10 @@ export class Cell {
           if (!tool) throw new Error("Approved MCP tool is no longer available");
           // Already counted when the call parked for approval in the previous segment.
           const turn_id = normalizer.turnId;
-          emit(normalizer.toolStarted(operation.request_id, tool.name, operation.payload.arguments));
+          const toolCallId = String(operation.payload.tool_call_id || operation.request_id);
+          emit(normalizer.toolStarted(toolCallId, tool.name, operation.payload.arguments));
           try {
-            result = await tool.execute(operation.request_id, operation.payload.arguments, this.cancellation.signal);
+            result = await tool.execute(toolCallId, operation.payload.arguments, this.cancellation.signal);
           } catch (error) {
             // A server error is a known outcome; a lost transport is not.
             if (!(error instanceof McpToolError)) throw error;
@@ -475,7 +489,7 @@ export class Cell {
               isError: Boolean((result as any)?.isError) };
           }
           await onOperationResult(operation.request_id, result);
-          emit(sm.createEvent("tool.completed", { turn_id, tool_call_id: operation.request_id,
+          emit(sm.createEvent("tool.completed", { turn_id, tool_call_id: toolCallId,
             tool_name: tool.name, output: (result as any)?.content, is_error: Boolean((result as any)?.isError) }));
         }
         const raw = JSON.stringify(result);

@@ -231,25 +231,39 @@ def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                     if not block.get("text"):
                         block["text"] = str(data.get("text") or "")
 
-            elif etype == "tool.started" and current_turn_blocks is not None:
+            elif etype == "tool.started":
                 tool_id = str(data.get("tool_call_id") or "")
-                block = {
-                    "type": "tool_use",
-                    "tool_id": tool_id,
-                    "tool_name": str(data.get("tool_name") or "Tool"),
-                    "_input_json": "",
-                    "input": data.get("input"),
-                    "output": None,
-                    "is_error": False,
-                    "_idx": len(current_turn_blocks),
-                }
-                tool_title = data.get("tool_title")
-                if isinstance(tool_title, str) and tool_title:
-                    block["tool_title"] = tool_title
-                current_turn_blocks.append(block)
-                ordered_blocks.append(block)
-                if tool_id:
-                    blocks_by_tool_id[tool_id] = block
+                existing = blocks_by_tool_id.get(tool_id) if tool_id else None
+                if existing is not None:
+                    if data.get("tool_name"):
+                        existing["tool_name"] = str(data.get("tool_name"))
+                    tool_title = data.get("tool_title")
+                    if isinstance(tool_title, str) and tool_title:
+                        existing["tool_title"] = tool_title
+                    if "input" in data:
+                        existing["input"] = data.get("input")
+                    existing["output"] = None
+                    existing["is_error"] = False
+                    existing.pop("awaiting_approval", None)
+                    existing.pop("approval_status", None)
+                elif current_turn_blocks is not None:
+                    block = {
+                        "type": "tool_use",
+                        "tool_id": tool_id,
+                        "tool_name": str(data.get("tool_name") or "Tool"),
+                        "_input_json": "",
+                        "input": data.get("input"),
+                        "output": None,
+                        "is_error": False,
+                        "_idx": len(current_turn_blocks),
+                    }
+                    tool_title = data.get("tool_title")
+                    if isinstance(tool_title, str) and tool_title:
+                        block["tool_title"] = tool_title
+                    current_turn_blocks.append(block)
+                    ordered_blocks.append(block)
+                    if tool_id:
+                        blocks_by_tool_id[tool_id] = block
 
             elif etype == "tool.completed":
                 tool_id = str(data.get("tool_call_id") or "")
@@ -263,6 +277,21 @@ def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                     if data.get("output_meta"):
                         block["output_meta"] = data.get("output_meta")
                     block["is_error"] = bool(data.get("is_error"))
+                    if data.get("awaiting_approval"):
+                        block["awaiting_approval"] = True
+                        block.pop("approval_status", None)
+                    elif data.get("not_executed"):
+                        block.pop("awaiting_approval", None)
+                        block["approval_status"] = "not_executed"
+                    else:
+                        block.pop("awaiting_approval", None)
+                        block.pop("approval_status", None)
+
+            elif etype in {"run.completed", "run.failed", "run.cancelled", "run.suspended"}:
+                for blk in ordered_blocks:
+                    if blk.get("type") == "tool_use" and blk.get("awaiting_approval"):
+                        blk.pop("awaiting_approval", None)
+                        blk["approval_status"] = "not_executed"
 
         elif record_type == "permission_request":
             request_id = str(data.get("request_id") or "")
@@ -281,6 +310,10 @@ def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                 "source": "",
                 "_idx": len(ordered_blocks),
             }
+            if data.get("tool_call_id"):
+                block["tool_call_id"] = str(data["tool_call_id"])
+            if "destructive" in data:
+                block["destructive"] = bool(data.get("destructive"))
             if isinstance(data.get("tool_title"), str) and data["tool_title"]:
                 block["tool_title"] = data["tool_title"]
             ordered_blocks.append(block)
@@ -293,10 +326,22 @@ def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             request_id = str(data.get("request_id") or "")
             block = perm_blocks_by_request_id.get(request_id)
             if block is not None:
-                block["decision"] = str(data.get("decision") or "pending")
+                decision = str(data.get("decision") or "pending")
+                block["decision"] = decision
                 block["note"] = str(data.get("note") or "")
                 block["decided_at"] = str(data.get("decided_at") or "")
                 block["source"] = str(data.get("source") or "user")
+                if data.get("remember"):
+                    block["remember"] = str(data["remember"])
+                tool_call_id = str(block.get("tool_call_id") or "")
+                tool_block = blocks_by_tool_id.get(tool_call_id) if tool_call_id else None
+                if tool_block is not None and tool_block.get("awaiting_approval"):
+                    if decision == "deny":
+                        tool_block.pop("awaiting_approval", None)
+                        tool_block["approval_status"] = "denied"
+                    elif decision == "timeout":
+                        tool_block.pop("awaiting_approval", None)
+                        tool_block["approval_status"] = "not_executed"
 
         elif record_type == "question_request":
             request_id = str(data.get("request_id") or "")
@@ -850,6 +895,67 @@ class TopicTaskStore(SessionCheckpointStore):
         finally:
             conn.close()
         return normalize_permission_mode((row or {}).get("permission_mode"))
+
+    def get_topic_approved_tools(self, topic_id: str) -> list[str]:
+        """Read session-approved non-destructive MCP tool keys for a topic."""
+        self._ensure_ready()
+        conn = self._connect(database=self._schema_name())
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT approved_tools_json FROM da_agent_topic WHERE topic_id = %s LIMIT 1",
+                    (topic_id,),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        raw = _safe_json_load((row or {}).get("approved_tools_json"))
+        if not isinstance(raw, list):
+            return []
+        seen: list[str] = []
+        for item in raw:
+            key = str(item or "").strip()
+            if key and key not in seen:
+                seen.append(key)
+        return seen
+
+    def add_topic_approved_tool(self, topic_id: str, tool_key: str) -> list[str]:
+        """Persist one session-approved MCP tool key (`server_identity:tool_name`)."""
+        key = str(tool_key or "").strip()
+        if not key:
+            return self.get_topic_approved_tools(topic_id)
+        self._ensure_ready()
+        conn = self._connect(database=self._schema_name())
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT approved_tools_json FROM da_agent_topic WHERE topic_id = %s LIMIT 1 FOR UPDATE",
+                    (topic_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    conn.rollback()
+                    return []
+                raw = _safe_json_load(row.get("approved_tools_json"))
+                items = [str(v).strip() for v in raw if str(v or "").strip()] if isinstance(raw, list) else []
+                if key not in items:
+                    items.append(key)
+                    cur.execute(
+                        """
+                        UPDATE da_agent_topic
+                        SET approved_tools_json = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE topic_id = %s
+                        """,
+                        (json.dumps(items, ensure_ascii=False), topic_id),
+                    )
+            conn.commit()
+            return items
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def update_topic(
         self,
@@ -1861,19 +1967,23 @@ class TopicTaskStore(SessionCheckpointStore):
         note: str = "",
         decided_at: str = "",
         source: str = "user",
+        remember: str | None = None,
     ) -> str:
+        payload: dict[str, Any] = {
+            "request_id": str(request_id),
+            "decision": normalize_permission_decision(decision),
+            "note": str(note or ""),
+            "decided_at": decided_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "source": str(source or "user"),
+        }
+        if remember:
+            payload["remember"] = str(remember)
         return self._append_interaction_if_waiting(
             task_id=task_id,
             request_id=request_id,
             kind="permission",
             waiting_status="waiting_permission",
-            payload={
-                "request_id": str(request_id),
-                "decision": normalize_permission_decision(decision),
-                "note": str(note or ""),
-                "decided_at": decided_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "source": str(source or "user"),
-            },
+            payload=payload,
         )
 
     def get_pending_question_request_id(self, task_id: str) -> str | None:
@@ -2158,6 +2268,8 @@ class TopicTaskStore(SessionCheckpointStore):
                             "title": str(data.get("title") or ""),
                             "summary": str(data.get("summary") or ""),
                             "payload_preview": data.get("payload_preview"),
+                            "destructive": bool(data.get("destructive")),
+                            "tool_call_id": str(data.get("tool_call_id") or ""),
                         }
                     )
                 else:

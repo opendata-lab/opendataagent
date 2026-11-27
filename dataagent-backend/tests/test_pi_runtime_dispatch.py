@@ -24,6 +24,7 @@ def setup(monkeypatch,tmp_path):
         saved=None
         def get_session_checkpoint(self,_): return self.saved
         def record_task_system_prompt(self,*args): pass
+        def get_topic_approved_tools(self,_): return []
         def commit_session_segment(self,**kw): calls['commit']=kw
     store=Store()
     monkeypatch.setattr(executor,'get_topic_task_store',lambda:store)

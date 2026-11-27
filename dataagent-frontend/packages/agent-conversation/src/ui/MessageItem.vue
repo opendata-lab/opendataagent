@@ -179,7 +179,7 @@ const isCardToolBlock = (block) => CARD_TOOLS.has(String(block?.name || '').spli
 const isBlockActivelyProgressing = (block) => {
   if (!block) return false
   if (block.type === 'text' || block.type === 'thinking') return block.status === 'streaming'
-  if (block.type === 'tool_use') return block.output == null
+  if (block.type === 'tool_use') return !block.awaiting_approval && !block.approval_status && block.output == null
   return false
 }
 

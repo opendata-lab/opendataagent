@@ -39,6 +39,8 @@ def _to_canonical(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "input": block.get("input"),
                     "output": block.get("output"),
                     "is_error": bool(block.get("is_error")),
+                    **({"awaiting_approval": True} if block.get("awaiting_approval") else {}),
+                    **({"approval_status": block["approval_status"]} if block.get("approval_status") else {}),
                 }
             )
         elif btype == "permission_request":
@@ -47,6 +49,8 @@ def _to_canonical(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "kind": "permission_request",
                     "tool_name": block.get("tool_name"),
                     **({"tool_title": block["tool_title"]} if "tool_title" in block else {}),
+                    **({"tool_call_id": block["tool_call_id"]} if block.get("tool_call_id") else {}),
+                    **({"destructive": bool(block["destructive"])} if "destructive" in block else {}),
                     "risk_level": block.get("risk_level"),
                     "title": block.get("title"),
                     "summary": block.get("summary"),

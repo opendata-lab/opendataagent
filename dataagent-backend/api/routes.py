@@ -666,12 +666,27 @@ def _record_permission_decision(task_id: str, payload: PermissionDecisionRequest
     if current and str(current.get("status") or "") == "resolved":
         effective = str(current.get("decision") or decision)
     else:
-        append_result = store.append_permission_decision_if_waiting(
-            task_id=task_id,
-            request_id=request_id,
-            decision=decision,
-            note=str(payload.note or ""),
-        )
+        effective_remember: str | None = None
+        remember_tool_key = ""
+        if decision == "allow" and payload.remember == "session" and current:
+            is_plan = str(current.get("risk_level") or "") == "plan"
+            preview = current.get("payload_preview") if isinstance(current.get("payload_preview"), dict) else {}
+            annotations = preview.get("annotations") if isinstance(preview.get("annotations"), dict) else {}
+            destructive = bool(current.get("destructive")) or annotations.get("destructiveHint") is True
+            server_identity = str(preview.get("server_identity") or "").strip()
+            tool_name = str(preview.get("tool_name") or current.get("tool_name") or "").strip()
+            if not is_plan and not destructive and server_identity and tool_name:
+                effective_remember = "session"
+                remember_tool_key = f"{server_identity}:{tool_name}"
+        append_kwargs: dict[str, Any] = {
+            "task_id": task_id,
+            "request_id": request_id,
+            "decision": decision,
+            "note": str(payload.note or ""),
+        }
+        if effective_remember:
+            append_kwargs["remember"] = effective_remember
+        append_result = store.append_permission_decision_if_waiting(**append_kwargs)
         if append_result not in {"appended", "already_resolved"}:
             detail = (
                 "task is not awaiting this permission decision"
@@ -680,6 +695,8 @@ def _record_permission_decision(task_id: str, payload: PermissionDecisionRequest
             )
             raise HTTPException(status_code=409, detail=detail)
         appended = append_result == "appended"
+        if appended and remember_tool_key:
+            store.add_topic_approved_tool(str(task.get("topic_id") or ""), remember_tool_key)
         resolved = store.get_current_permission_interaction(task_id=task_id, request_id=request_id)
         effective = str((resolved or {}).get("decision") or decision)
 
