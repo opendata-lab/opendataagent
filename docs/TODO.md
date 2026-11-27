@@ -16,12 +16,6 @@
 - **要做**：在两个仓库删掉该字段及相关传参；DataAgent 侧无需改动。
 - **来源**：移除 `database` 提示参数时顺带核对调用方，2026-11-27。
 
-### 撤销本会话的工具授权入口
-
-- **现状**（2026-11-26）：写操作审批已支持“本会话内允许此工具”（存入 `da_agent_topic.approved_tools_json`，仅限非破坏性 MCP 工具，新会话自动重置），但会话菜单尚无手动撤销已授权工具的入口。
-- **要做**：在会话菜单增加“撤销本会话的工具授权”入口与后端清空接口，允许用户不新建会话即重新恢复逐次确认。
-- **来源**：[审批体验设计](design/2026-11-26-approval-ux-design.md) · [计划](plans/2026-11-26-approval-ux-plan.md)，2026-11-26。
-
 ### 独立登录 Widget 的统一账号与续聊
 
 - **现状**（2026-11-24）：DataAgent 仓库侧（计划第 1、2、3、5 步）已在分支 `feat/user-accounts` 完成：新增 `da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant` 及整数 `user_id` 外键迁移 `20261123_000042`（Alembic 只建表并重建 MCP 令牌表；旧数据由手动执行的 `scripts/migrate-accounts.sh` 迁移；迁移只能向前，回退用 `scripts/backup-db.sh` / `scripts/restore-db.sh`），统一 `core/accounts` 模块（移除 `core/auth.py` 与关闭认证/匿名 Widget 旁路），上线用户管理（仅停用不物理删除）、角色管理、个人资料、助手独立授权及服务端受信任代理配置页，并同步更新本地冒烟、评测脚本、部署配置与手册。

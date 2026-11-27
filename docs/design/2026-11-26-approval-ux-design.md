@@ -44,7 +44,7 @@
 - `destructiveHint: true` 的工具不提供该选项，始终逐次确认（与 `acceptEdits` 对破坏性操作仍询问一致）。
 - 存储：会话表新增 JSON 列 `approved_tools_json`（工具键列表）。审批接口 `permission-decision` 增加可选字段 `remember: "session"`，仅在 `decision=allow` 且工具非破坏性时生效；后端写入该列。
 - 运行：执行器把列表随 cell init 下发（`approved_tools`）；Pi 的 `needsApproval` 对列表内工具返回 false。
-- 撤销：本期不做单独入口；新会话即重置。会话菜单“撤销本会话的工具授权”记入 TODO。
+- 撤销：不做单独入口，开新会话即重置（2026-11-27 用户确认不需要）。
 
 ### 适用范围
 
