@@ -246,7 +246,7 @@ describe('DataAgentConfig', () => {
     const wrapper = mountConfig()
     await flushPromises()
 
-    wrapper.vm.currentDraft.supports_partial_messages = false
+    wrapper.vm.currentDraft.base_url = 'https://openrouter.ai/api/v2'
 
     expect(wrapper.vm.currentProviderDirty).toBe(true)
     expect(wrapper.vm.saveButtonText).toBe('保存改动')
@@ -268,7 +268,7 @@ describe('DataAgentConfig', () => {
     const wrapper = mountConfig()
     await flushPromises()
 
-    wrapper.vm.currentDraft.supports_partial_messages = false
+    wrapper.vm.currentDraft.base_url = 'https://openrouter.ai/api/v2'
     messageBoxMocks.confirm.mockResolvedValue('confirm')
 
     await wrapper.vm.selectProvider('anyrouter')
@@ -276,7 +276,7 @@ describe('DataAgentConfig', () => {
 
     expect(messageBoxMocks.confirm).toHaveBeenCalledTimes(1)
     expect(wrapper.vm.selectedProviderId).toBe('anyrouter')
-    expect(wrapper.vm.providerDrafts.openrouter.supports_partial_messages).toBe(true)
+    expect(wrapper.vm.providerDrafts.openrouter.base_url).toBe('https://openrouter.ai/api')
     expect(wrapper.vm.form.provider_id).toBe('openrouter')
     expect(wrapper.vm.form.model).toBe('anthropic/claude-sonnet-4.5')
   })

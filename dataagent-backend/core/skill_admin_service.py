@@ -16,7 +16,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from config import get_settings, update_settings
 from core.provider_runtime import (
     normalize_api_format,
     request_model_text,
@@ -34,12 +33,10 @@ logger = logging.getLogger(__name__)
 MANAGED_FILE_SUFFIXES = {".json", ".md", ".markdown", ".py"}
 DEFAULT_PROVIDER_ID = "openrouter"
 MODEL_DETECTION_TIMEOUT_SECONDS = 30
-LEGACY_SQL_SKILL_FOLDER = "dataagent-nl2sql"
 DEFAULT_PRIMARY_SKILL_FOLDER = "chart-visualization"
 # 与数据平台无关的通用展示能力，可被任意智能体单独启用，不依赖平台工具
 CHART_VISUALIZATION_SKILL_FOLDER = "chart-visualization"
 REPORT_GENERATION_SKILL_FOLDER = "report-generation"
-DEFAULT_SKILLS_OUTPUT_DIR = f"../.claude/skills/{DEFAULT_PRIMARY_SKILL_FOLDER}"
 # 必须覆盖仓库内所有随发布携带的 skill：它决定 source=bundled，而 bundled 是
 # 「不可卸载、不可覆盖导入」的唯一依据。漏掉一个，该 skill 就会被判成 managed，
 # 管理员能从 UI 卸载它，uninstall_skill() 会 rmtree 掉仓库跟踪的目录。
@@ -56,10 +53,6 @@ DEFAULT_ENABLED_BUILTIN_SKILL_FOLDERS = (
 )
 SKILL_FOLDER_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 PROVIDER_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-
-
-def _backend_root() -> Path:
-    return Path(__file__).resolve().parent.parent
 
 
 def current_settings_payload() -> dict[str, Any]:
@@ -82,14 +75,9 @@ def current_settings_payload() -> dict[str, Any]:
 
 
 def _runtime_settings_payload() -> dict[str, Any]:
-    cfg = get_settings()
     return {
-        "provider_id": cfg.llm_provider,
-        "model": cfg.claude_model,
-        "anthropic_api_key": cfg.anthropic_api_key,
-        "anthropic_auth_token": cfg.anthropic_auth_token,
-        "anthropic_base_url": cfg.anthropic_base_url,
-        "skills_output_dir": cfg.skills_output_dir,
+        "provider_id": "",
+        "model": "",
         # Widget allowlist is managed exclusively from the settings page and
         # persisted in da_agent_settings; there is no env-var source.
         "widget_allowed_sites": [],
@@ -150,7 +138,7 @@ def _normalize_widget_allowed_sites(raw: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def _normalize_skill_runtime(raw: Any, *, fallback_folder: str = "") -> dict[str, dict[str, bool]]:
+def _normalize_skill_runtime(raw: Any) -> dict[str, dict[str, bool]]:
     normalized: dict[str, dict[str, bool]] = {}
     if isinstance(raw, dict):
         for folder, entry in raw.items():
@@ -159,15 +147,9 @@ def _normalize_skill_runtime(raw: Any, *, fallback_folder: str = "") -> dict[str
                 continue
             enabled = bool(entry.get("enabled")) if isinstance(entry, dict) else bool(entry)
             normalized[folder_name] = {"enabled": enabled}
-    legacy_enabled = bool((normalized.get(LEGACY_SQL_SKILL_FOLDER) or {}).get("enabled"))
-    if LEGACY_SQL_SKILL_FOLDER in normalized:
-        normalized.pop(LEGACY_SQL_SKILL_FOLDER, None)
-
-    if not normalized and fallback_folder and fallback_folder != LEGACY_SQL_SKILL_FOLDER:
-        normalized[fallback_folder] = {"enabled": True}
-    if not raw or fallback_folder == LEGACY_SQL_SKILL_FOLDER or legacy_enabled:
+    if not normalized:
         for folder in DEFAULT_ENABLED_BUILTIN_SKILL_FOLDERS:
-            normalized.setdefault(folder, {"enabled": True})
+            normalized[folder] = {"enabled": True}
     return normalized
 
 
@@ -177,13 +159,6 @@ def _enabled_skill_folders(skill_runtime: dict[str, dict[str, bool]]) -> list[st
         for folder, entry in (skill_runtime or {}).items()
         if folder and bool((entry or {}).get("enabled"))
     )
-
-
-def _folder_from_skills_output_dir(raw: str | None) -> str:
-    value = str(raw or "").replace("\\", "/").strip().rstrip("/")
-    if not value:
-        return ""
-    return value.rsplit("/", 1)[-1]
 
 
 def _normalize_model_detections(raw: Any) -> dict[str, dict[str, str]]:
@@ -219,7 +194,6 @@ def _default_provider_settings(provider_id: str) -> dict[str, Any]:
     default_format = "/v1/messages"
     return {
         "provider_id": provider_id,
-        "provider_type": default_format,
         "api_format": default_format,
         "display_name": str(definition.get("display_name") or provider_id),
         "provider_group": "",
@@ -227,7 +201,6 @@ def _default_provider_settings(provider_id: str) -> dict[str, Any]:
         "api_key": "",
         "auth_token": "",
         "base_url": "",
-        "supports_partial_messages": True,
         "enabled_models": [],
         "custom_models": [],
         "models": [],
@@ -260,28 +233,6 @@ def _coerce_provider_settings(raw: Any) -> dict[str, dict[str, Any]]:
     return {}
 
 
-def _legacy_provider_settings(payload: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    data = dict(payload or {})
-    provider_id = _normalize_provider_id(data.get("provider_id"), allow_empty=True)
-    model = str(data.get("model") or "").strip()
-    api_key = str(data.get("anthropic_api_key") or "").strip()
-    auth_token = str(data.get("anthropic_auth_token") or "").strip()
-    base_url = str(data.get("anthropic_base_url") or "").strip()
-
-    legacy = {}
-    if provider_id:
-        target = legacy.setdefault(provider_id, _default_provider_settings(provider_id))
-        if api_key:
-            target["api_key"] = api_key
-        if auth_token:
-            target["auth_token"] = auth_token
-        if base_url:
-            target["base_url"] = base_url
-        if model:
-            target["enabled_models"] = [model]
-    return legacy
-
-
 def _enabled_provider_ids(provider_settings: dict[str, dict[str, Any]]) -> list[str]:
     enabled: list[str] = []
     ordered_ids = sorted(provider_settings.keys())
@@ -300,7 +251,6 @@ def _normalize_provider_entry(provider_id: str, payload: dict[str, Any], previou
     base.update(dict(payload or {}))
 
     api_format = normalize_api_format(base.get("api_format"))
-    provider_type = api_format
 
     provider_enabled_raw = None
     for source in (payload, previous):
@@ -345,7 +295,6 @@ def _normalize_provider_entry(provider_id: str, payload: dict[str, Any], previou
     base_url = str(base.get("base_url") or definition.get("default_base_url") or "").strip()
     api_key = str(base.get("api_key") or "").strip()
     auth_token = str(base.get("auth_token") or "").strip()
-    supports_partial_messages = bool(base.get("supports_partial_messages", True))
 
     status, message = _compute_provider_validation(
         api_format,
@@ -364,7 +313,6 @@ def _normalize_provider_entry(provider_id: str, payload: dict[str, Any], previou
 
     return {
         "provider_id": provider_id,
-        "provider_type": provider_type,
         "api_format": api_format,
         "display_name": str(base.get("name") or base.get("display_name") or definition.get("display_name") or provider_id).strip()[:128],
         "provider_group": str(base.get("provider_group") or definition.get("provider_group") or "").strip()[:64],
@@ -372,7 +320,6 @@ def _normalize_provider_entry(provider_id: str, payload: dict[str, Any], previou
         "api_key": api_key,
         "auth_token": auth_token,
         "base_url": base_url,
-        "supports_partial_messages": supports_partial_messages,
         "enabled_models": enabled_models,
         "custom_models": custom_models,
         "models": models,
@@ -412,14 +359,8 @@ def _compute_provider_validation(
 def _merge_provider_settings(
     current: dict[str, dict[str, Any]] | None,
     patch: dict[str, dict[str, Any]] | None,
-    *,
-    legacy_payload: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    # Once provider rows exist they are the complete registry. Only synthesize
-    # the four historical definitions while bootstrapping an empty registry.
-    merged: dict[str, dict[str, Any]] = (
-        {} if current else _legacy_provider_settings(legacy_payload)
-    )
+    merged: dict[str, dict[str, Any]] = {}
     for provider_id in set(current or {}):
         if current and provider_id in current:
             merged[provider_id] = _normalize_provider_entry(provider_id, current[provider_id], merged.get(provider_id))
@@ -442,8 +383,6 @@ def _merge_provider_settings(
                 current_entry["auth_token"] = auth_token
         if "base_url" in update:
             current_entry["base_url"] = str(update.get("base_url") or "").strip()
-        if "supports_partial_messages" in update:
-            current_entry["supports_partial_messages"] = bool(update.get("supports_partial_messages"))
         if "enabled_models" in update:
             current_entry["enabled_models"] = _string_list(update.get("enabled_models"))
         if "custom_models" in update:
@@ -456,8 +395,6 @@ def _merge_provider_settings(
             current_entry["display_name"] = str(update.get("name") or update.get("display_name") or "").strip()
         if "provider_group" in update:
             current_entry["provider_group"] = str(update.get("provider_group") or "").strip()
-        if "provider_type" in update:
-            current_entry["provider_type"] = str(update.get("provider_type") or "").strip()
         if "api_format" in update:
             current_entry["api_format"] = str(update.get("api_format") or "").strip()
         if update.get("enabled") is False:
@@ -478,8 +415,6 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
     for key, value in update.items():
         if key in {"provider_settings", "providers", "skill_runtime"} or value is None:
             continue
-        if key in {"anthropic_api_key", "anthropic_auth_token"} and not str(value or "").strip():
-            continue
         base[key] = value
 
     current_provider_settings = _coerce_provider_settings(base.get("provider_settings"))
@@ -487,16 +422,9 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
     provider_settings = _merge_provider_settings(
         current_provider_settings,
         patch_provider_settings,
-        legacy_payload=base | update,
     )
-    configured_skills_output_dir = str(base.get("skills_output_dir") or "").strip()
-    fallback_skill_folder = _folder_from_skills_output_dir(configured_skills_output_dir)
-    normalized_skills_output_dir = configured_skills_output_dir or DEFAULT_SKILLS_OUTPUT_DIR
-    if fallback_skill_folder == LEGACY_SQL_SKILL_FOLDER:
-        normalized_skills_output_dir = DEFAULT_SKILLS_OUTPUT_DIR
     skill_runtime = _normalize_skill_runtime(
         update.get("skill_runtime") if "skill_runtime" in update else base.get("skill_runtime"),
-        fallback_folder=fallback_skill_folder,
     )
     widget_allowed_sites = _normalize_widget_allowed_sites(base.get("widget_allowed_sites"))
 
@@ -523,10 +451,6 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
     flattened = {
         "provider_id": provider_id,
         "model": model,
-        "anthropic_api_key": str(runtime_provider.get("api_key") or base.get("anthropic_api_key") or ""),
-        "anthropic_auth_token": str(runtime_provider.get("auth_token") or base.get("anthropic_auth_token") or ""),
-        "anthropic_base_url": str(runtime_provider.get("base_url") or base.get("anthropic_base_url") or ""),
-        "skills_output_dir": normalized_skills_output_dir,
         "provider_settings": provider_settings,
         "skill_runtime": skill_runtime,
         "widget_allowed_sites": widget_allowed_sites,
@@ -539,33 +463,10 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
     return flattened
 
 
-def runtime_patch_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    patch: dict[str, Any] = {}
-    if "provider_id" in payload:
-        patch["llm_provider"] = payload.get("provider_id")
-    if "model" in payload:
-        patch["claude_model"] = payload.get("model")
-    # Database connections come only from deployment config, never from stored settings.
-    passthrough = {
-        "anthropic_api_key",
-        "anthropic_auth_token",
-        "anthropic_base_url",
-        "skills_output_dir",
-    }
-    for key in passthrough:
-        if key in payload:
-            patch[key] = payload.get(key)
-    return patch
-
-
 def validate_settings_payload(payload: dict[str, Any]):
     provider_id = str(payload.get("provider_id") or "").strip().lower()
     if provider_id and not PROVIDER_ID_RE.match(provider_id):
         raise ValueError("provider_id must match A-Za-z0-9._- and be at most 64 characters")
-
-    raw_skills_dir = str(payload.get("skills_output_dir") or "").replace("\\", "/")
-    if raw_skills_dir and "/.claude/skills/" not in raw_skills_dir and not raw_skills_dir.startswith(".claude/skills/"):
-        raise ValueError("skills_output_dir must be under .claude/skills")
 
 
 def _short_error(exc: Exception) -> str:
@@ -610,15 +511,13 @@ async def _run_model_detection(
     api_key: str,
     auth_token: str,
     base_url: str,
-    supports_partial_messages: bool,
 ) -> tuple[str, str]:
     logger.info(
-        "model_detection.start provider=%s api_format=%s model=%s base_url=%s supports_partial_messages=%s auth_token_set=%s api_key_set=%s",
+        "model_detection.start provider=%s api_format=%s model=%s base_url=%s auth_token_set=%s api_key_set=%s",
         provider_id,
         api_format,
         model,
         safe_base_url_for_log(base_url),
-        supports_partial_messages,
         bool(str(auth_token or "").strip()),
         bool(str(api_key or "").strip()),
     )
@@ -657,11 +556,6 @@ async def detect_model_availability(payload: dict[str, Any]) -> dict[str, str]:
     api_key = str(payload.get("api_key") or current_entry.get("api_key") or "").strip()
     auth_token = str(payload.get("auth_token") or current_entry.get("auth_token") or "").strip()
     base_url = str(payload.get("base_url") or current_entry.get("base_url") or "").strip()
-    supports_partial_messages = (
-        bool(payload.get("supports_partial_messages"))
-        if payload.get("supports_partial_messages") is not None
-        else bool(current_entry.get("supports_partial_messages", True))
-    )
 
     preflight_message = _detection_preflight(
         api_format,
@@ -680,7 +574,6 @@ async def detect_model_availability(payload: dict[str, Any]) -> dict[str, str]:
             api_key=api_key,
             auth_token=auth_token,
             base_url=base_url,
-            supports_partial_messages=supports_partial_messages,
         )
         result = _model_detection_result(status, message, provider_id=provider_id, model=model)
     return result
@@ -696,12 +589,6 @@ def bootstrap_admin_settings() -> dict[str, Any]:
     validate_settings_payload(merged)
     registry = get_runtime_registry_store()
     registry.init_schema()
-    if not registry.list_providers():
-        for provider in _coerce_provider_settings(merged.get("provider_settings")).values():
-            normalized = _normalize_provider_entry(str(provider.get("provider_id") or ""), provider)
-            registry.save_provider(normalized)
-        merged = current_settings_payload()
-    update_settings(runtime_patch_from_payload(merged))
 
     if not db_payload:
         store.save_settings_record(merged)
@@ -718,7 +605,6 @@ def persist_admin_settings(payload: dict[str, Any]) -> dict[str, Any]:
     merged = _merge_settings_payload(current, settings_patch)
     validate_settings_payload(merged)
 
-    update_settings(runtime_patch_from_payload(merged))
     store = get_skill_admin_store()
     saved = store.save_settings_record(merged)
     return current_settings_payload() | {"updated_at": saved.get("updated_at", "")}
@@ -745,7 +631,6 @@ def list_provider_configs(
         configs.append(
             {
                 "provider_id": provider_id,
-                "provider_type": str(item.get("provider_type") or "anthropic"),
                 "api_format": normalize_api_format(item.get("api_format")),
                 "display_name": str(item.get("display_name") or definition.get("display_name") or provider_id),
                 "name": str(item.get("display_name") or definition.get("display_name") or provider_id),
@@ -768,7 +653,6 @@ def list_provider_configs(
                 ),
                 "enabled": bool(item.get("enabled")),
                 "provider_enabled": bool(item.get("provider_enabled")),
-                "supports_partial_messages": bool(item.get("supports_partial_messages", True)),
                 "validation_status": str(item.get("validation_status") or "unverified"),
                 "validation_message": str(item.get("validation_message") or ""),
             }
@@ -797,7 +681,6 @@ def resolved_chat_settings_payload() -> dict[str, Any]:
         "default_provider_id": default_provider_id,
         "default_model": default_model,
         "providers": providers,
-        "skills_output_dir": str(resolved.get("skills_output_dir") or ""),
     }
 
 
@@ -815,7 +698,7 @@ def save_provider_config(payload: dict[str, Any], *, create: bool) -> dict[str, 
         raise ValueError("name is required")
 
     current_map = {provider_id: existing} if existing else {}
-    merged_map = _merge_provider_settings(current_map, {provider_id: payload}, legacy_payload={})
+    merged_map = _merge_provider_settings(current_map, {provider_id: payload})
     normalized = merged_map[provider_id]
     saved = store.save_provider(normalized)
     return saved
@@ -878,15 +761,11 @@ def resolve_runtime_provider_selection(provider_id: str | None, model: str | Non
 
     return {
         "provider_id": normalized_provider_id,
-        "provider_type": str(provider.get("provider_type") or "anthropic_compatible"),
         "api_format": normalize_api_format(provider.get("api_format")),
         "model": selected_model,
         "api_key": str(provider.get("api_key") or ""),
         "auth_token": str(provider.get("auth_token") or ""),
         "base_url": str(provider.get("base_url") or ""),
-        "supports_partial_messages": bool(
-            provider.get("supports_partial_messages", normalized_provider_id != "anthropic_compatible")
-        ),
         # None when the model has no configured ceiling; the runtime then uses its default.
         "max_output_tokens": max_output_tokens if isinstance(max_output_tokens, int) and max_output_tokens > 0 else None,
         # The model's own window, set when the model is added; None falls back to
@@ -950,14 +829,9 @@ def _skill_source(folder: str) -> str:
     return "bundled" if _is_builtin_skill_folder(folder) else "managed"
 
 
-def _current_skill_folder() -> str:
-    return _folder_from_skills_output_dir(str(get_settings().skills_output_dir or "")) or DEFAULT_PRIMARY_SKILL_FOLDER
-
-
 def _skill_runtime_from_current_settings() -> dict[str, dict[str, bool]]:
     payload = current_settings_payload()
-    fallback_folder = _folder_from_skills_output_dir(str(payload.get("skills_output_dir") or "")) or _current_skill_folder()
-    return _normalize_skill_runtime(payload.get("skill_runtime"), fallback_folder=fallback_folder)
+    return _normalize_skill_runtime(payload.get("skill_runtime"))
 
 
 def _is_skill_enabled(folder: str, skill_runtime: dict[str, dict[str, bool]] | None = None) -> bool:
@@ -1022,12 +896,6 @@ def _skill_description_from_front_matter(
     return description
 
 
-def _settings_path_for_skill_folder(folder: str) -> str:
-    discovery_root = resolve_skill_discovery_root_dir()
-    target = (discovery_root / folder).resolve()
-    return os.path.relpath(target, _backend_root()).replace("\\", "/")
-
-
 def _discovered_skill_folders() -> set[str]:
     root = resolve_skill_discovery_root_dir()
     folders: set[str] = set()
@@ -1048,7 +916,7 @@ def _migrate_document_paths_to_discovery_root(store, documents: list[dict[str, A
     skill_folders = _discovered_skill_folders()
     if not skill_folders:
         return False
-    current_folder = _current_skill_folder()
+    current_folder = DEFAULT_PRIMARY_SKILL_FOLDER
     if not current_folder:
         return False
     known_paths = {
@@ -1457,8 +1325,7 @@ def import_skill_from_zip(file_name: str, content: bytes) -> dict[str, Any]:
         shutil.move(str(skill_root), str(target))
 
     current = current_settings_payload()
-    primary_folder = _folder_from_skills_output_dir(str(current.get("skills_output_dir") or "")) or _current_skill_folder()
-    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"), fallback_folder=primary_folder)
+    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"))
     enabled = bool((skill_runtime.get(folder) or {}).get("enabled")) if replaced else False
     skill_runtime[folder] = {"enabled": enabled}
     persist_admin_settings({"skill_runtime": skill_runtime})
@@ -1517,8 +1384,7 @@ def uninstall_skill(folder: str) -> dict[str, Any]:
         raise ValueError("invalid skill folder path")
 
     current = current_settings_payload()
-    primary_folder = _folder_from_skills_output_dir(str(current.get("skills_output_dir") or "")) or _current_skill_folder()
-    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"), fallback_folder=primary_folder)
+    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"))
     was_enabled = bool((skill_runtime.get(target_folder) or {}).get("enabled"))
     enabled_folders = [
         item
@@ -1537,10 +1403,7 @@ def uninstall_skill(folder: str) -> dict[str, Any]:
         store.delete_document_by_path(str(document.get("relative_path") or ""))
 
     skill_runtime.pop(target_folder, None)
-    payload: dict[str, Any] = {"skill_runtime": skill_runtime}
-    if primary_folder == target_folder and enabled_folders:
-        payload["skills_output_dir"] = _settings_path_for_skill_folder(enabled_folders[0])
-    persist_admin_settings(payload)
+    persist_admin_settings({"skill_runtime": skill_runtime})
     return {
         "skill_id": target_folder,
         "removed_documents": removed_documents,
@@ -1565,19 +1428,13 @@ def update_skill_runtime(folder: str, enabled: bool) -> dict[str, Any]:
         raise ValueError(f"skill folder not found: {target_folder}（{reason}，已扫描 {root}）")
 
     current = current_settings_payload()
-    primary_folder = _folder_from_skills_output_dir(str(current.get("skills_output_dir") or "")) or _current_skill_folder()
-    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"), fallback_folder=primary_folder)
+    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"))
     skill_runtime[target_folder] = {"enabled": bool(enabled)}
     enabled_folders = [folder for folder in _enabled_skill_folders(skill_runtime) if folder in available_folders]
     if not enabled_folders:
         raise ValueError("当前运行时至少需要保留一个启用 Skill")
 
-    next_primary_folder = primary_folder if primary_folder in enabled_folders else enabled_folders[0]
-    payload: dict[str, Any] = {"skill_runtime": skill_runtime}
-    if next_primary_folder != primary_folder:
-        payload["skills_output_dir"] = _settings_path_for_skill_folder(next_primary_folder)
-
-    persist_admin_settings(payload)
+    persist_admin_settings({"skill_runtime": skill_runtime})
     return {
         "skill_id": target_folder,
         "enabled": bool(skill_runtime.get(target_folder, {}).get("enabled")),
@@ -1587,13 +1444,15 @@ def update_skill_runtime(folder: str, enabled: bool) -> dict[str, Any]:
 def resolve_enabled_skill_runtime() -> dict[str, Any]:
     current = current_settings_payload()
     available_folders = _discovered_skill_folders()
-    primary_folder = _folder_from_skills_output_dir(str(current.get("skills_output_dir") or "")) or _current_skill_folder()
-    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"), fallback_folder=primary_folder)
+    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"))
     enabled_folders = [folder for folder in _enabled_skill_folders(skill_runtime) if folder in available_folders]
-    if not enabled_folders and primary_folder in available_folders:
-        enabled_folders = [primary_folder]
-    if primary_folder not in enabled_folders and enabled_folders:
-        primary_folder = enabled_folders[0]
+    if not enabled_folders and DEFAULT_PRIMARY_SKILL_FOLDER in available_folders:
+        enabled_folders = [DEFAULT_PRIMARY_SKILL_FOLDER]
+    primary_folder = (
+        DEFAULT_PRIMARY_SKILL_FOLDER
+        if DEFAULT_PRIMARY_SKILL_FOLDER in enabled_folders
+        else (enabled_folders[0] if enabled_folders else DEFAULT_PRIMARY_SKILL_FOLDER)
+    )
 
     discovery_root = resolve_skill_discovery_root_dir()
     roots = {

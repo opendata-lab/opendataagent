@@ -57,15 +57,6 @@
             </div>
             <div class="mcp-row__actions">
               <el-button
-                v-if="server.oauth_required"
-                size="small"
-                type="warning"
-                plain
-                @click="handleOAuth(server)"
-              >
-                授权
-              </el-button>
-              <el-button
                 v-if="canManage"
                 size="small"
                 plain
@@ -112,7 +103,6 @@
         <div
           v-else-if="!configuredServers.length && !searchKeyword.trim()"
           class="mcp-empty"
-          :class="{ 'is-compact': pluginServers.length }"
         >
           <div class="mcp-empty__title">尚未添加自定义 MCP 服务</div>
           <p>{{ canManage ? '手动新建服务器，或导入已有配置。' : '管理员尚未配置自定义 MCP 服务。' }}</p>
@@ -123,67 +113,6 @@
         </div>
 
         <div v-else class="mcp-inline-empty">没有匹配的 MCP 服务，请调整搜索词。</div>
-      </section>
-
-      <section class="mcp-section">
-        <div class="mcp-section-title">插件提供 <span>{{ filteredPluginServers.length }}</span></div>
-
-        <div v-if="filteredPluginServers.length" class="mcp-list">
-          <div v-for="server in filteredPluginServers" :key="server.server_id" class="mcp-row">
-            <div class="mcp-row__icon" aria-hidden="true">
-              <el-icon><Connection /></el-icon>
-              <span class="mcp-row__dot" :class="{ 'is-enabled': server.enabled }" />
-            </div>
-            <div class="mcp-row__main">
-              <div class="mcp-row__heading">
-                <span class="server-name">{{ server.name }}</span>
-                <span class="server-meta">{{ serverMeta(server) }}</span>
-              </div>
-              <p class="mcp-row__description">{{ pluginServerDescription(server) }}</p>
-              <p
-                v-if="detectionResults[server.server_id]"
-                class="mcp-detection-result"
-                :class="`is-${detectionResults[server.server_id].status}`"
-              >
-                {{ detectionResults[server.server_id].message }}
-                <span v-if="detectionResults[server.server_id].latency_ms">
-                  · {{ detectionResults[server.server_id].latency_ms }} ms
-                </span>
-              </p>
-            </div>
-            <div class="mcp-row__actions">
-              <el-button
-                v-if="server.oauth_required"
-                size="small"
-                type="warning"
-                plain
-                @click="handleOAuth(server)"
-              >
-                授权
-              </el-button>
-              <el-button
-                v-if="canManage"
-                size="small"
-                plain
-                :loading="Boolean(detectingServerIds[server.server_id])"
-                @click="handleDetectServer(server)"
-              >
-                {{ detectionResults[server.server_id] ? '重新检测' : '检测' }}
-              </el-button>
-              <span
-                class="mcp-managed-status"
-                :class="{ 'is-enabled': server.enabled }"
-                :title="server.enabled ? '平台托管，当前已启用' : '平台托管，当前未启用'"
-              >
-                平台托管 · {{ server.enabled ? '已启用' : '未启用' }}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div v-else class="mcp-inline-empty">
-          {{ searchKeyword.trim() ? '没有匹配的插件服务，请调整搜索词。' : '当前没有插件提供的 MCP 服务。' }}
-        </div>
       </section>
     </div>
 
@@ -398,7 +327,6 @@ const detectingServerIds = reactive({})
 const detectionResults = reactive({})
 const searchKeyword = ref('')
 const configuredServers = ref([])
-const pluginServers = ref([])
 
 // 对话框状态
 const dialogVisible = ref(false)
@@ -437,7 +365,7 @@ const editForm = reactive({
   headerList: []
 })
 
-const totalServerCount = computed(() => configuredServers.value.length + pluginServers.value.length)
+const totalServerCount = computed(() => configuredServers.value.length)
 const submitButtonLabel = computed(() => {
   if (isEditing.value) return '保存修改'
   return activeAddMode.value === 'json' ? '导入配置' : '新建服务'
@@ -455,7 +383,6 @@ const filterServerList = (list) => {
 }
 
 const filteredConfiguredServers = computed(() => filterServerList(configuredServers.value))
-const filteredPluginServers = computed(() => filterServerList(pluginServers.value))
 
 const serverMeta = (server) => {
   return String(server.transport || 'stdio').toUpperCase()
@@ -468,12 +395,6 @@ const serverDescription = (server) => {
     return `本地命令：${[server.command, ...(server.args || [])].filter(Boolean).join(' ') || '未配置启动命令'}`
   }
   return `服务地址：${server.url || '未配置 URL'}`
-}
-
-const pluginServerDescription = (server) => {
-  const description = String(server.description || '').trim()
-  if (description) return description
-  return '该 MCP 服务器由平台插件提供，运行时身份和配置由平台管理。'
 }
 
 const parseArgs = (argsStr) => {
@@ -513,11 +434,9 @@ const loadMcpServers = async () => {
   try {
     const res = await dataagentApi.listMcpServers()
     configuredServers.value = Array.isArray(res?.configured) ? res.configured : []
-    pluginServers.value = Array.isArray(res?.plugin) ? res.plugin : []
   } catch (error) {
     // 接口待后端补齐时提供默认空列表，并避免报错阻塞页面
     configuredServers.value = []
-    pluginServers.value = []
   } finally {
     loading.value = false
     initialLoaded.value = true
@@ -574,14 +493,6 @@ const addEditHeaderItem = () => {
 
 const removeEditHeaderItem = (idx) => {
   editForm.headerList.splice(idx, 1)
-}
-
-const handleOAuth = (server) => {
-  ElMessageBox.alert(
-    `服务「${server.name}」已打开 OAuth 认证流程。若浏览器未弹出授权窗口，请检查弹窗拦截设置。`,
-    'OAuth 授权',
-    { confirmButtonText: '已知晓' }
-  )
 }
 
 const handleDetectServer = async (server) => {
@@ -684,8 +595,7 @@ const handleSubmit = async () => {
         command: formStdio.command.trim(),
         args: parseArgs(formStdio.argsStr),
         env: listToObj(formStdio.envList),
-        enabled: true,
-        oauth_required: false
+        enabled: true
       }
       await dataagentApi.createMcpServer(payload)
       ElMessage.success('MCP 服务已创建')
@@ -704,8 +614,7 @@ const handleSubmit = async () => {
         transport: formRemote.transport,
         url: formRemote.url.trim(),
         headers: listToObj(formRemote.headerList),
-        enabled: true,
-        oauth_required: false
+        enabled: true
       }
       await dataagentApi.createMcpServer(payload)
       ElMessage.success('远程 MCP 服务已添加')
@@ -749,8 +658,7 @@ const handleSubmit = async () => {
             env: serverConfig.env || {},
             url: serverConfig.url || '',
             headers: serverConfig.headers || {},
-            enabled: true,
-            oauth_required: Boolean(serverConfig.oauth_required)
+            enabled: true
           }
           await dataagentApi.createMcpServer(payload)
         } else {
@@ -1005,11 +913,6 @@ onMounted(async () => {
   margin: 8px 0 16px;
   color: var(--mcp-muted);
   font-size: 13px;
-}
-
-.mcp-empty.is-compact {
-  min-height: 140px;
-  padding-block: 24px;
 }
 
 .mcp-empty__actions {

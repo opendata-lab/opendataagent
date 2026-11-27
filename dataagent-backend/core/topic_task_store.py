@@ -565,6 +565,7 @@ class TopicTaskStore(SessionCheckpointStore):
         conn = self._connect(database=self._schema_name())
         try:
             with conn.cursor() as cur:
+                # Kept for widget behaviour analysis; not dead despite having no in-app reader.
                 cur.executemany(
                     """
                     INSERT INTO da_agent_widget_event (
@@ -596,8 +597,6 @@ class TopicTaskStore(SessionCheckpointStore):
         target_agent_id = str(digest_target_agent_id or "").strip() or None
         resolved_permission_mode = normalize_permission_mode(permission_mode)
         topic_id = _new_id("topic")
-        chat_topic_id = _new_id("chat_topic")
-        chat_conversation_id = _new_id("chat_conv")
         conn = self._connect(database=self._schema_name())
         affected = 0
         try:
@@ -605,18 +604,16 @@ class TopicTaskStore(SessionCheckpointStore):
                 cur.execute(
                     """
                     INSERT INTO da_agent_topic (
-                        topic_id, title, chat_topic_id, chat_conversation_id,
+                        topic_id, title,
                         current_task_id, current_task_status, last_message_seq,
                         agent_id, agent_snapshot_json, permission_mode,
                         source, website_id, user_id, external_user_id, visitor_id,
                         auth_user_id, auth_username, is_agent_preview, digest_target_agent_id
-                    ) VALUES (%s, %s, %s, %s, NULL, NULL, 0, %s, %s, %s, %s, %s, %s, %s, '', '', '', %s, %s)
+                    ) VALUES (%s, %s, NULL, NULL, 0, %s, %s, %s, %s, %s, %s, %s, '', '', '', %s, %s)
                     """,
                     (
                         topic_id,
                         title or "新话题",
-                        chat_topic_id,
-                        chat_conversation_id,
                         agent_id,
                         _json_dump(snapshot),
                         resolved_permission_mode,
@@ -654,7 +651,7 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT t.topic_id, t.title, t.chat_topic_id, t.chat_conversation_id,
+                    SELECT t.topic_id, t.title,
                            t.current_task_id, t.current_task_status, t.source, t.website_id,
                            t.user_id, u.username AS user_username, u.display_name AS user_display_name,
                            t.external_user_id, t.visitor_id, t.auth_user_id, t.auth_username, t.agent_id, t.agent_snapshot_json,
@@ -673,7 +670,6 @@ class TopicTaskStore(SessionCheckpointStore):
                                    1
                                ) AS last_message_preview
                         FROM da_agent_message
-                        WHERE show_in_ui = 1
                         GROUP BY topic_id
                     ) stats ON stats.topic_id = t.topic_id
                     WHERE {where_sql}
@@ -753,7 +749,7 @@ class TopicTaskStore(SessionCheckpointStore):
                 total_row = cur.fetchone() or {}
                 cur.execute(
                     f"""
-                    SELECT t.topic_id, t.title, t.chat_topic_id, t.chat_conversation_id,
+                    SELECT t.topic_id, t.title,
                            t.current_task_id, t.current_task_status, t.source, t.website_id,
                            t.user_id, u.username AS user_username, u.display_name AS user_display_name,
                            t.external_user_id, t.visitor_id, t.auth_user_id, t.auth_username, t.agent_id, t.agent_snapshot_json,
@@ -772,7 +768,6 @@ class TopicTaskStore(SessionCheckpointStore):
                                    1
                                ) AS last_message_preview
                         FROM da_agent_message
-                        WHERE show_in_ui = 1
                         GROUP BY topic_id
                     ) stats ON stats.topic_id = t.topic_id
                     WHERE {where_sql}
@@ -800,7 +795,7 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT t.topic_id, t.title, t.chat_topic_id, t.chat_conversation_id,
+                    SELECT t.topic_id, t.title,
                            t.current_task_id, t.current_task_status, t.source, t.website_id,
                            t.user_id, u.username AS user_username, u.display_name AS user_display_name,
                            t.external_user_id, t.visitor_id, t.auth_user_id, t.auth_username, t.agent_id, t.agent_snapshot_json,
@@ -819,7 +814,6 @@ class TopicTaskStore(SessionCheckpointStore):
                                    1
                                ) AS last_message_preview
                         FROM da_agent_message
-                        WHERE show_in_ui = 1
                         GROUP BY topic_id
                     ) stats ON stats.topic_id = t.topic_id
                     WHERE t.topic_id = %s
@@ -954,35 +948,6 @@ class TopicTaskStore(SessionCheckpointStore):
             conn.close()
         return self.get_topic(topic_id, context=context)
 
-    def update_topic_conversation_id(self, topic_id: str, *, conversation_id: str) -> dict[str, Any] | None:
-        value = str(conversation_id or "").strip()
-        if not value:
-            return self.get_topic(topic_id)
-        self._ensure_ready()
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE da_agent_topic
-                    SET chat_conversation_id = %s,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE topic_id = %s
-                    """,
-                    (value, topic_id),
-                )
-                affected = cur.rowcount
-            conn.commit()
-        finally:
-            conn.close()
-        logger.info(
-            "topic.conversation_id.updated topic_id=%s affected=%s conversation_id_set=%s",
-            topic_id,
-            affected,
-            bool(value),
-        )
-        return self.get_topic(topic_id)
-
     def delete_topic(self, topic_id: str, context: dict[str, Any] | None = None):
         self._ensure_ready()
         if not self.get_topic(topic_id, context=context):
@@ -1010,13 +975,12 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content, m.event,
-                           m.steps_json, m.tool_json, m.seq_id, m.correlation_id, m.parent_correlation_id,
-                           m.content_type, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
+                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content,
+                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json,
                            m.created_at, m.updated_at, task.finished_at
                     FROM da_agent_message m
                     LEFT JOIN da_agent_task task ON task.task_id = m.task_id AND m.sender_type = 'assistant'
-                    WHERE m.topic_id = %s AND m.show_in_ui = 1
+                    WHERE m.topic_id = %s
                     ORDER BY m.seq_id ASC, m.created_at ASC
                     """,
                     (topic_id,),
@@ -1057,20 +1021,19 @@ class TopicTaskStore(SessionCheckpointStore):
                     """
                     SELECT COUNT(*) AS total
                     FROM da_agent_message
-                    WHERE topic_id = %s AND show_in_ui = 1
+                    WHERE topic_id = %s
                     """,
                     (topic_id,),
                 )
                 total_row = cur.fetchone() or {}
                 cur.execute(
                     f"""
-                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content, m.event,
-                           m.steps_json, m.tool_json, m.seq_id, m.correlation_id, m.parent_correlation_id,
-                           m.content_type, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
+                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content,
+                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json,
                            m.created_at, m.updated_at, task.finished_at
                     FROM da_agent_message m
                     LEFT JOIN da_agent_task task ON task.task_id = m.task_id AND m.sender_type = 'assistant'
-                    WHERE m.topic_id = %s AND m.show_in_ui = 1
+                    WHERE m.topic_id = %s
                     ORDER BY m.seq_id {sort_direction}, m.created_at {sort_direction}
                     LIMIT %s OFFSET %s
                     """,
@@ -1105,10 +1068,9 @@ class TopicTaskStore(SessionCheckpointStore):
                 cur.execute(
                     """
                     INSERT INTO da_agent_message (
-                        message_id, topic_id, task_id, sender_type, type, status, content, event,
-                        steps_json, tool_json, seq_id, correlation_id, parent_correlation_id,
-                        content_type, usage_json, error_json, show_in_ui
-                    ) VALUES (%s, %s, %s, 'user', 'chat', 'success', %s, '', NULL, NULL, %s, NULL, NULL, NULL, NULL, NULL, 1)
+                        message_id, topic_id, task_id, sender_type, type, status, content,
+                        seq_id, usage_json, error_json
+                    ) VALUES (%s, %s, %s, 'user', 'chat', 'success', %s, %s, NULL, NULL)
                     """,
                     (message_id, topic_id, task_id, content or "", seq_id),
                 )
@@ -1148,10 +1110,9 @@ class TopicTaskStore(SessionCheckpointStore):
                 cur.execute(
                     """
                     INSERT INTO da_agent_message (
-                        message_id, topic_id, task_id, sender_type, type, status, content, event,
-                        steps_json, tool_json, seq_id, correlation_id, parent_correlation_id,
-                        content_type, usage_json, error_json, show_in_ui
-                    ) VALUES (%s, %s, %s, 'assistant', 'assistant', %s, '', '', NULL, NULL, %s, NULL, NULL, NULL, NULL, NULL, 1)
+                        message_id, topic_id, task_id, sender_type, type, status, content,
+                        seq_id, usage_json, error_json
+                    ) VALUES (%s, %s, %s, 'assistant', 'assistant', %s, '', %s, NULL, NULL)
                     """,
                     (message_id, topic_id, task_id, status, seq_id),
                 )
@@ -1209,7 +1170,6 @@ class TopicTaskStore(SessionCheckpointStore):
                     WHERE topic_id = %s
                       AND task_id = %s
                       AND sender_type = 'assistant'
-                      AND show_in_ui = 1
                     ORDER BY seq_id ASC
                     LIMIT 1
                     """,
@@ -1240,13 +1200,12 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content, m.event,
-                           m.steps_json, m.tool_json, m.seq_id, m.correlation_id, m.parent_correlation_id,
-                           m.content_type, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
+                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content,
+                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json,
                            m.created_at, m.updated_at, task.finished_at
                     FROM da_agent_message m
                     LEFT JOIN da_agent_task task ON task.task_id = m.task_id
-                    WHERE m.task_id = %s AND m.sender_type = 'assistant' AND m.show_in_ui = 1
+                    WHERE m.task_id = %s AND m.sender_type = 'assistant'
                     ORDER BY m.seq_id ASC
                     LIMIT 1
                     """,
@@ -1274,7 +1233,7 @@ class TopicTaskStore(SessionCheckpointStore):
         both sources. The question is the first user message of the same task.
         """
         self._ensure_ready()
-        where = ["m.sender_type = 'assistant'", "m.show_in_ui = 1", "m.feedback IN ('like', 'dislike')"]
+        where = ["m.sender_type = 'assistant'", "m.feedback IN ('like', 'dislike')"]
         params: list[Any] = []
         if agent_id:
             where.append("COALESCE(NULLIF(k.agent_id, ''), t.agent_id) = %s")
@@ -1372,9 +1331,8 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content, m.event,
-                           m.steps_json, m.tool_json, m.seq_id, m.correlation_id, m.parent_correlation_id,
-                           m.content_type, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
+                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content,
+                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json,
                            m.created_at, m.updated_at, task.finished_at
                     FROM da_agent_message m
                     JOIN da_agent_topic t ON t.topic_id = m.topic_id
@@ -1426,7 +1384,6 @@ class TopicTaskStore(SessionCheckpointStore):
                     WHERE m.topic_id = %s
                       AND m.message_id = %s
                       AND m.sender_type = 'assistant'
-                      AND m.show_in_ui = 1
                       AND {context_sql}
                     LIMIT 1
                     """,
@@ -1445,7 +1402,6 @@ class TopicTaskStore(SessionCheckpointStore):
                     WHERE topic_id = %s
                       AND message_id = %s
                       AND sender_type = 'assistant'
-                      AND show_in_ui = 1
                     LIMIT 1
                     """,
                     (safe_feedback, topic_id, message_id),
@@ -1474,11 +1430,9 @@ class TopicTaskStore(SessionCheckpointStore):
         prompt: str,
         provider_id: str,
         model: str,
-        debug: bool,
         timeout_seconds: int,
         sql_read_timeout_seconds: int,
         sql_write_timeout_seconds: int,
-        from_task_id: str | None = None,
         source_queue_id: str | None = None,
         source_schedule_id: str | None = None,
         source_schedule_log_id: str | None = None,
@@ -1497,16 +1451,15 @@ class TopicTaskStore(SessionCheckpointStore):
                 cur.execute(
                     """
                     INSERT INTO da_agent_task (
-                        task_id, topic_id, from_task_id, source_queue_id, source_schedule_id, source_schedule_log_id,
+                        task_id, topic_id, source_queue_id, source_schedule_id, source_schedule_log_id,
                         task_status, prompt, provider_id, model_name, agent_id, agent_snapshot_json,
-                        debug_enabled, timeout_seconds, sql_read_timeout_seconds,
-                        sql_write_timeout_seconds, last_event_seq, interactive, request_key
-                    ) VALUES (%s, %s, %s, %s, %s, %s, 'waiting', %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s)
+                        timeout_seconds, sql_read_timeout_seconds,
+                        sql_write_timeout_seconds, interactive, request_key
+                    ) VALUES (%s, %s, %s, %s, %s, 'waiting', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         task_id,
                         topic_id,
-                        from_task_id,
                         source_queue_id,
                         source_schedule_id,
                         source_schedule_log_id,
@@ -1515,7 +1468,6 @@ class TopicTaskStore(SessionCheckpointStore):
                         model or "",
                         agent_id,
                         _json_dump(snapshot),
-                        1 if debug else 0,
                         int(timeout_seconds or 0),
                         int(sql_read_timeout_seconds or 0),
                         int(sql_write_timeout_seconds or 0),
@@ -1558,13 +1510,13 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT task.task_id, task.topic_id, task.from_task_id, task.source_queue_id,
+                    SELECT task.task_id, task.topic_id, task.source_queue_id,
                            task.source_schedule_id, task.source_schedule_log_id,
                            task.task_status, task.prompt, task.provider_id, task.model_name,
                            task.agent_id, task.agent_snapshot_json,
-                           task.debug_enabled, task.timeout_seconds,
+                           task.timeout_seconds,
                            task.sql_read_timeout_seconds, task.sql_write_timeout_seconds,
-                           task.last_event_seq, task.cancel_requested_at, task.started_at,
+                           task.cancel_requested_at, task.started_at,
                            task.heartbeat_at, task.finished_at, task.error_json,
                            task.created_at, task.updated_at, task.interactive, task.request_key
                     FROM da_agent_task task
@@ -1587,11 +1539,11 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT task_id, topic_id, from_task_id, source_queue_id, source_schedule_id, source_schedule_log_id,
+                    SELECT task_id, topic_id, source_queue_id, source_schedule_id, source_schedule_log_id,
                            task_status, prompt, provider_id, model_name,
                            agent_id, agent_snapshot_json,
-                           debug_enabled, timeout_seconds, sql_read_timeout_seconds,
-                           sql_write_timeout_seconds, last_event_seq, cancel_requested_at, started_at,
+                           timeout_seconds, sql_read_timeout_seconds,
+                           sql_write_timeout_seconds, cancel_requested_at, started_at,
                            heartbeat_at, finished_at, error_json, created_at, updated_at,
                            interactive, request_key
                     FROM da_agent_task
@@ -1614,11 +1566,11 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT task_id, topic_id, from_task_id, source_queue_id, source_schedule_id, source_schedule_log_id,
+                    SELECT task_id, topic_id, source_queue_id, source_schedule_id, source_schedule_log_id,
                            task_status, prompt, provider_id, model_name,
                            agent_id, agent_snapshot_json,
-                           debug_enabled, timeout_seconds, sql_read_timeout_seconds,
-                           sql_write_timeout_seconds, last_event_seq, cancel_requested_at, started_at,
+                           timeout_seconds, sql_read_timeout_seconds,
+                           sql_write_timeout_seconds, cancel_requested_at, started_at,
                            heartbeat_at, finished_at, error_json, created_at, updated_at,
                            interactive, request_key
                     FROM da_agent_task
@@ -1641,11 +1593,11 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT task_id, topic_id, from_task_id, source_queue_id, source_schedule_id, source_schedule_log_id,
+                    SELECT task_id, topic_id, source_queue_id, source_schedule_id, source_schedule_log_id,
                            task_status, prompt, provider_id, model_name,
                            agent_id, agent_snapshot_json,
-                           debug_enabled, timeout_seconds, sql_read_timeout_seconds,
-                           sql_write_timeout_seconds, last_event_seq, cancel_requested_at, started_at,
+                           timeout_seconds, sql_read_timeout_seconds,
+                           sql_write_timeout_seconds, cancel_requested_at, started_at,
                            heartbeat_at, finished_at, error_json, created_at, updated_at,
                            interactive, request_key
                     FROM da_agent_task
@@ -1820,45 +1772,6 @@ class TopicTaskStore(SessionCheckpointStore):
         )
         return self.get_task(task_id)
 
-    def get_pending_permission_request(self, task_id: str) -> dict[str, Any] | None:
-        """Return the latest permission request that has not been decided yet."""
-        self._ensure_ready()
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, topic_id, turn_index, record_type, data
-                    FROM da_agent_sdk_record
-                    WHERE task_id = %s
-                      AND record_type IN ('permission_request', 'permission_decision')
-                    ORDER BY id DESC
-                    LIMIT 200
-                    """,
-                    (task_id,),
-                )
-                rows = cur.fetchall() or []
-        finally:
-            conn.close()
-
-        closed: set[str] = set()
-        for row in rows:
-            data = _safe_json_load(row.get("data")) or {}
-            request_id = str(data.get("request_id") or "")
-            if not request_id:
-                continue
-            record_type = str(row.get("record_type") or "")
-            if record_type == "permission_decision":
-                closed.add(request_id)
-                continue
-            if record_type == "permission_request" and request_id not in closed:
-                return {
-                    "request_id": request_id,
-                    "topic_id": str(row.get("topic_id") or ""),
-                    "turn_index": int(row.get("turn_index") or 0),
-                }
-        return None
-
     def get_current_permission_interaction(self, *, task_id: str, request_id: str) -> dict[str, Any] | None:
         return self._get_interaction(task_id=task_id, request_id=request_id, kind="permission")
 
@@ -1889,45 +1802,6 @@ class TopicTaskStore(SessionCheckpointStore):
             waiting_status="waiting_permission",
             payload=payload,
         )
-
-    def get_pending_question_request(self, task_id: str) -> dict[str, Any] | None:
-        """Return the latest ask-user question that has not been answered yet."""
-        self._ensure_ready()
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, topic_id, turn_index, record_type, data
-                    FROM da_agent_sdk_record
-                    WHERE task_id = %s
-                      AND record_type IN ('question_request', 'question_answer')
-                    ORDER BY id DESC
-                    LIMIT 200
-                    """,
-                    (task_id,),
-                )
-                rows = cur.fetchall() or []
-        finally:
-            conn.close()
-
-        closed: set[str] = set()
-        for row in rows:
-            data = _safe_json_load(row.get("data")) or {}
-            request_id = str(data.get("request_id") or "")
-            if not request_id:
-                continue
-            record_type = str(row.get("record_type") or "")
-            if record_type == "question_answer":
-                closed.add(request_id)
-                continue
-            if record_type == "question_request" and request_id not in closed:
-                return {
-                    "request_id": request_id,
-                    "topic_id": str(row.get("topic_id") or ""),
-                    "turn_index": int(row.get("turn_index") or 0),
-                }
-        return None
 
     def get_current_question_interaction(self, *, task_id: str, request_id: str) -> dict[str, Any] | None:
         return self._get_interaction(task_id=task_id, request_id=request_id, kind="question")
@@ -2605,35 +2479,6 @@ class TopicTaskStore(SessionCheckpointStore):
             conn.close()
         return self.get_message_queue(queue_id) or {}
 
-    def update_message_queue(
-        self,
-        *,
-        queue_id: str,
-        topic_id: str,
-        message_type: str,
-        message_content: Any,
-    ) -> dict[str, Any] | None:
-        self._ensure_ready()
-        payload_json = json.dumps(message_content, ensure_ascii=False, default=_json_default)
-        conn = self._connect(database=self._schema_name())
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE da_agent_message_queue
-                    SET topic_id = %s,
-                        message_type = %s,
-                        message_content_json = %s,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE queue_id = %s
-                    """,
-                    (topic_id, message_type, payload_json, queue_id),
-                )
-            conn.commit()
-        finally:
-            conn.close()
-        return self.get_message_queue(queue_id)
-
     def delete_message_queue(self, queue_id: str) -> bool:
         self._ensure_ready()
         conn = self._connect(database=self._schema_name())
@@ -3107,8 +2952,6 @@ class TopicTaskStore(SessionCheckpointStore):
         topic = {
             "topic_id": str(row.get("topic_id") or ""),
             "title": str(row.get("title") or "新话题"),
-            "chat_topic_id": str(row.get("chat_topic_id") or ""),
-            "chat_conversation_id": str(row.get("chat_conversation_id") or ""),
             "agent_id": str(row.get("agent_id") or snapshot.get("agent_id") or DEFAULT_AGENT_ID),
             "agent_snapshot": snapshot,
             "agent": agent_summary_from_snapshot(snapshot),
@@ -3213,17 +3056,10 @@ class TopicTaskStore(SessionCheckpointStore):
             "type": str(row.get("type") or ""),
             "status": str(row.get("status") or "success"),
             "content": str(row.get("content") or ""),
-            "event": str(row.get("event") or ""),
-            "steps": _safe_json_load(row.get("steps_json")),
-            "tool": _safe_json_load(row.get("tool_json")),
             "seq_id": int(row.get("seq_id") or 0),
-            "correlation_id": str(row.get("correlation_id") or "") or None,
-            "parent_correlation_id": str(row.get("parent_correlation_id") or "") or None,
-            "content_type": str(row.get("content_type") or "") or None,
             "usage": _safe_json_load(row.get("usage_json")),
             "attachments": _safe_json_load(row.get("attachments_json")) or [],
             "feedback": str(row.get("feedback") or ""),
-            "show_in_ui": bool(row.get("show_in_ui")),
             "error": _safe_json_load(row.get("error_json")),
             "created_at": to_rfc3339(row.get("created_at")),
             "updated_at": to_rfc3339(row.get("updated_at")),
@@ -3247,7 +3083,6 @@ class TopicTaskStore(SessionCheckpointStore):
             "agent_id": str(row.get("agent_id") or snapshot.get("agent_id") or DEFAULT_AGENT_ID),
             "agent_snapshot": snapshot,
             "agent": agent_summary_from_snapshot(snapshot),
-            "from_task_id": str(row.get("from_task_id") or "") or None,
             "source_queue_id": str(row.get("source_queue_id") or "") or None,
             "source_schedule_id": str(row.get("source_schedule_id") or "") or None,
             "source_schedule_log_id": str(row.get("source_schedule_log_id") or "") or None,
@@ -3257,11 +3092,9 @@ class TopicTaskStore(SessionCheckpointStore):
             "prompt": str(row.get("prompt") or ""),
             "provider_id": str(row.get("provider_id") or ""),
             "model": str(row.get("model_name") or ""),
-            "debug": bool(row.get("debug_enabled")),
             "timeout_seconds": int(row.get("timeout_seconds") or 0),
             "sql_read_timeout_seconds": int(row.get("sql_read_timeout_seconds") or 0),
             "sql_write_timeout_seconds": int(row.get("sql_write_timeout_seconds") or 0),
-            "last_event_seq": int(row.get("last_event_seq") or 0),
             "cancel_requested_at": to_rfc3339(row.get("cancel_requested_at")) or None,
             "started_at": to_rfc3339(row.get("started_at")) or None,
             "heartbeat_at": to_rfc3339(row.get("heartbeat_at")) or None,

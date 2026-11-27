@@ -91,7 +91,9 @@ scripts/load-package-and-start.sh --package .   # 加载镜像；deploy/.env 不
 启动时会校验外部配置中的 `DATAAGENT_SETTINGS` 键名。升级前请从中删除
 `app_name`、`claude_max_tokens`、`agent_wait_timeout_seconds`、`mysql_database`、
 `max_few_shot_examples`、`max_schema_tables`、`max_business_rules`、`query_result_limit`、
-`dataagent_runtime_kind`。会话库继续使用 `session_mysql_database`，环境变量 `MYSQL_DATABASE` 仍可指定会话库。
+`dataagent_runtime_kind`、`followup_suggestions_timeout_seconds`、`skills_output_dir`、
+`llm_provider`、`claude_model`、`anthropic_api_key`、`anthropic_auth_token`、`anthropic_base_url`。
+会话库继续使用 `session_mysql_database`，环境变量 `MYSQL_DATABASE` 仍可指定会话库；模型供应商与模型统一在管理台配置，不再通过旧环境变量初始化。
 
 SQL/MCP 超时独立约束于剩余任务预算，Bash 小于总超时。反向代理的读写超时必须大于总超时（1800 秒）。
 `deploy/docker-compose.yml` 将宿主机 `deploy/docker/nginx/default.conf` 挂载到前端容器 `/etc/nginx/conf.d/default.conf:ro`（读写超时默认 1860 秒），方便现场直接按需调整反向代理路由、流式超时、域名或证书，修改后执行 `scripts/restart.sh` 即可生效，无需重新构建前端镜像。这个文件是现场配置：仓库和离线包只带 `default.conf.example`，`scripts/start.sh` 首次启动时复制一份，之后把新包同步到部署目录也不会覆盖（与 `.env` 相同）；升级说明提到模板有变化时，对照 `.example` 手工合并。
@@ -172,6 +174,14 @@ ORDER BY scope, agent_id, updated_at DESC;
 ```
 
 其余条目无需手动处理，升级后自动转为按需读取的知识。
+
+### 清理废弃表、列与接口（迁移 `20261127_000048`）
+
+迁移 `20261127_000048` 删除已停用的 `da_agent_chunk` 表（保留 `da_agent_widget_event` 用于行为分析）以及多张表的历史空置列（`da_agent_task.{debug_enabled,last_event_seq,from_task_id}`、`da_model_provider.{supports_partial_messages,provider_type}`、`da_mcp_server.oauth_required`、`da_agent_settings.skills_output_dir`、`da_agent_topic.{chat_topic_id,chat_conversation_id}`、`da_agent_message.{event,steps_json,tool_json,correlation_id,parent_correlation_id,content_type,show_in_ui}`）；删除 `show_in_ui` 列前会先清除历史 `show_in_ui = 0` 行。该迁移不支持 `alembic downgrade`，升级前请先执行 `scripts/backup-db.sh`。
+
+同时移除了无调用方的接口与配置项：
+- 接口：`POST /api/v1/nl2sql/tasks`（改用 `POST /api/v1/nl2sql/tasks/deliver-message`）、`POST /api/v1/nl2sql/topics/{topic_id}/messages/{message_id}/followup-suggestions`、`PUT /api/v1/nl2sql/message-queue/{queue_id}`、`POST /api/v1/nl2sql/message-queue/{queue_id}/consume`、`GET /api/v1/dataagent/agents/{agent_id}/configuration`、`GET /api/v1/dataagent/users/{user_id}`、`PUT /api/v1/nl2sql-eval/datasets/{dataset_id}/cases`。
+- 配置与字段：`DATAAGENT_SETTINGS` 中移除上述旧配置键；`/api/v1/nl2sql/health` 不再返回 `provider_id`/`model`/`skills_output_dir`；`GET /api/v1/dataagent/mcp/servers` 不再返回空数组字段 `plugin`。
 
 缺合法 `SECRET_KEY`、显式置 `AUTH_ENABLED = False`、文件不可读或语法错误时服务启动失败（fail-closed）。
 

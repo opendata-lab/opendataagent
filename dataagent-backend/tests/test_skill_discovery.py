@@ -16,12 +16,11 @@ from core.skill_discovery import (
 
 @pytest.fixture(autouse=True)
 def restore_skill_settings():
-    original = get_settings().skills_output_dir
     original_root = getattr(get_settings(), "skills_root_dir", "")
     try:
         yield
     finally:
-        update_settings({"skills_output_dir": original, "skills_root_dir": original_root})
+        update_settings({"skills_root_dir": original_root})
 
 
 def _write_skill(root: Path, folder: str):

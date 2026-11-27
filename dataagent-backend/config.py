@@ -32,9 +32,7 @@ class Settings(BaseSettings):
     # and frontend display timezone.
     dataagent_timezone: str = "Asia/Shanghai"
 
-    # ---- LLM Provider / Model ----
-    llm_provider: str = ""  # anthropic | openrouter | anyrouter | anthropic_compatible
-    claude_model: str = ""
+    # ---- LLM / Agent 运行预算 ----
     # One budget tier for every task; an agent's positive max_turns overrides
     # only the turn budget. Card waits are not counted (design 3.5).
     agent_max_turns: int = Field(default=40, gt=0)
@@ -47,7 +45,6 @@ class Settings(BaseSettings):
     # The SDK default is 1MB; large NL2SQL tool results / partial messages can
     # exceed it and trigger "JSON message exceeded maximum buffer size".
     agent_max_buffer_size_bytes: int = 10 * 1024 * 1024
-    followup_suggestions_timeout_seconds: int = 20
     run_events_stream_poll_interval_seconds: int = 1
     run_events_stream_ping_seconds: int = 10
     task_max_concurrency: int = 8
@@ -58,11 +55,6 @@ class Settings(BaseSettings):
     schedule_scan_interval_seconds: int = 10
     schedule_scan_batch_size: int = 10
     schedule_lock_ttl_seconds: int = 60
-
-    # ---- Anthropic 兼容认证 ----
-    anthropic_api_key: str = ""
-    anthropic_auth_token: str = ""
-    anthropic_base_url: str = ""
 
     # ---- MySQL（DataAgent 自身会话存储）----
     mysql_host: str = "localhost"
@@ -79,7 +71,6 @@ class Settings(BaseSettings):
 
     # ---- Skills ----
     skills_root_dir: str = ""
-    skills_output_dir: str = "../.claude/skills/chart-visualization"
     dataagent_upload_max_bytes: int = 20 * 1024 * 1024
     # ---- Agent 交互能力 ----
     # Expose AskUserQuestion cards; write approval gates remain independent.

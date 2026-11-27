@@ -188,17 +188,6 @@ def create_user(
     return created.to_public_dict()
 
 
-@router.get("/users/{user_id}")
-def get_user_detail(
-    user_id: int,
-    _: User = Depends(require_admin),
-):
-    user = get_account_store().get_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="用户不存在")
-    return user.to_public_dict()
-
-
 @router.put("/users/{user_id}")
 def update_user(
     user_id: int,

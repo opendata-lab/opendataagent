@@ -188,10 +188,10 @@ def test_admin_filters_and_experience_bounds_against_real_mysql(temp_mysql_schem
             ):
                 cur.execute(
                     """INSERT INTO da_agent_topic
-                       (topic_id, title, chat_topic_id, chat_conversation_id, agent_id, source, website_id,
+                       (topic_id, title, agent_id, source, website_id,
                         external_user_id, visitor_id, auth_user_id, auth_username, is_agent_preview, created_at, updated_at)
-                       VALUES (%s, %s, %s, %s, 'agent_tz_test', 'web', '', '', '', '', '', 0, %s, %s)""",
-                    (tid, tid, f"c_{tid}", f"cc_{tid}", ts, ts),
+                       VALUES (%s, %s, 'agent_tz_test', 'web', '', '', '', '', '', 0, %s, %s)""",
+                    (tid, tid, ts, ts),
                 )
                 cur.execute(
                     """INSERT INTO da_agent_task
@@ -202,8 +202,8 @@ def test_admin_filters_and_experience_bounds_against_real_mysql(temp_mysql_schem
                 )
                 cur.execute(
                     """INSERT INTO da_agent_message
-                       (message_id, topic_id, task_id, sender_type, type, status, content, feedback, feedback_at, show_in_ui, created_at, updated_at)
-                       VALUES (%s, %s, %s, 'assistant', 'text', 'success', 'ans', 'like', %s, 1, %s, %s)""",
+                       (message_id, topic_id, task_id, sender_type, type, status, content, feedback, feedback_at, created_at, updated_at)
+                       VALUES (%s, %s, %s, 'assistant', 'text', 'success', 'ans', 'like', %s, %s, %s)""",
                     (mid, tid, kid, ts, ts, ts),
                 )
     finally:

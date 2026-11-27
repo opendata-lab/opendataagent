@@ -67,10 +67,10 @@ class RuntimeRegistryStore:
                 cur.execute(
                     """
                     SELECT server_id, name, source, transport, url, headers_json,
-                           command_name, args_json, env_json, enabled, oauth_required,
+                           command_name, args_json, env_json, enabled,
                            tool_count, description, created_at, updated_at
                     FROM da_mcp_server
-                    ORDER BY FIELD(source, 'configured', 'plugin'), name, server_id
+                    ORDER BY name, server_id
                     """
                 )
                 rows = cur.fetchall() or []
@@ -86,7 +86,7 @@ class RuntimeRegistryStore:
                 cur.execute(
                     """
                     SELECT server_id, name, source, transport, url, headers_json,
-                           command_name, args_json, env_json, enabled, oauth_required,
+                           command_name, args_json, env_json, enabled,
                            tool_count, description, created_at, updated_at
                     FROM da_mcp_server WHERE server_id = %s LIMIT 1
                     """,
@@ -105,7 +105,7 @@ class RuntimeRegistryStore:
                 cur.execute(
                     """
                     SELECT server_id, name, source, transport, url, headers_json,
-                           command_name, args_json, env_json, enabled, oauth_required,
+                           command_name, args_json, env_json, enabled,
                            tool_count, description, created_at, updated_at
                     FROM da_mcp_server WHERE name = %s LIMIT 1
                     """,
@@ -127,7 +127,7 @@ class RuntimeRegistryStore:
                         name = VALUES(name), transport = VALUES(transport), url = VALUES(url),
                         headers_json = VALUES(headers_json), command_name = VALUES(command_name),
                         args_json = VALUES(args_json), env_json = VALUES(env_json),
-                        enabled = VALUES(enabled), oauth_required = VALUES(oauth_required),
+                        enabled = VALUES(enabled),
                         tool_count = VALUES(tool_count), description = VALUES(description),
                         updated_at = CURRENT_TIMESTAMP
                 """
@@ -135,8 +135,8 @@ class RuntimeRegistryStore:
                     f"""
                     {verb} INTO da_mcp_server (
                         server_id, name, source, transport, url, headers_json, command_name,
-                        args_json, env_json, enabled, oauth_required, tool_count, description
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        args_json, env_json, enabled, tool_count, description
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     {duplicate}
                     """,
                     (
@@ -144,7 +144,7 @@ class RuntimeRegistryStore:
                         payload.get("url", ""), _json_dump(payload.get("headers") or {}),
                         payload.get("command", ""), _json_dump(payload.get("args") or []),
                         _json_dump(payload.get("env") or {}), int(bool(payload.get("enabled", True))),
-                        int(bool(payload.get("oauth_required", False))), int(payload.get("tool_count") or 0),
+                        int(payload.get("tool_count") or 0),
                         payload.get("description", ""),
                     ),
                 )
@@ -178,8 +178,8 @@ class RuntimeRegistryStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT provider_id, provider_type, api_format, display_name, provider_group, base_url,
-                           api_key, auth_token, provider_enabled, supports_partial_messages,
+                    SELECT provider_id, api_format, display_name, provider_group, base_url,
+                           api_key, auth_token, provider_enabled,
                            enabled_models_json, custom_models_json, models_json, model_detections_json,
                            validation_status, validation_message, validated_at, created_at, updated_at
                     FROM da_model_provider
@@ -198,8 +198,8 @@ class RuntimeRegistryStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT provider_id, provider_type, api_format, display_name, provider_group, base_url,
-                           api_key, auth_token, provider_enabled, supports_partial_messages,
+                    SELECT provider_id, api_format, display_name, provider_group, base_url,
+                           api_key, auth_token, provider_enabled,
                            enabled_models_json, custom_models_json, models_json, model_detections_json,
                            validation_status, validation_message, validated_at, created_at, updated_at
                     FROM da_model_provider WHERE provider_id = %s LIMIT 1
@@ -219,17 +219,16 @@ class RuntimeRegistryStore:
                 cur.execute(
                     """
                     INSERT INTO da_model_provider (
-                        provider_id, provider_type, api_format, display_name, provider_group, base_url,
-                        api_key, auth_token, provider_enabled, supports_partial_messages,
+                        provider_id, api_format, display_name, provider_group, base_url,
+                        api_key, auth_token, provider_enabled,
                         enabled_models_json, custom_models_json, models_json, model_detections_json,
                         validation_status, validation_message, validated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
-                        provider_type = VALUES(provider_type), api_format = VALUES(api_format), display_name = VALUES(display_name),
+                        api_format = VALUES(api_format), display_name = VALUES(display_name),
                         provider_group = VALUES(provider_group), base_url = VALUES(base_url),
                         api_key = VALUES(api_key), auth_token = VALUES(auth_token),
                         provider_enabled = VALUES(provider_enabled),
-                        supports_partial_messages = VALUES(supports_partial_messages),
                         enabled_models_json = VALUES(enabled_models_json),
                         custom_models_json = VALUES(custom_models_json), models_json = VALUES(models_json),
                         model_detections_json = VALUES(model_detections_json),
@@ -239,13 +238,11 @@ class RuntimeRegistryStore:
                     """,
                     (
                         payload["provider_id"],
-                        payload["provider_type"],
                         str(payload.get("api_format") or "/v1/messages"),
                         payload["display_name"],
                         payload.get("provider_group", ""), payload.get("base_url", ""),
                         payload.get("api_key", ""), payload.get("auth_token", ""),
                         int(bool(payload.get("provider_enabled"))),
-                        int(bool(payload.get("supports_partial_messages", True))),
                         _json_dump(payload.get("enabled_models") or []),
                         _json_dump(payload.get("custom_models") or []),
                         _json_dump(payload.get("models") or []),
@@ -291,7 +288,6 @@ class RuntimeRegistryStore:
             "args": list(_json_load(row.get("args_json"), []) or []),
             "env": dict(_json_load(row.get("env_json"), {}) or {}),
             "enabled": bool(row.get("enabled")),
-            "oauth_required": bool(row.get("oauth_required")),
             "tool_count": int(row.get("tool_count") or 0),
             "description": str(row.get("description") or ""),
             "created_at": to_rfc3339(row.get("created_at")),
@@ -302,7 +298,6 @@ class RuntimeRegistryStore:
     def _normalize_provider_row(row: dict[str, Any]) -> dict[str, Any]:
         return {
             "provider_id": str(row.get("provider_id") or ""),
-            "provider_type": str(row.get("provider_type") or "anthropic_compatible"),
             "api_format": str(row.get("api_format") or "/v1/messages"),
             "display_name": str(row.get("display_name") or row.get("provider_id") or ""),
             "provider_group": str(row.get("provider_group") or ""),
@@ -310,7 +305,6 @@ class RuntimeRegistryStore:
             "api_key": str(row.get("api_key") or ""),
             "auth_token": str(row.get("auth_token") or ""),
             "provider_enabled": bool(row.get("provider_enabled")),
-            "supports_partial_messages": bool(row.get("supports_partial_messages")),
             "enabled_models": list(_json_load(row.get("enabled_models_json"), []) or []),
             "custom_models": list(_json_load(row.get("custom_models_json"), []) or []),
             "models": list(_json_load(row.get("models_json"), []) or []),

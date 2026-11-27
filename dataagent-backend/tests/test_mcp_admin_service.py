@@ -84,31 +84,6 @@ def test_configured_mcp_server_crud_round_trip(monkeypatch):
     assert mcp_admin_service.list_mcp_servers()["configured"] == []
 
 
-def test_plugin_mcp_server_is_read_only(monkeypatch):
-    registry = FakeRegistry(
-        [
-            {
-                "server_id": "web",
-                "name": "Example MCP",
-                "source": "plugin",
-                "transport": "http",
-                "url": "http://example-mcp:8801/mcp/",
-                "headers": {},
-                "command": "",
-                "args": [],
-                "env": {},
-                "enabled": True,
-            }
-        ]
-    )
-    monkeypatch.setattr(mcp_admin_service, "get_runtime_registry_store", lambda: registry)
-
-    with pytest.raises(ValueError, match="read-only"):
-        mcp_admin_service.update_mcp_server("web", {"enabled": False})
-    with pytest.raises(ValueError, match="read-only"):
-        mcp_admin_service.delete_mcp_server("web")
-
-
 @pytest.mark.asyncio
 async def test_detect_mcp_server_passes_registry_config_to_probe(monkeypatch):
     registry = FakeRegistry([_remote_server_row()])

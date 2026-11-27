@@ -25,7 +25,6 @@ class DeliverMessageRequest(BaseModel):
     agent_id: Optional[str] = None
     provider_id: Optional[str] = None
     model: Optional[str] = None
-    debug: bool = False
     permission_mode: Optional[str] = None
 
 
@@ -51,18 +50,6 @@ class QuestionAnswerResponse(BaseModel):
     task_id: str
     request_id: str
     accepted: bool
-
-
-class CreateTaskRequest(BaseModel):
-    topic_id: str
-    message_type: str
-    message_content: Any
-    agent_id: Optional[str] = None
-    provider_id: Optional[str] = None
-    model: Optional[str] = None
-    debug: bool = False
-
-
 
 
 class MessageQueueQueryRequest(BaseModel):
@@ -100,7 +87,6 @@ class MessageScheduleLogsQueryRequest(BaseModel):
 
 class ProviderSettingsUpdate(BaseModel):
     provider_id: str
-    provider_type: Optional[str] = None
     api_format: Optional[str] = None
     name: Optional[str] = None
     display_name: Optional[str] = None
@@ -112,7 +98,6 @@ class ProviderSettingsUpdate(BaseModel):
     api_key: Optional[str] = None
     auth_token: Optional[str] = None
     base_url: Optional[str] = None
-    supports_partial_messages: Optional[bool] = None
     model_detections: Optional[Dict[str, "ModelDetectionState"]] = None
     models: Optional[List[Any]] = None
 
@@ -125,7 +110,6 @@ class ModelDetectionState(BaseModel):
 
 class ProviderConfig(BaseModel):
     provider_id: str
-    provider_type: str = "anthropic_compatible"
     api_format: str = "/v1/messages"
     name: str = ""
     display_name: str
@@ -140,7 +124,6 @@ class ProviderConfig(BaseModel):
     default_model: str = ""
     enabled: bool = False
     provider_enabled: bool = False
-    supports_partial_messages: bool = True
     validation_status: str = "unverified"
     validation_message: str = ""
     model_detections: Dict[str, ModelDetectionState] = Field(default_factory=dict)
@@ -151,7 +134,6 @@ class ProviderCreateRequest(ProviderSettingsUpdate):
 
 
 class ProviderUpdateRequest(BaseModel):
-    provider_type: Optional[str] = None
     api_format: Optional[str] = None
     name: Optional[str] = None
     display_name: Optional[str] = None
@@ -163,7 +145,6 @@ class ProviderUpdateRequest(BaseModel):
     api_key: Optional[str] = None
     auth_token: Optional[str] = None
     base_url: Optional[str] = None
-    supports_partial_messages: Optional[bool] = None
     model_detections: Optional[Dict[str, "ModelDetectionState"]] = None
     models: Optional[List[Any]] = None
 
@@ -183,7 +164,6 @@ class McpServerConfig(BaseModel):
     args: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
-    oauth_required: bool = False
     tool_count: int = 0
     description: str = ""
     # Non-admin readers get key names with empty values, so presence has to be
@@ -202,7 +182,6 @@ class McpServerCreateRequest(BaseModel):
     args: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
-    oauth_required: bool = False
     tool_count: int = 0
     description: str = ""
 
@@ -216,14 +195,12 @@ class McpServerUpdateRequest(BaseModel):
     args: Optional[List[str]] = None
     env: Optional[Dict[str, str]] = None
     enabled: Optional[bool] = None
-    oauth_required: Optional[bool] = None
     tool_count: Optional[int] = None
     description: Optional[str] = None
 
 
 class McpServerListResponse(BaseModel):
     configured: List[McpServerConfig] = Field(default_factory=list)
-    plugin: List[McpServerConfig] = Field(default_factory=list)
 
 
 class McpServerDetectionResponse(BaseModel):
@@ -242,7 +219,6 @@ class ModelDetectionRequest(BaseModel):
     api_key: Optional[str] = None
     auth_token: Optional[str] = None
     base_url: Optional[str] = None
-    supports_partial_messages: Optional[bool] = None
 
 
 class ModelDetectionResponse(BaseModel):
@@ -262,7 +238,6 @@ class RuntimeProviderConfig(BaseModel):
     default_model: str = ""
     enabled: bool = False
     provider_enabled: bool = False
-    supports_partial_messages: bool = True
     validation_status: str = "unverified"
     validation_message: str = ""
 
@@ -283,7 +258,6 @@ class AdminSettingsResponse(BaseModel):
     model: str
     providers: List[ProviderConfig] = Field(default_factory=list)
     widget_allowed_sites: List[WidgetAllowedSite] = Field(default_factory=list)
-    skills_output_dir: str = ""
     skills_root_dir: str = ""
     updated_at: str = ""
 
@@ -291,7 +265,6 @@ class AdminSettingsResponse(BaseModel):
 class AdminSettingsUpdateRequest(BaseModel):
     provider_id: Optional[str] = None
     model: Optional[str] = None
-    skills_output_dir: Optional[str] = None
     providers: Optional[List[ProviderSettingsUpdate]] = None
     widget_allowed_sites: Optional[List[WidgetAllowedSite]] = None
 
@@ -456,24 +429,6 @@ class AgentCapabilitiesResponse(BaseModel):
     skills: List[AgentSkillCapability] = Field(default_factory=list)
 
 
-class AgentProfile(BaseModel):
-    agent_id: str
-    name: str
-    description: str = ""
-    system_prompt: str = ""
-    mcp_server_ids: List[str] = Field(default_factory=list)
-    skill_folders: List[str] = Field(default_factory=list)
-    max_turns: int = 0
-    plan_timeout_action: str = "park"
-    env_vars: Dict[str, str] = Field(default_factory=dict)
-    visibility: Dict[str, Any] = Field(
-        default_factory=lambda: {"mode": "all"}
-    )
-    preset_questions: List[str] = Field(default_factory=list)
-    is_default: bool = False
-    is_builtin: bool = False
-
-
 class AgentReadableProfile(BaseModel):
     """Authenticated read-only profile. Environment variables stay admin-only;
     the visibility allow-list is admin-only too — non-admin readers only get
@@ -525,13 +480,7 @@ class TopicMessage(BaseModel):
     type: str
     status: str = "success"
     content: str = ""
-    event: str = ""
-    steps: Optional[List[Dict[str, Any]]] = None
-    tool: Optional[Dict[str, Any]] = None
     seq_id: int = 0
-    correlation_id: Optional[str] = None
-    parent_correlation_id: Optional[str] = None
-    content_type: Optional[str] = None
     usage: Optional[Dict[str, Any]] = None
     blocks: Optional[List[Dict[str, Any]]] = None
     # The records `blocks` were projected from. Clients replay these through the
@@ -539,7 +488,6 @@ class TopicMessage(BaseModel):
     # switched, so the change can be reverted without touching stored data.
     records: Optional[List[Dict[str, Any]]] = None
     resume_after_seq: int = 0
-    show_in_ui: bool = True
     feedback: str = ""
     # Files this message's run generated in the topic workspace (per-run diff),
     # so the chat surface can offer direct downloads on the message itself.
@@ -553,8 +501,6 @@ class TopicMessage(BaseModel):
 class TopicSummary(BaseModel):
     topic_id: str
     title: str
-    chat_topic_id: str
-    chat_conversation_id: str
     agent_id: str = ""
     source: str = "web"
     user_id: Optional[int] = None
@@ -573,8 +519,6 @@ class TopicSummary(BaseModel):
 class TopicDetail(BaseModel):
     topic_id: str
     title: str
-    chat_topic_id: str
-    chat_conversation_id: str
     agent_id: str = ""
     source: str = "web"
     user_id: Optional[int] = None
@@ -624,7 +568,6 @@ class AdminFeedbackItem(BaseModel):
     agent_id: str = ""
     feedback: str
     feedback_at: str = ""
-    feedback_comment: str = ""
     question: str = ""
     answer: str = ""
     topic_title: str = ""
@@ -702,13 +645,6 @@ class UpdateMessageFeedbackRequest(BaseModel):
     feedback: str = ""
 
 
-class FollowupSuggestionsResponse(BaseModel):
-    topic_id: str
-    message_id: str
-    suggestions: List[str] = Field(default_factory=list)
-    source: str = "empty"
-
-
 class TaskSubmissionResponse(BaseModel):
     accepted: bool = True
     topic_id: str
@@ -723,7 +659,6 @@ class TaskStatusResponse(BaseModel):
     topic_id: str
     agent_id: str = ""
     agent: Optional[AgentSummary] = None
-    from_task_id: Optional[str] = None
     task_status: str
     prompt: str = ""
     provider_id: str = ""
@@ -908,10 +843,6 @@ class EvalCaseDetail(BaseModel):
 
 class EvalCaseUpsertRequest(BaseModel):
     case_json: Dict[str, Any]
-
-
-class EvalCasesReplaceRequest(BaseModel):
-    cases: List[Dict[str, Any]]
 
 
 class EvalImportResponse(BaseModel):

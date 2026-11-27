@@ -244,7 +244,6 @@ class TaskCoordinator:
                         workspace_before=workspace_before,
                         provider_id=str(task.get("provider_id") or ""),
                         model=str(task.get("model") or ""),
-                        debug=bool(task.get("debug")),
                         timeout_seconds=int(task.get("timeout_seconds") or 0),
                         sql_read_timeout_seconds=int(task.get("sql_read_timeout_seconds") or 0),
                         sql_write_timeout_seconds=int(task.get("sql_write_timeout_seconds") or 0),
@@ -260,7 +259,7 @@ class TaskCoordinator:
                     is_cancel_requested=lambda: self._task_stop_reason(task_id, lease_lost),
                 )
                 logger.info(
-                    "task.run.result task_id=%s topic_id=%s provider=%s model=%s task_status=%s error_code=%s content_len=%s session_id_set=%s usage_set=%s",
+                    "task.run.result task_id=%s topic_id=%s provider=%s model=%s task_status=%s error_code=%s content_len=%s usage_set=%s",
                     task_id,
                     topic_id,
                     str(task.get("provider_id") or ""),
@@ -268,7 +267,6 @@ class TaskCoordinator:
                     result.task_status,
                     str((result.error or {}).get("code") or ""),
                     len(str(result.content or "")),
-                    bool(result.session_id),
                     bool(result.usage),
                 )
                 if result.task_status == "parked":
@@ -294,14 +292,6 @@ class TaskCoordinator:
                     len(attachments),
                     str((result.error or {}).get("code") or ""),
                 )
-                if result.session_id:
-                    self.store.update_topic_conversation_id(topic_id, conversation_id=result.session_id)
-                    logger.info(
-                        "task.run.conversation_updated task_id=%s topic_id=%s session_id_set=%s",
-                        task_id,
-                        topic_id,
-                        True,
-                    )
                 self.store.finish_task(task_id=task_id, task_status=result.task_status, error=result.error)
                 if str(task.get("agent_id") or "") == DIGEST_AGENT_ID and result.task_status == "finished":
                     try:

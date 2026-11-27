@@ -65,7 +65,6 @@ def test_admin_settings_contract(monkeypatch):
                 default_model="anthropic/claude-sonnet-4.5",
                 enabled=True,
                 provider_enabled=True,
-                supports_partial_messages=False,
                 validation_status="verified",
                 model_detections={
                     "anthropic/claude-sonnet-4.5": {
@@ -88,7 +87,6 @@ def test_admin_settings_contract(monkeypatch):
     response = client.get("/api/v1/nl2sql-admin/settings")
     assert response.status_code == 200
     assert response.json()["provider_id"] == "openrouter"
-    assert response.json()["providers"][0]["supports_partial_messages"] is False
     assert response.json()["providers"][0]["model_detections"]["anthropic/claude-sonnet-4.5"]["status"] == "verified"
 
     update = client.put(
@@ -99,7 +97,6 @@ def test_admin_settings_contract(monkeypatch):
             "providers": [
                 {
                     "provider_id": "openrouter",
-                    "supports_partial_messages": False,
                     "enabled_models": ["anthropic/claude-sonnet-4.5"],
                 }
             ],
@@ -107,7 +104,7 @@ def test_admin_settings_contract(monkeypatch):
     )
     assert update.status_code == 200
     assert update.json()["updated_at"] == "2026-03-06T12:00:00"
-    assert captured["payload"]["providers"][0]["supports_partial_messages"] is False
+    assert captured["payload"]["providers"][0]["enabled_models"] == ["anthropic/claude-sonnet-4.5"]
     assert client.get("/api/v1/dataagent/settings").status_code == 404
 
 
@@ -134,13 +131,12 @@ def test_model_detection_route_contract(monkeypatch):
             "model": "anthropic/claude-sonnet-4.5",
             "auth_token": "token",
             "base_url": "https://openrouter.ai/api",
-            "supports_partial_messages": False,
         },
     )
 
     assert response.status_code == 200
     assert response.json()["status"] == "verified"
-    assert captured["payload"]["supports_partial_messages"] is False
+    assert captured["payload"]["base_url"] == "https://openrouter.ai/api"
 
 
 def test_mcp_registry_routes_contract(monkeypatch):
@@ -431,7 +427,6 @@ def test_agent_profile_routes_contract(monkeypatch):
         ],
     )
     monkeypatch.setattr(admin_routes, "list_agent_profiles", lambda: [profile])
-    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
     monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
     monkeypatch.setattr(admin_routes, "agent_capabilities", lambda documents: {
         "tools": ["Skill", "Read"],
@@ -494,7 +489,6 @@ def test_agent_profile_routes_contract(monkeypatch):
 
 def test_agent_slash_commands_route_contract(monkeypatch):
     profile = {"agent_id": "agent_1", "name": "x", "skill_folders": ["marketing-insights", "platform-tools"]}
-    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
     monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
 
     client = _admin_client()
@@ -635,7 +629,6 @@ def test_agent_responses_are_layered_by_authentication(monkeypatch):
         "visibility": {"mode": "all"},
     }
     monkeypatch.setattr(admin_routes, "list_agent_profiles", lambda: [profile])
-    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
     monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: profile if agent_id == "agent_1" else None)
     client = TestClient(app)
 
@@ -664,13 +657,11 @@ def test_agent_responses_are_layered_by_authentication(monkeypatch):
     assert readable.json()["mcp_server_ids"] == ["web"]
     assert "env_vars" not in readable.json()
 
-    # 管理员配置端点保留完整 Profile
-    configuration = client.get(
+    # Removed configuration route returns 404
+    assert client.get(
         "/api/v1/dataagent/agents/agent_1/configuration",
         headers=bearer_headers(admin.id),
-    )
-    assert configuration.status_code == 200
-    assert configuration.json()["env_vars"] == {"SECRET_TOKEN": "hidden"}
+    ).status_code == 404
 
 
 def test_agents_capabilities_not_shadowed_by_public_dynamic_route(monkeypatch):
@@ -682,7 +673,6 @@ def test_agents_capabilities_not_shadowed_by_public_dynamic_route(monkeypatch):
         "agent_capabilities",
         lambda documents: {"tools": [], "mcp_servers": [], "skills": [], "permission_modes": []},
     )
-    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: None)
     monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: None)
     client = TestClient(app)
 
@@ -731,7 +721,6 @@ def test_agent_visibility_scope_enforced_across_read_tiers(monkeypatch):
     acc_store.set_agent_grants("agent_sel", user_ids=[alice.id], role_ids=[])
     acc_store.set_agent_grants("agent_sel_other", user_ids=[bob.id], role_ids=[])
     monkeypatch.setattr(admin_routes, "list_agent_profiles", lambda: list(profiles))
-    monkeypatch.setattr(admin_routes, "get_agent_profile", lambda agent_id: by_id.get(agent_id))
     monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: by_id.get(agent_id))
     client = TestClient(app)
 
@@ -763,12 +752,13 @@ def test_agent_visibility_scope_enforced_across_read_tiers(monkeypatch):
         "agent_id", "name", "description", "is_default", "is_builtin", "preset_questions"
     }
 
-    # admin：列表全量，configuration 返回完整 visibility 配置（仅含 mode）
+    # admin：列表全量，profile 可读取他人授权的智能体；已移除的 configuration 返回 404
     admin_listed = client.get("/api/v1/dataagent/agents", headers=admin_headers)
     assert len(admin_listed.json()) == 4
-    configuration = client.get("/api/v1/dataagent/agents/agent_sel_other/configuration", headers=admin_headers)
-    assert configuration.status_code == 200
-    assert configuration.json()["visibility"] == {"mode": "selected"}
+    admin_profile = client.get("/api/v1/dataagent/agents/agent_sel_other/profile", headers=admin_headers)
+    assert admin_profile.status_code == 200
+    assert admin_profile.json()["visibility_mode"] == "selected"
+    assert client.get("/api/v1/dataagent/agents/agent_sel_other/configuration", headers=admin_headers).status_code == 404
 
 
 def test_admin_conversation_filter_uses_platform_users_route():

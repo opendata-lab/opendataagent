@@ -148,29 +148,6 @@
                 </el-form-item>
               </el-col>
             </el-row>
-
-            <el-row :gutter="16">
-              <el-col :xs="24" :md="8">
-                <el-form-item>
-                  <template #label>
-                    <span class="field-label">
-                      响应事件格式
-                      <el-tooltip content="控制 SDK 是否接收细粒度流式事件；兼容性不完整的供应商请选择兼容模式。" placement="top">
-                        <el-icon><QuestionFilled /></el-icon>
-                      </el-tooltip>
-                    </span>
-                  </template>
-                  <el-select
-                    v-model="currentDraft.supports_partial_messages"
-                    class="full-width"
-                    @change="clearCurrentDetections"
-                  >
-                    <el-option label="细粒度流式事件（推荐）" :value="true" />
-                    <el-option label="兼容事件模式" :value="false" />
-                  </el-select>
-                </el-form-item>
-              </el-col>
-            </el-row>
           </el-form>
         </div>
 
@@ -523,7 +500,6 @@ const buildProviderDraft = (provider) => {
     provider_enabled: Boolean(provider.provider_enabled || provider.enabled),
     token: '',
     base_url: provider.base_url || '',
-    supports_partial_messages: provider.supports_partial_messages !== false,
     enabled_models: uniqueStrings(enabledModelIds),
     custom_models: customModels,
     base_supported_models: supportedModelIds.filter((id) => !customModels.includes(id)),
@@ -542,7 +518,6 @@ const buildProviderSnapshot = (draft) => {
     provider_enabled: Boolean(draft?.provider_enabled),
     token: String(draft?.token || '').trim(),
     base_url: String(draft?.base_url || '').trim(),
-    supports_partial_messages: draft?.supports_partial_messages !== false,
     enabled_models: enabledModels,
     custom_models: uniqueStrings(draft?.custom_models),
     model_details: JSON.parse(JSON.stringify(draft?.model_details || {})),
@@ -622,7 +597,6 @@ const getDraft = (providerId) => {
     base_supported_models: [],
     token: '',
     base_url: '',
-    supports_partial_messages: true,
     model_details: {},
     model_detections: {}
   }
@@ -955,7 +929,6 @@ const addNewProvider = () => {
     api_key_set: false,
     provider_enabled: true,
     enabled: true,
-    supports_partial_messages: true,
     models: [],
     supported_models: [],
     custom_models: [],
@@ -1068,8 +1041,7 @@ const detectModel = async (model) => {
       provider_id: currentProvider.value.provider_id,
       model,
       api_format: currentDraft.value.api_format || '/v1/messages',
-      base_url: currentDraft.value.base_url,
-      supports_partial_messages: currentDraft.value.supports_partial_messages !== false
+      base_url: currentDraft.value.base_url
     }
     if (token) {
       if (currentDraft.value.api_format === '/v1/messages') {
@@ -1112,7 +1084,6 @@ const buildProviderPayload = (providerId) => {
     api_format: draft.api_format || '/v1/messages',
     provider_enabled: Boolean(draft.provider_enabled),
     base_url: draft.base_url,
-    supports_partial_messages: draft.supports_partial_messages !== false,
     enabled_models: enabledModels,
     custom_models: uniqueStrings(draft.custom_models),
     models: modelsWithDetails,

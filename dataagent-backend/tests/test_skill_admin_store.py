@@ -39,7 +39,6 @@ def test_normalize_settings_payload_stores_only_owned_settings():
     assert set(normalized) == {
         "provider_id",
         "model",
-        "skills_output_dir",
         "skill_runtime",
         "widget_allowed_sites",
     }

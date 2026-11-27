@@ -16,7 +16,6 @@ from models.schemas import (
     EvalCaseDetail,
     EvalCaseSummary,
     EvalCaseUpsertRequest,
-    EvalCasesReplaceRequest,
     EvalDatasetCreateRequest,
     EvalDatasetSummary,
     EvalDatasetUpdateRequest,
@@ -130,19 +129,6 @@ async def get_case(dataset_id: str, case_id: str):
         except (json.JSONDecodeError, TypeError):
             pass
     return row
-
-
-@router.put("/datasets/{dataset_id}/cases", response_model=EvalDatasetSummary)
-async def replace_cases(dataset_id: str, request: EvalCasesReplaceRequest):
-    store = get_eval_store()
-    ds = store.get_dataset(dataset_id)
-    if not ds:
-        raise HTTPException(status_code=404, detail="dataset not found")
-    result = validate(request.cases)
-    if not result["valid"]:
-        raise HTTPException(status_code=400, detail="; ".join(result["errors"][:20]))
-    store.replace_cases(dataset_id, request.cases, result["dataset_hash"])
-    return store.get_dataset(dataset_id)
 
 
 @router.put("/datasets/{dataset_id}/cases/{case_id}", response_model=EvalCaseDetail)

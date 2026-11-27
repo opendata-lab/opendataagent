@@ -151,7 +151,7 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
 - Build the tools-only sandbox before a local smoke that executes tools: `docker build -f dataagent-backend/Dockerfile.sandbox -t oda-sandbox:latest .` from the repo root. Docker must be available for sandbox tool execution. Pi and model/MCP connections stay in the backend; sandbox containers start lazily and have no network or provider credentials.
 - Confirm `da_agent_sdk_record.engine_kind` is `pi_agent_core`. Every execution segment has its own Pi process and at most one on-demand sandbox; parked cards release both and resume from MySQL session entries.
 - The SSE route is `GET /api/v1/nl2sql/tasks/{task_id}/sdk-events/stream`. `/events/stream` returns 404.
-- The task submission body uses `message_type` and `message_content`, not `question`.
+- The task submission route is `POST /api/v1/nl2sql/tasks/deliver-message`, with `topic_id` and `content` (the legacy `POST /api/v1/nl2sql/tasks` route was removed).
 - Every task runs under one budget tier (`agent_timeout_seconds`, 1800s by default). The old `execution_mode` field was removed; older clients may still send it and it is ignored.
 
 ### Intelligent Query environment defaults
@@ -169,7 +169,7 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
   - selected Python interpreter missing required packages
   - provider credentials or `da_agent_settings` not configured
 - Minimum smoke scenarios for async intelligent-query changes:
-  - background run accepted: verify `POST /api/v1/nl2sql/tasks` or `POST /api/v1/nl2sql/tasks/deliver-message` returns `accepted=true` and a `task_id`
+  - background run accepted: verify `POST /api/v1/nl2sql/tasks/deliver-message` returns `accepted=true` and a `task_id`
   - task pickup: verify task status transitions `waiting -> running -> success|failed|suspended`
   - event persistence: verify `GET /api/v1/nl2sql/tasks/{task_id}/events` or `GET /api/v1/nl2sql/tasks/{task_id}/events/stream` returns the terminal event stream
   - message persistence: verify the final assistant message is present in `GET /api/v1/nl2sql/topics/{topic_id}/messages`

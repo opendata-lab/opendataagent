@@ -160,9 +160,6 @@ export function createNl2SqlApiClient(options = {}) {
     updateMessageFeedback(topicId, messageId, feedback = '') {
       return runtimeRequest.put(`/topics/${topicId}/messages/${messageId}/feedback`, { feedback })
     },
-    generateFollowupSuggestions(topicId, messageId) {
-      return runtimeRequest.post(`/topics/${topicId}/messages/${messageId}/followup-suggestions`, {})
-    },
     uploadFile(topicId, file, { onUploadProgress } = {}) {
       const form = new FormData()
       form.append('file', file)
@@ -209,9 +206,6 @@ export function createNl2SqlApiClient(options = {}) {
   const taskApi = {
     deliverMessage(data) {
       return runtimeRequest.post('/tasks/deliver-message', data)
-    },
-    createTask(data) {
-      return runtimeRequest.post('/tasks', data)
     },
     getTask(taskId) {
       return runtimeRequest.get(`/tasks/${taskId}`)
@@ -277,14 +271,8 @@ export function createNl2SqlApiClient(options = {}) {
     create(data) {
       return runtimeRequest.post('/message-queue', data)
     },
-    update(queueId, data) {
-      return runtimeRequest.put(`/message-queue/${queueId}`, data)
-    },
     remove(queueId) {
       return runtimeRequest.delete(`/message-queue/${queueId}`)
-    },
-    consume(queueId) {
-      return runtimeRequest.post(`/message-queue/${queueId}/consume`)
     }
   }
 

@@ -17,7 +17,7 @@ def task():
     store = TopicTaskStore()
     topic = store.create_topic(title="checkpoint-test")
     task = store.create_task(topic_id=topic["topic_id"],prompt="test",provider_id="local-test",model="stub",
-        debug=False,timeout_seconds=1800,sql_read_timeout_seconds=300,sql_write_timeout_seconds=60)
+        timeout_seconds=1800,sql_read_timeout_seconds=300,sql_write_timeout_seconds=60)
     store.mark_task_running(task["task_id"])
     try: yield store,topic["topic_id"],task["task_id"]
     finally: store.delete_topic(topic["topic_id"])
@@ -38,7 +38,7 @@ def test_card_and_checkpoint_are_atomic_and_a_stale_writer_is_rejected(task):
         store.commit_session_segment(task_id=task_id,expected_version=0,
             checkpoint={"header":{},"entries":[],"leaf_id":None},state={},card={"bad":True})
     assert store.get_session_checkpoint(topic_id) is None
-    assert store.get_pending_question_request(task_id) is None
+    assert store.get_current_question_interaction(task_id=task_id, request_id="request-1") is None
     assert store.get_task(task_id)["task_status"]=="running"
     commit_card(*task)
     assert store.get_task(task_id)["task_status"]=="waiting_input"
@@ -114,7 +114,7 @@ def test_deleting_a_topic_removes_its_event_records():
     store = TopicTaskStore()
     topic_id = store.create_topic(title="delete-records-test")["topic_id"]
     task_id = store.create_task(topic_id=topic_id,prompt="test",provider_id="local-test",model="stub",
-        debug=False,timeout_seconds=1800,sql_read_timeout_seconds=300,sql_write_timeout_seconds=60)["task_id"]
+        timeout_seconds=1800,sql_read_timeout_seconds=300,sql_write_timeout_seconds=60)["task_id"]
     store.mark_task_running(task_id)
     commit_card(store,topic_id,task_id)
 

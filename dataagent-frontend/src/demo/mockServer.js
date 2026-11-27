@@ -109,7 +109,6 @@ const demoProviderSettings = {
       default_model: 'demo-nl2sql',
       base_url: 'https://demo.local',
       auth_token_set: true,
-      supports_partial_messages: true,
       validation_status: 'verified',
       validation_message: '演示模式使用前端模拟响应。',
       model_detections: {
@@ -141,10 +140,8 @@ const demoWidgetMessage = (seq, sender, content, ts) => ({
   type: sender === 'user' ? 'chat' : 'assistant',
   status: 'success',
   content,
-  event: '',
   seq_id: seq,
   feedback: '',
-  show_in_ui: 1,
   created_at: ts,
   updated_at: ts
 })
@@ -153,8 +150,6 @@ const demoWidgetTopics = [
   {
     topic_id: 'demo-widget-topic-1',
     title: '最近 7 天的下单转化率',
-    chat_topic_id: 'demo-widget-chat-1',
-    chat_conversation_id: 'demo-widget-conv-1',
     agent_id: 'agent_default',
     current_task_id: null,
     current_task_status: null,
@@ -180,8 +175,6 @@ const demoWidgetTopics = [
   {
     topic_id: 'demo-widget-topic-2',
     title: '华东区门店销售排行',
-    chat_topic_id: 'demo-widget-chat-2',
-    chat_conversation_id: 'demo-widget-conv-2',
     agent_id: 'agent_default',
     current_task_id: null,
     current_task_status: null,
@@ -203,8 +196,6 @@ const demoWidgetTopics = [
   {
     topic_id: 'demo-widget-topic-3',
     title: '昨日风控拦截订单明细',
-    chat_topic_id: 'demo-widget-chat-3',
-    chat_conversation_id: 'demo-widget-conv-3',
     agent_id: 'agent_default',
     current_task_id: null,
     current_task_status: null,
@@ -229,8 +220,6 @@ const demoWidgetTopics = [
   {
     topic_id: 'demo-widget-topic-4',
     title: '会员等级分布',
-    chat_topic_id: 'demo-widget-chat-4',
-    chat_conversation_id: 'demo-widget-conv-4',
     agent_id: 'agent_default',
     current_task_id: null,
     current_task_status: null,
@@ -683,7 +672,6 @@ const handleDemoSettingsUpdate = (body = {}) => {
         provider_enabled: patch.provider_enabled ?? provider.provider_enabled,
         enabled: patch.provider_enabled ?? provider.enabled,
         base_url: patch.base_url ?? provider.base_url,
-        supports_partial_messages: patch.supports_partial_messages ?? provider.supports_partial_messages,
         custom_models: Array.isArray(patch.custom_models) ? patch.custom_models : provider.custom_models,
         models: Array.isArray(patch.enabled_models) ? patch.enabled_models : provider.models,
         model_detections: patch.model_detections || provider.model_detections,
@@ -885,14 +873,6 @@ export const demoAdapter = async (config) => {
     const agent = demoAgents.find((item) => item.agent_id === agentId)
     return agent
       ? createResponse(config, demoReadableAgent(agent))
-      : createRejectedResponse(config, '智能体不存在', 404)
-  }
-
-  if (method === 'get' && pathname.match(/^\/v1\/dataagent\/agents\/[^/]+\/configuration$/)) {
-    const agentId = decodeURIComponent(pathname.split('/')[4])
-    const agent = demoAgents.find((item) => item.agent_id === agentId)
-    return agent
-      ? createResponse(config, clone(agent))
       : createRejectedResponse(config, '智能体不存在', 404)
   }
 
