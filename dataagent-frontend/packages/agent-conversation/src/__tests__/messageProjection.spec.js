@@ -63,6 +63,26 @@ const BLOCKS = [
 ]
 
 describe('history projection', () => {
+  it('renders the same MCP title from stored events and projected blocks', async () => {
+    const input = { description: '核对订单定义' }
+    const records = [
+      { record_type: 'agent_event', event_type: 'turn.started', data: { turn_id: 'turn-1' } },
+      { record_type: 'agent_event', event_type: 'tool.started', data: {
+        turn_id: 'turn-1', tool_call_id: 'tool-1', tool_name: 'get_ontology', tool_title: '查询本体', input
+      } },
+      { record_type: 'agent_event', event_type: 'tool.completed', data: { tool_call_id: 'tool-1', output: '订单' } }
+    ]
+    const blocks = [{
+      type: 'tool_use', tool_id: 'tool-1', tool_name: 'get_ontology', tool_title: '查询本体', input, output: '订单'
+    }]
+    for (const history of [{ records }, { blocks }]) {
+      const el = await mountWithMessages([{ id: 'a-1', role: 'assistant', ...history }])
+      const summary = el.shadowRoot.querySelector('.shell-trace-summary-text')?.textContent
+      el.remove()
+      expect(summary).toBe('查询本体：核对订单定义')
+    }
+  })
+
   it('renders stored records and server-projected blocks identically', async () => {
     // The SDK has to serve two kinds of host: one whose transport returns raw
     // event records, and one whose BFF has already projected them into blocks.

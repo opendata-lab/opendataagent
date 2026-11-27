@@ -648,6 +648,7 @@
           "data": {
             "request_id": "req-1",
             "tool_name": "mcp__example__publish",
+            "tool_title": "发布工作流",
             "risk_level": "critical",
             "title": "发布工作流 #12",
             "summary": "operation=deploy",
@@ -666,6 +667,7 @@
         {
           "kind": "permission_request",
           "tool_name": "mcp__example__publish",
+          "tool_title": "发布工作流",
           "risk_level": "critical",
           "title": "发布工作流 #12",
           "summary": "operation=deploy",
@@ -1179,7 +1181,7 @@
       ]
     },
     {
-      "name": "pi tool_use with success result then text",
+      "name": "pi titled tool_use with success result then text",
       "records": [
         {
           "seq_id": 1,
@@ -1197,6 +1199,7 @@
             "turn_id": "turn-1",
             "tool_call_id": "toolu_1",
             "tool_name": "run_sql",
+            "tool_title": "查询数据",
             "input": {
               "sql": "select 1"
             }
@@ -1243,6 +1246,7 @@
         {
           "kind": "tool_use",
           "tool_name": "run_sql",
+          "tool_title": "查询数据",
           "input": {
             "sql": "select 1"
           },

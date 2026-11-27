@@ -16,7 +16,7 @@ const readline = require('node:readline');
 readline.createInterface({input:process.stdin}).on('line', line => {
   const req=JSON.parse(line); let result;
   if(req.method==='initialize') result={protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'review',version:'1'}};
-  else if(req.method==='tools/list') result={tools:[{name:'operation',inputSchema:{type:'object'},annotations:{readOnlyHint:${outcome === "large"}}}]};
+  else if(req.method==='tools/list') result={tools:[{name:'operation',title:'执行操作',inputSchema:{type:'object'},annotations:{readOnlyHint:${outcome === "large"}}}]};
   else if(req.method==='tools/call') {
     if(${JSON.stringify(outcome)}==='transport') return process.exit(1);
     result={isError:${outcome === "error"},content:[{type:'text',text:${outcome === "large" ? "JSON.stringify({rows:Array.from({length:800},(_,id)=>({id,value:'x'.repeat(80)})),warning:'metadata-kept'})" : JSON.stringify(outcome === "error" ? "Validation rejected: invalid value" : "operation-ok")}}]};
@@ -68,6 +68,7 @@ for(const outcome of ["success","error","transport"] as const) {
       const completed=events.find(e=>e.type==="tool.completed")!;
       assert.equal(completed.payload.is_error,outcome==="error");assert.equal(completed.payload.turn_id,"turn-4");
       assert.equal(events[started].payload.turn_id,"turn-4");
+      assert.equal(events[started].payload.tool_title,"执行操作");
       assert.equal(events.filter(e=>e.type==="turn.started").length,1);
       assert.equal(events.find(e=>e.type==="turn.completed")?.payload.turn_id,"turn-5");
       assert.equal(result.turns,1,"approved call must not consume an extra model turn");
@@ -81,6 +82,7 @@ test("MCP folding passes full output through afterToolCall and the UI registry",
   const contexts:string[]=[];const events:NeutralAgentEvent[]=[];
   const result=await new Cell(modelFactory(text=>contexts.push(text),true)).run(init(root,mcpFixture("large")),e=>events.push(e));
   assert.equal(result.terminal_status,"success",result.error);
+  assert.equal(events.find(e=>e.type==="tool.started")?.payload.tool_title,"执行操作");
   const completed=events.find(e=>e.type==="tool.completed")!;
   assert.match(JSON.stringify(completed.payload.output),/x{80}/);
   assert.match(JSON.stringify(completed.payload.output),/metadata-kept/);

@@ -188,6 +188,9 @@ const TOOL_ICON_PATHS = {
   sql: ['M12 3c4.97 0 9 1.34 9 3s-4.03 3-9 3-9-1.34-9-3 4.03-3 9-3z', 'M21 6v6c0 1.66-4.03 3-9 3s-9-1.34-9-3V6', 'M21 12v6c0 1.66-4.03 3-9 3s-9-1.34-9-3v-6'],
   chart: ['M3 21h18', 'M7 21V11', 'M12 21V5', 'M17 21v-7'],
   python: ['M8 18l-6-6 6-6', 'M16 6l6 6-6 6'],
+  download: ['M12 3v12', 'M7 10l5 5 5-5', 'M5 21h14'],
+  question: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4', 'M12 17.5h.01'],
+  plan: ['M9 6h11', 'M9 12h11', 'M9 18h11', 'M4 6l1 1 2-2', 'M4 12l1 1 2-2', 'M4 18l1 1 2-2'],
   tool: ['M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z']
 }
 
@@ -254,11 +257,12 @@ const toolOutput = computed(() => props.tool?.output)
 const outputPayload = computed(() => normalizeOutput(toolOutput.value) || {})
 const kind = computed(() => String(outputPayload.value.kind || 'raw'))
 const toolName = computed(() => String(props.tool?.name || '').trim())
+const toolTitle = computed(() => props.tool?.tool_title)
 const toolAction = computed(() => describeToolAction({
   name: toolName.value,
+  tool_title: toolTitle.value,
   input: toolInput.value
 }))
-const toolNameLower = computed(() => toolAction.value.name.toLowerCase())
 const bootstrapSkillName = computed(() => String(props.tool?._skillBootstrapName || '').trim())
 const bootstrapSkillLabel = computed(() => (
   bootstrapSkillName.value ? formatSkillBootstrapLabel(bootstrapSkillName.value) : ''
@@ -295,6 +299,7 @@ const durationText = computed(() => {
 })
 
 const displayLabel = computed(() => {
+  if (toolAction.value.title) return toolAction.value.label
   if (outputPayload.value.tool_label) return String(outputPayload.value.tool_label)
 
   const map = {
@@ -303,10 +308,6 @@ const displayLabel = computed(() => {
     python_execution: '执行代码'
   }
   if (map[kind.value]) return map[kind.value]
-
-  if (toolAction.value.kind === 'tool' && toolNameLower.value.includes('image')) {
-    return '生成图片'
-  }
 
   return toolAction.value.label
 })
@@ -317,9 +318,8 @@ const iconKind = computed(() => {
   if (kind.value === 'sql_execution') return 'sql'
   if (kind.value === 'chart_spec') return 'chart'
   if (kind.value === 'python_execution') return 'python'
-  if (toolAction.value.kind === 'tool' && toolNameLower.value.includes('image')) return 'chart'
-  const actionKind = toolAction.value.kind
-  return TOOL_ICON_PATHS[actionKind] ? actionKind : 'tool'
+  const actionIcon = toolAction.value.iconKind
+  return TOOL_ICON_PATHS[actionIcon] ? actionIcon : 'tool'
 })
 const iconPaths = computed(() => TOOL_ICON_PATHS[iconKind.value] || TOOL_ICON_PATHS.tool)
 
@@ -400,8 +400,10 @@ const traceSummaryText = computed(() => {
     return detail ? `执行技能：${detail}` : '正在准备技能上下文'
   }
   if (traceKind.value === 'tool') {
-    return toolAction.value.description
-      ? `执行工具：${toolAction.value.description}`
+    const { title, description } = toolAction.value
+    if (title) return description ? `${title}：${description}` : title
+    return description
+      ? `执行工具：${description}`
       : (displayLabel.value || (detail ? `执行工具：${detail}` : '执行工具'))
   }
 

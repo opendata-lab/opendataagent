@@ -10,6 +10,12 @@
 
 ## DataAgent 运行时与插件
 
+### 等待审批的工具调用显示为“执行失败”并重复一行
+
+- **现状**（2026-11-26，#80 本地冒烟发现）：写操作等待审批时，Pi 拦截调用返回 “Not executed: waiting for approval” 并标为错误，界面显示红色“执行失败”；审批通过后恢复执行使用带运行前缀的另一个调用 ID，又新增一行“已执行”。Codex、Claude Code 均为同一行从“等待确认”变为执行结果。
+- **要做**：Pi 拦截结果加 `awaiting_approval` 标记且不算错误，恢复执行沿用原调用 ID；后端历史投影与前端事件处理按调用 ID 合并为一行；等待时显示“等待确认”，拒绝显示“已拒绝”。主应用、Widget、SDK 共用。#80 合并后单独 PR。
+- **来源**：用户 2026-11-26；#80 冒烟（MCP 工具标题的端到端冒烟已在 #80 完成，见 PR 评论）。
+
 ### 独立登录 Widget 的统一账号与续聊
 
 - **现状**（2026-11-24）：DataAgent 仓库侧（计划第 1、2、3、5 步）已在分支 `feat/user-accounts` 完成：新增 `da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant` 及整数 `user_id` 外键迁移 `20261123_000042`（Alembic 只建表并重建 MCP 令牌表；旧数据由手动执行的 `scripts/migrate-accounts.sh` 迁移；迁移只能向前，回退用 `scripts/backup-db.sh` / `scripts/restore-db.sh`），统一 `core/accounts` 模块（移除 `core/auth.py` 与关闭认证/匿名 Widget 旁路），上线用户管理（仅停用不物理删除）、角色管理、个人资料、助手独立授权及服务端受信任代理配置页，并同步更新本地冒烟、评测脚本、部署配置与手册。

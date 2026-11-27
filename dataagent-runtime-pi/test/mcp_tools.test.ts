@@ -70,22 +70,41 @@ lines.on("line", (line) => {
       jsonrpc: "2.0",
       id: message.id,
       result: {
-        tools: [{ name: "echo", description: "Echo", inputSchema: { type: "object" } }]
+        tools: [
+          { name: "get_ontology", title: "查询本体", annotations: { title: "读取本体" }, inputSchema: { type: "object" } },
+          { name: "search_ontology", annotations: { title: "搜索本体" }, inputSchema: { type: "object" } },
+          { name: "echo", inputSchema: { type: "object" } }
+        ]
       }
     }) + "\n");
   }
 });`;
 
-  const result = await probeMcpServer({
+  const server = {
     name: "stdio-fixture",
     type: "stdio",
     command: process.execPath,
     args: ["-e", fixture],
-  }, { timeoutMs: 2_000 });
+  };
+  const result = await probeMcpServer(server, { timeoutMs: 2_000 });
 
-  assert.equal(result.toolCount, 1);
-  assert.deepEqual(result.toolNames, ["echo"]);
+  assert.equal(result.toolCount, 3);
+  assert.deepEqual(result.toolNames, ["get_ontology", "search_ontology", "echo"]);
+  assert.deepEqual(result.toolTitles, {
+    get_ontology: "查询本体",
+    search_ontology: "搜索本体",
+    echo: "echo",
+  });
   assert.ok(result.latencyMs >= 0);
+
+  const bridge = await connectMcpServers([server], { connectTimeoutMs: 2_000 });
+  try {
+    assert.deepEqual(bridge.tools.map(tool => (tool as { label: string }).label), [
+      "查询本体", "搜索本体", "echo",
+    ]);
+  } finally {
+    await bridge.close();
+  }
 });
 
 test("probeMcpServer times out a stalled stdio server", async () => {

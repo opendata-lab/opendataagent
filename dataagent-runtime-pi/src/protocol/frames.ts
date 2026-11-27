@@ -65,6 +65,14 @@ export interface NeutralAgentEvent {
   payload: Record<string, unknown>;
 }
 
+export interface ToolStartedPayload extends Record<string, unknown> {
+  turn_id: string;
+  tool_call_id: string;
+  tool_name: string;
+  tool_title?: string;
+  input: unknown;
+}
+
 export interface McpServerConfig {
   name: string;
   type?: string;

@@ -203,7 +203,8 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
                     card={"record_type":"permission_request","data":{"request_id":request_id,
                         "tool_name":"ExitPlanMode" if kind == "plan" else data["tool_name"],
                         "risk_level":"plan" if kind == "plan" else "high","title":"请确认执行计划" if kind == "plan" else "请确认写操作",
-                        "summary":data.get("plan") or data["tool_name"],"payload_preview":data,"deadline_at":deadline}}
+                        "summary":data.get("plan") or data.get("tool_title") or data["tool_name"],"payload_preview":data,"deadline_at":deadline}}
+                    if data.get("tool_title"): card["data"]["tool_title"]=data["tool_title"]
                     if kind == "plan": next_state["plan_approved"]=False
                 next_state["interaction"]["deadline_at"] = deadline
             await asyncio.to_thread(store.commit_session_segment,task_id=params.task_id,checkpoint=checkpoint,

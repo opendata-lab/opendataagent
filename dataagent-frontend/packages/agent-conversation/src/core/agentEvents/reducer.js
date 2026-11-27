@@ -158,6 +158,7 @@ export function reducePiEvent(state, record) {
       const block = _newBlock(turn, 'tool_use')
       block.id = String(data.tool_call_id || '')
       block.name = String(data.tool_name || 'Tool')
+      if (typeof data.tool_title === 'string' && data.tool_title) block.tool_title = data.tool_title
       block.input = data.input ?? null
       turn.blocks.push(block)
       state.blocks.push(block)

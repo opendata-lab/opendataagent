@@ -34,5 +34,19 @@
       "description": "tool.progress is deliberately absent: nothing rendered it, so it only grew the record table. Liveness uses the run.heartbeat protocol frame."
     },
     "payload": { "type": "object" }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "tool.started" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "tool_title": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -82,6 +82,13 @@ error_message}`. It is not terminal. Readers show a retry notice until the next
 event of any other kind except `usage.updated`
 ([design](../../../docs/design/2026-11-19-model-retry-and-friendly-errors-design.md)).
 
+## `tool.started`
+
+`payload.tool_title` is an optional display label from MCP tool discovery.
+The event writer stores it in the record's JSON payload, and history
+projection carries it into the tool block. Tool calls and icon selection
+continue to use `tool_name`.
+
 ## Failure messages
 
 `run.failed.payload.message` is written for end users and never carries an

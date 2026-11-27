@@ -61,6 +61,7 @@ export interface ConversationBlock {
   text?: string
   tool_id?: string
   tool_name?: string
+  tool_title?: string
   request_id?: string
   [key: string]: unknown
 }

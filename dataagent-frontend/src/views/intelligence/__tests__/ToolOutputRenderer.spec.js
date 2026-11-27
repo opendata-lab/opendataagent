@@ -385,6 +385,19 @@ describe('ToolOutputRenderer', () => {
     expect(wrapper.text()).not.toContain('搜索文件')
   })
 
+  it.each([
+    ['查询本体', '核对订单定义', '查询本体：核对订单定义'],
+    ['查询本体', '', '查询本体'],
+    [undefined, '核对订单定义', '执行工具：核对订单定义']
+  ])('renders the MCP title and call description in the trace', (tool_title, description, summary) => {
+    const wrapper = mountRenderer({
+      name: 'get_ontology',
+      tool_title,
+      input: { description }
+    })
+    expect(wrapper.get('.shell-trace-summary-text').text()).toBe(summary)
+  })
+
   it('uses the bootstrap skill label on the concrete follow-up tool', async () => {
     const wrapper = mountRenderer({
       name: 'Bash',

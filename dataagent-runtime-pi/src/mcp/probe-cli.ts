@@ -28,6 +28,7 @@ async function main(): Promise<void> {
       message: `MCP 检测通过，发现 ${result.toolCount} 个工具`,
       tool_count: result.toolCount,
       tool_annotations: result.toolAnnotations,
+      tool_titles: result.toolTitles,
       tool_names: result.toolNames.slice(0, 100),
       latency_ms: result.latencyMs,
     }));

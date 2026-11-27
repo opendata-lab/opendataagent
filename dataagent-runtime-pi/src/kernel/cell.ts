@@ -127,7 +127,8 @@ export class Cell {
     // Holds the UI copy of a tool result between afterToolCall and the
     // normalizer. Scoped to this run so nothing survives it.
     const uiResults = new UiToolResultRegistry();
-    const normalizer = new EventNormalizer(sm, uiResults, init.turn_offset ?? 0);
+    const toolTitles = new Map<string, string>();
+    const normalizer = new EventNormalizer(sm, uiResults, init.turn_offset ?? 0, toolTitles);
 
     const emit = (event: NeutralAgentEvent | null) => {
       if (event) {
@@ -189,6 +190,7 @@ export class Cell {
       for (const tool of mcpBridge.tools as any[]) {
         if (reservedNames.has(tool.name)) throw new Error("MCP_TOOL_NAME_COLLISION");
         reservedNames.add(tool.name);
+        if (tool.mcpTitle) toolTitles.set(tool.name, tool.mcpTitle);
       }
       const interactionTools: ToolDefinition[] = [
         { name: "AskUserQuestion", label: "AskUserQuestion", description: "Ask the user a question and end this segment until they answer.",
@@ -375,6 +377,7 @@ export class Cell {
           if (needsApproval) {
             park("permission", String(context.toolCall?.id ?? ""), {
               tool_name: toolName, arguments: args, annotations: hints, plan_approved: planApproved,
+              ...(toolTitles.get(toolName) ? { tool_title: toolTitles.get(toolName) } : {}),
               server_name: (mcpBridge!.tools.find((tool: any) => tool.name === toolName) as any)?.mcpServerName,
               server_identity: (mcpBridge!.tools.find((tool: any) => tool.name === toolName) as any)?.mcpServerIdentity,
             });
@@ -456,8 +459,7 @@ export class Cell {
           if (!tool) throw new Error("Approved MCP tool is no longer available");
           // Already counted when the call parked for approval in the previous segment.
           const turn_id = normalizer.turnId;
-          emit(sm.createEvent("tool.started", { turn_id, tool_call_id: operation.request_id,
-            tool_name: tool.name, input: operation.payload.arguments }));
+          emit(normalizer.toolStarted(operation.request_id, tool.name, operation.payload.arguments));
           try {
             result = await tool.execute(operation.request_id, operation.payload.arguments, this.cancellation.signal);
           } catch (error) {

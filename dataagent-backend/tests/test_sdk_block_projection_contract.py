@@ -35,6 +35,7 @@ def _to_canonical(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 {
                     "kind": "tool_use",
                     "tool_name": block.get("tool_name"),
+                    **({"tool_title": block["tool_title"]} if "tool_title" in block else {}),
                     "input": block.get("input"),
                     "output": block.get("output"),
                     "is_error": bool(block.get("is_error")),
@@ -45,6 +46,7 @@ def _to_canonical(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 {
                     "kind": "permission_request",
                     "tool_name": block.get("tool_name"),
+                    **({"tool_title": block["tool_title"]} if "tool_title" in block else {}),
                     "risk_level": block.get("risk_level"),
                     "title": block.get("title"),
                     "summary": block.get("summary"),
