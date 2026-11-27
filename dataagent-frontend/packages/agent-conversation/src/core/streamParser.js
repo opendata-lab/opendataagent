@@ -84,6 +84,7 @@ function _handlePermissionRequest(state, data) {
     status: 'done',
     requestId: data.request_id || '',
     tool_name: data.tool_name || '',
+    ...(typeof data.tool_title === 'string' && data.tool_title ? { tool_title: data.tool_title } : {}),
     risk_level: data.risk_level || 'high',
     title: data.title || '',
     summary: data.summary || '',

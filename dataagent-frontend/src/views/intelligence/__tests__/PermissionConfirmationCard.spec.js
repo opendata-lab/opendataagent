@@ -207,3 +207,19 @@ describe('PermissionConfirmationCard plan rendering', () => {
     expect(buttons).toContain('拒绝')
   })
 })
+
+describe('PermissionConfirmationCard tool title', () => {
+  it('names the tool by its Chinese title instead of the English name', () => {
+    const wrapper = mount(PermissionConfirmationCard, {
+      props: { block: writeBlock({ tool_name: 'create_ticket', tool_title: '创建工单', title: '请确认写操作', summary: '创建工单' }) },
+    })
+    expect(wrapper.find('.v2-perm-tool').text()).toBe('工具：创建工单')
+    expect(wrapper.find('.v2-perm-summary').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('create_ticket')
+  })
+
+  it('falls back to the tool name when there is no title', () => {
+    const wrapper = mount(PermissionConfirmationCard, { props: { block: writeBlock() } })
+    expect(wrapper.find('.v2-perm-tool').text()).toBe('工具：example_create_table')
+  })
+})

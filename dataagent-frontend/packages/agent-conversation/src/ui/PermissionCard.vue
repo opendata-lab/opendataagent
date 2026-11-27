@@ -4,10 +4,10 @@
   <div v-else class="v2-perm-card" :class="`risk-${block.risk_level || 'high'}`">
     <div class="v2-perm-head">
       <span class="v2-perm-badge">{{ riskLabel }}</span>
-      <span class="v2-perm-title">{{ block.title || ('请确认操作：' + bareTool) }}</span>
+      <span class="v2-perm-title">{{ block.title || ('请确认操作：' + toolLabel) }}</span>
     </div>
-    <div v-if="block.summary" class="v2-perm-summary">{{ block.summary }}</div>
-    <div class="v2-perm-tool">工具：<code>{{ bareTool }}</code></div>
+    <div v-if="block.summary && block.summary !== toolLabel" class="v2-perm-summary">{{ block.summary }}</div>
+    <div class="v2-perm-tool">工具：<template v-if="block.tool_title">{{ block.tool_title }}</template><code v-else>{{ bareTool }}</code></div>
     <details v-if="hasPreview" class="v2-perm-preview">
       <summary>参数详情</summary>
       <pre>{{ prettyPreview }}</pre>
@@ -44,6 +44,7 @@ const bareTool = computed(() => {
   const name = String(props.block.tool_name || '')
   return name.startsWith('mcp__') ? name.split('__').pop() : name
 })
+const toolLabel = computed(() => String(props.block.tool_title || '') || bareTool.value)
 const isPlan = computed(() => props.block.risk_level === 'plan')
 const riskLabel = computed(() => {
   if (props.block.risk_level === 'critical') return '高危操作'

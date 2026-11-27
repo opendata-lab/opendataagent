@@ -27,6 +27,7 @@ function toCanonical(blocks) {
       canonical.push({
         kind: 'permission_request',
         tool_name: block.tool_name ?? null,
+        ...('tool_title' in block ? { tool_title: block.tool_title } : {}),
         risk_level: block.risk_level ?? null,
         title: block.title ?? null,
         summary: block.summary ?? null,

@@ -281,6 +281,8 @@ def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                 "source": "",
                 "_idx": len(ordered_blocks),
             }
+            if isinstance(data.get("tool_title"), str) and data["tool_title"]:
+                block["tool_title"] = data["tool_title"]
             ordered_blocks.append(block)
             if current_turn_blocks is not None:
                 current_turn_blocks.append(block)

@@ -377,6 +377,7 @@ export class Cell {
           if (needsApproval) {
             park("permission", String(context.toolCall?.id ?? ""), {
               tool_name: toolName, arguments: args, annotations: hints, plan_approved: planApproved,
+              ...(toolTitles.get(toolName) ? { tool_title: toolTitles.get(toolName) } : {}),
               server_name: (mcpBridge!.tools.find((tool: any) => tool.name === toolName) as any)?.mcpServerName,
               server_identity: (mcpBridge!.tools.find((tool: any) => tool.name === toolName) as any)?.mcpServerIdentity,
             });

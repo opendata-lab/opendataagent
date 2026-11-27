@@ -648,6 +648,7 @@
           "data": {
             "request_id": "req-1",
             "tool_name": "mcp__example__publish",
+            "tool_title": "发布工作流",
             "risk_level": "critical",
             "title": "发布工作流 #12",
             "summary": "operation=deploy",
@@ -666,6 +667,7 @@
         {
           "kind": "permission_request",
           "tool_name": "mcp__example__publish",
+          "tool_title": "发布工作流",
           "risk_level": "critical",
           "title": "发布工作流 #12",
           "summary": "operation=deploy",
