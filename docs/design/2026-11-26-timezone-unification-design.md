@@ -52,7 +52,7 @@
 2. **代码里只有带时区的时间**：后端唯一的当前时间来源是 `utc_now()`（aware UTC，可在测试中替换）；不带时区的 datetime 视为缺陷，不允许出现在业务代码里。由此消除各处“这个时间是哪个时区”的判断。
 3. **三个边界，各一处换算**：
    - 数据库：唯一连接入口设会话时区 UTC，并注册 PyMySQL 转换器——写入时把 aware 时间换成 UTC、传入 naive 时间直接报错；读出的 DATETIME 附上 UTC 时区。（已验证 PyMySQL 2.2.8 默认会丢掉 tzinfo：`09:00+08:00` 被写成 `09:00`。）
-   - 接口：输出统一 RFC 3339（`Z`）；时间入参用 Pydantic `AwareDatetime`（本地 2.14 已支持），不带偏移返回 400。
+   - 接口：输出统一 RFC 3339（`Z`）；时间入参用 Pydantic `AwareDatetime`（本地 2.14 已支持），不带偏移返回 422（FastAPI 参数校验错误）。
    - 界面：前端解析带偏移的时间，按浏览器本地时区显示，统一一个格式化模块。
 4. **日期范围用半开区间** `[start, end)`。
 5. **谁的日历谁换算**：用户在界面选的日期（反馈筛选）是用户本地的日子，由前端换成带偏移的起止时刻；系统按业务日历做的事（每日总结、定时任务默认值、提示词日期、沙箱 `TZ`）由后端用 `DATAAGENT_TIMEZONE` 计算。
@@ -122,7 +122,7 @@ dataagent_timezone: str = "Asia/Shanghai"
 ### 4.3 统一 API 序列化与接口变化
 
 1. **输出**：所有从数据库读出的时间字段经 `to_rfc3339` 输出 `YYYY-MM-DDTHH:MM:SSZ`：删除 `topic_task_store`（含 `get_task_system_prompt`）、`skill_admin_store`、`agent_profile_service`、`runtime_registry_store`、`experience`、`accounts/store`、`remote_mcp_tokens` 各自的 `_to_iso` / `+ "Z"`；`eval_store` 读接口与 `trend_series` 同样经 `to_rfc3339`。运行时生成并原样存入 JSON 的时间戳（`deadline_at`、`decided_at`/`answered_at`、`checked_at`、`ts`、`modified_at`）已是带 `+00:00` 的 RFC 3339，保持不变。
-2. **输入**：带时间的请求参数（反馈与管理端会话列表的 `start`/`end` 等）改用 Pydantic `AwareDatetime`，不带偏移返回 400。区间语义为 `[start, end)`。
+2. **输入**：带时间的请求参数（反馈与管理端会话列表的 `start`/`end` 等）改用 Pydantic `AwareDatetime`，不带偏移返回 422（FastAPI 参数校验错误）。区间语义为 `[start, end)`。
 3. **定时任务默认时区**：`MessageScheduleUpsertRequest.timezone` 改为 `Optional[str] = None`；只在**创建**时把缺省值解析为 `get_settings().dataagent_timezone`，并用同一时区计算、保存 `next_run_at`；更新时未传时区则保留已存值。执行路径已读取保存的时区，不需要再到处读配置。
 4. `/auth/config` 不新增时区字段：前端不需要业务时区。
 
@@ -165,7 +165,7 @@ dataagent_timezone: str = "Asia/Shanghai"
 
 ## 5. 历史数据迁移设计
 
-新增单次 Alembic 迁移：`20261126_000043_unify_utc_timestamps.py`（`down_revision = "20261123_000042"`）。
+新增单次 Alembic 迁移：`20261127_000045_unify_utc_timestamps.py`（`down_revision = "20261126_000044"`，接在写操作审批迁移之后）。
 
 ### 5.1 识别生产 DB 原时区（兼容两种情况）
 

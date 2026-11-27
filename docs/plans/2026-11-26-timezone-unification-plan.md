@@ -46,7 +46,7 @@
 
 ### Step 3：Alembic 历史数据迁移
 
-- 新增 `dataagent-backend/alembic/versions/20261126_000043_unify_utc_timestamps.py`（`down_revision = "20261123_000042"`）：
+- 新增 `dataagent-backend/alembic/versions/20261127_000045_unify_utc_timestamps.py`（`down_revision = "20261126_000044"`，接在写操作审批迁移之后）：
   - 临时 `SET SESSION time_zone = @@global.time_zone` 读取 `TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())`，随后切回 `+00:00`；不提供覆盖开关。
   - `offset == 0`：记日志并返回。
   - `offset != 0`：只更新设计 §5.2 的 A 类列（带 `ON UPDATE CURRENT_TIMESTAMP` 的表显式赋值 `updated_at`）；`da_agent_sdk_record` 按主键分批；不触碰 B、C、D 类列（含评测两列）。
@@ -73,7 +73,7 @@
 - **后端（`pytest`）**：
   - `tests/test_time_utils.py`（新增）：`to_rfc3339`（aware / 非 UTC 偏移 / naive 抛错）、`business_day_bounds`（东八区与 `America/Los_Angeles`）、`Settings` 非法 `DATAAGENT_TIMEZONE` 报错。
   - `tests/test_db_conv.py`（新增，MySQL）：aware 非 UTC 写入后读出为同一时刻；naive 写入抛 `TypeError`；读出值带 UTC 时区；会话时区为 `+00:00`。
-  - 接口：时间入参不带偏移返回 400。
+  - 接口：时间入参不带偏移返回 422（FastAPI 参数校验错误）。
   - `tests/test_timezone_migration.py`（新增，连接本地 Docker MySQL 临时 schema）：
     - 模拟非 UTC DB（`+08:00`）：验证 A 类列全部减 8 小时、B/C/D 类列不变、`updated_at` 未被 `ON UPDATE CURRENT_TIMESTAMP` 误覆写、`downgrade` 抛错。
     - 模拟 UTC DB（`+00:00`）：验证 `upgrade` 零数据改动。
@@ -105,7 +105,7 @@
 2. 执行全量逻辑备份：`scripts/backup-db.sh`。
 3. 如非 `Asia/Shanghai`，在 `deploy/.env` 中设置 `DATAAGENT_TIMEZONE=<IANA 时区>`。
 4. 同步升级 `dataagent-backend` 与 `dataagent-frontend` 镜像并启动（`docker-entrypoint.sh` 自动执行 `alembic upgrade head`）。
-5. 核对启动日志中 `20261126_000043` 输出的检测偏移（`offset_seconds=0` 或 `28800`）与抽样时间展示。
+5. 核对启动日志中 `20261127_000045` 输出的检测偏移（`offset_seconds=0` 或 `28800`）与抽样时间展示。
 
 ### 回退方案
 
