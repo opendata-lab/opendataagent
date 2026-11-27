@@ -32,6 +32,7 @@
 - 后端 `core/experience.py`：正文上限 20000；删除 kind / inject_mode 校验与分支、always 注入与 `MAX_INJECTED_CHARS`；pending 只允许每日总结产生；`build_injection` 只生成目录（上限 100 条，超出注明数量）与文件；提示词加入“扩展关键词 grep、分段 read”的说明；`collect_candidates` 不再传 kind / inject_mode；`INJECTION_FOLDER` 改为 `_knowledge`；`injection_preview` 增加资格判断结果。
 - `models/schemas.py`：删除请求与响应模型中的 kind、inject_mode；body 上限 20000（PATCH 只改状态时不校验正文）。
 - `api/admin_routes.py`：列表去掉 kind 筛选。
+- `.claude/skills/experience-digest/SKILL.md`：用词“经验/经验库”→“知识”；删除“不要写业务口径”一条，改为“口径须有对话依据（用户纠正或确认）并列出来源任务”；单条正文上限沿用 500 字（总结产出保持短条目）。同步更新引用该 skill 文案的测试。
 - 前端：`KnowledgeMemoryView.vue`（单一知识列表：来源与状态筛选、待审核入口、大编辑器 + 上传；文案“知识与记忆”→“知识”）、`router/index.js`（删除 `/memories` 路由与菜单项，待审核数显示在“知识”菜单上）、`ExperienceDrawer.vue`（加宽、去 kind）、`ExperienceFields.vue`、`entryForm.js`、`AgentExperienceCards.vue`（去额度）、`IntelligentQueryView.vue` 中的相关文案。
 - 测试：长度校验（含 PATCH 只改状态）；管理员添加直接生效、每日总结为待审核；目录不含其他助手专属、停用与待审核条目；目录上限与超出提示；文件与目录路径一致；预览与运行在功能关闭、每日总结助手时一致；迁移 up/down（含 memory 行转换、超长行拒绝降级）；前端上传与审核。
 - 本地端到端（schema `dataagent_qa`）：上传几千字知识 + 审核通过几条每日总结知识，用口语化问题提问（不含知识原词），确认模型看目录或扩展关键词 grep 找到知识、分段 read 并用于回答。
