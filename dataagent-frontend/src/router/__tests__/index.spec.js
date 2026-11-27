@@ -56,7 +56,6 @@ describe('DataAgent page routing', () => {
     ['/chat', 'IntelligentQueryChat'],
     ['/feedback', 'UserFeedback'],
     ['/knowledge', 'KnowledgeLibrary'],
-    ['/memories', 'MemoryLibrary'],
     ['/settings/skills', 'IntelligentQuerySkills'],
     ['/agents', 'IntelligentQueryAgents'],
     ['/settings/models', 'IntelligentQueryModels'],
@@ -69,11 +68,12 @@ describe('DataAgent page routing', () => {
 
   it('puts admin libraries under the main layout with admin-only metadata', () => {
     const router = buildRouter()
-    for (const path of ['/feedback', '/knowledge', '/memories']) {
+    for (const path of ['/feedback', '/knowledge']) {
       const matched = router.resolve(path).matched
       expect(matched[0].path).toBe('/')
       expect(matched.at(-1).meta.adminOnly).toBe(true)
     }
+    expect(router.resolve('/memories').matched).toHaveLength(0)
     expect(router.resolve('/settings/experiences').matched).toHaveLength(0)
     expect(router.resolve('/settings/evaluations').matched.at(-1).meta.adminOnly).toBe(true)
     expect(router.resolve('/settings/users').matched.at(-1).meta.adminOnly).toBe(true)

@@ -37,6 +37,17 @@ const buildSearchDetail = ({ pattern, directory, path, description }) => {
   return firstFilled(pattern, directory, path, description)
 }
 
+// Must stay in sync with backend core.experience.INJECTION_ROOT.
+export const KNOWLEDGE_ROOT = '/opt/skills/_knowledge_memory'
+
+const isKnowledgePath = (rawPath) => {
+  const value = String(rawPath || '').trim()
+  if (!value) return false
+  if (value.split('/').includes('..')) return false
+  const normalized = value.replace(/\/+$/, '')
+  return normalized === KNOWLEDGE_ROOT || value.startsWith(`${KNOWLEDGE_ROOT}/`)
+}
+
 // The runtime's built-in tools (Pi: bash/read/write/edit/ls/grep/find; older
 // SDK records: Glob/Skill), matched by exact name, case-insensitively.
 const BUILTIN_KINDS = {
@@ -170,6 +181,11 @@ export const describeToolAction = (tool = {}) => {
   // Exact tool names determine built-in behavior. Custom tools can supply
   // a display title while their names still determine their icons.
   let kind = BUILTIN_KINDS[lowerName] || 'tool'
+  if (lowerName === 'read' && (isKnowledgePath(path) || isKnowledgePath(directory))) {
+    kind = 'knowledge_read'
+  } else if ((lowerName === 'grep' || lowerName === 'find') && (isKnowledgePath(path) || isKnowledgePath(directory))) {
+    kind = 'knowledge_search'
+  }
   if (kind === 'tool' && (lowerName === '' || lowerName === 'tool')) {
     // Older runtimes recorded some calls under a generic "Tool" name; only for
     // that name does the input say what the call was.
@@ -178,7 +194,9 @@ export const describeToolAction = (tool = {}) => {
   }
   const special = SPECIAL_TOOLS[lowerName]
   const title = kind === 'tool' && !special ? firstFilled(tool?.tool_title) : ''
-  const iconKind = kind !== 'tool' ? kind : (special?.icon || iconKindFromName(name))
+  const iconKind = (kind === 'knowledge_read' || kind === 'knowledge_search')
+    ? 'knowledge'
+    : (kind !== 'tool' ? kind : (special?.icon || iconKindFromName(name)))
 
   // Render MCP tool names (mcp__<server>__<tool>) as "<server> / <tool>"
   // instead of the raw double-underscore identifier.
@@ -192,6 +210,8 @@ export const describeToolAction = (tool = {}) => {
     search: '搜索文件',
     edit: '修改文件',
     skill: '执行技能',
+    knowledge_read: '查阅知识',
+    knowledge_search: '搜索知识',
     tool: special?.label || title || (displayName ? `执行工具：${displayName}` : '执行工具')
   }
 
@@ -204,6 +224,10 @@ export const describeToolAction = (tool = {}) => {
     detail = firstFilled(directory, path, description)
   } else if (kind === 'search') {
     detail = buildSearchDetail({ pattern, directory, path, description })
+  } else if (kind === 'knowledge_read') {
+    detail = ''
+  } else if (kind === 'knowledge_search') {
+    detail = firstFilled(pattern)
   } else if (kind === 'edit') {
     detail = firstFilled(path, directory, description, command)
   } else if (kind === 'skill') {

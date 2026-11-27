@@ -81,7 +81,7 @@ describe('auth router guard', () => {
     expect(route.path).toBe('/chat')
   })
 
-  it.each(['/settings/models', '/settings/users', '/settings/roles', '/settings/widget-access', '/settings/evaluations', '/settings/evaluation-results', '/feedback', '/knowledge', '/memories'])(
+  it.each(['/settings/models', '/settings/users', '/settings/roles', '/settings/widget-access', '/settings/evaluations', '/settings/evaluation-results', '/feedback', '/knowledge'])(
     'blocks regular users from privileged route %s',
     async (path) => {
       signInAsUser()

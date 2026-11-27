@@ -191,6 +191,7 @@ const TOOL_ICON_PATHS = {
   download: ['M12 3v12', 'M7 10l5 5 5-5', 'M5 21h14'],
   question: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4', 'M12 17.5h.01'],
   plan: ['M9 6h11', 'M9 12h11', 'M9 18h11', 'M4 6l1 1 2-2', 'M4 12l1 1 2-2', 'M4 18l1 1 2-2'],
+  knowledge: ['M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z', 'M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z'],
   tool: ['M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z']
 }
 
@@ -347,6 +348,7 @@ const traceOutputText = computed(() => {
 const traceMarkdownSource = computed(() => String(traceOutputText.value || '').trim())
 const showTraceMarkdown = computed(() => {
   if (!traceOutputText.value) return false
+  if (traceKind.value === 'knowledge_read') return true
   if (traceKind.value === 'skill') return looksLikeMarkdown(traceMarkdownSource.value)
   const path = toolAction.value.path || toolAction.value.directory || traceCommand.value
   if (/\.(md|markdown)$/i.test(String(path || '').trim())) {
@@ -364,6 +366,8 @@ const traceSummaryDetail = computed(() => String(toolAction.value.description ||
 
 const traceDescription = computed(() => {
   if (bootstrapSkillLabel.value) return bootstrapSkillLabel.value
+  if (traceKind.value === 'knowledge_read') return toolAction.value.description || '正在查阅知识'
+  if (traceKind.value === 'knowledge_search') return toolAction.value.description || '正在搜索知识'
   if (traceKind.value === 'read') return toolAction.value.description || '正在读取文件'
   if (traceKind.value === 'list') return toolAction.value.description || '正在查看目录'
   if (traceKind.value === 'search') return toolAction.value.description || '正在搜索文件'
@@ -384,6 +388,12 @@ const traceSummaryText = computed(() => {
     return title ? `生成图表：${title}` : '生成图表'
   }
 
+  if (traceKind.value === 'knowledge_read') {
+    return traceSummaryDetail.value ? `查阅知识：${traceSummaryDetail.value}` : '查阅知识'
+  }
+  if (traceKind.value === 'knowledge_search') {
+    return traceSummaryDetail.value ? `搜索知识：${traceSummaryDetail.value}` : '搜索知识'
+  }
   if (traceKind.value === 'read') {
     return detail ? `读取文件：${detail}` : '正在读取文件'
   }
@@ -458,6 +468,22 @@ const statusLabel = computed(() => {
     if (status === 'pending' || status === 'streaming') return `正在运行命令（${elapsedSeconds.value}s）`
     if (status === 'failed') return '命令失败'
     return '已运行命令'
+  }
+
+  if (traceKind.value === 'knowledge_read') {
+    if (!callComplete) return '正在发起查阅'
+    if (callComplete && !runtimeStarted) return '已发起查阅'
+    if (status === 'pending' || status === 'streaming') return '正在查阅'
+    if (status === 'failed') return '查阅失败'
+    return '已查阅'
+  }
+
+  if (traceKind.value === 'knowledge_search') {
+    if (!callComplete) return '正在发起搜索'
+    if (callComplete && !runtimeStarted) return '已发起搜索'
+    if (status === 'pending' || status === 'streaming') return '正在搜索'
+    if (status === 'failed') return '搜索失败'
+    return '已搜索'
   }
 
   if (traceKind.value === 'read') {
@@ -567,7 +593,7 @@ const isFlat = computed(() => kind.value === 'sql_execution')
 const tracePanelAvailable = computed(() => {
   if (!showTrace.value) return false
   if (props.tool?.output != null) return true
-  if (['read', 'list', 'search'].includes(traceKind.value)) return false
+  if (['read', 'list', 'search', 'knowledge_read', 'knowledge_search'].includes(traceKind.value)) return false
   return Boolean(traceCommand.value || traceDescription.value)
 })
 

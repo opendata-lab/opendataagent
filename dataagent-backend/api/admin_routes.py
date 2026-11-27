@@ -330,7 +330,6 @@ def admin_list_feedback(
     dependencies=[Depends(require_admin)],
 )
 def admin_list_experiences(
-    kind: str = Query(default="", pattern="^(|knowledge|memory)$"),
     keyword: str = Query(default="", max_length=160),
     status: str = Query(default="", pattern="^(|pending|active|disabled)$"),
     scope: str = Query(default="", pattern="^(|agent|global)$"),
@@ -340,7 +339,6 @@ def admin_list_experiences(
 ):
     settings = get_settings()
     payload = experience.list_experiences(
-        kind=kind,
         keyword=keyword,
         status=status,
         scope=scope,
@@ -373,10 +371,10 @@ def admin_create_experience(payload: ExperienceCreateRequest, user_id: int = Dep
     dependencies=[Depends(require_admin)],
 )
 def admin_injection_preview(agent_id: str = Query(min_length=1)):
-    return {
-        **experience.injection_preview(agent_id),
-        "injection_enabled": bool(get_settings().dataagent_experience_injection_enabled),
-    }
+    return experience.injection_preview(
+        agent_id,
+        injection_enabled=bool(get_settings().dataagent_experience_injection_enabled),
+    )
 
 
 @settings_router.delete(

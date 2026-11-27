@@ -102,15 +102,7 @@ export const routes = [
         path: 'knowledge',
         name: 'KnowledgeLibrary',
         component: () => import('@/views/settings/KnowledgeMemoryView.vue'),
-        props: { kind: 'knowledge' },
         meta: { tab: 'knowledge', title: '知识', adminOnly: true }
-      },
-      {
-        path: 'memories',
-        name: 'MemoryLibrary',
-        component: () => import('@/views/settings/KnowledgeMemoryView.vue'),
-        props: { kind: 'memory' },
-        meta: { tab: 'memories', title: '记忆', adminOnly: true }
       },
       {
         path: 'agents',

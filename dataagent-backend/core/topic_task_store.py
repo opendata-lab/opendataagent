@@ -587,11 +587,13 @@ class TopicTaskStore(SessionCheckpointStore):
         permission_mode: str | None = None,
         context: dict[str, Any] | None = None,
         is_agent_preview: bool = False,
+        digest_target_agent_id: str | None = None,
     ) -> dict[str, Any]:
         self._ensure_ready()
         normalized_context = self._normalize_context(context)
         snapshot = normalize_agent_snapshot(agent_snapshot or default_agent_payload())
         agent_id = str(snapshot.get("agent_id") or DEFAULT_AGENT_ID)
+        target_agent_id = str(digest_target_agent_id or "").strip() or None
         resolved_permission_mode = normalize_permission_mode(permission_mode)
         topic_id = _new_id("topic")
         chat_topic_id = _new_id("chat_topic")
@@ -607,8 +609,8 @@ class TopicTaskStore(SessionCheckpointStore):
                         current_task_id, current_task_status, last_message_seq,
                         agent_id, agent_snapshot_json, permission_mode,
                         source, website_id, user_id, external_user_id, visitor_id,
-                        auth_user_id, auth_username, is_agent_preview
-                    ) VALUES (%s, %s, %s, %s, NULL, NULL, 0, %s, %s, %s, %s, %s, %s, %s, '', '', '', %s)
+                        auth_user_id, auth_username, is_agent_preview, digest_target_agent_id
+                    ) VALUES (%s, %s, %s, %s, NULL, NULL, 0, %s, %s, %s, %s, %s, %s, %s, '', '', '', %s, %s)
                     """,
                     (
                         topic_id,
@@ -623,6 +625,7 @@ class TopicTaskStore(SessionCheckpointStore):
                         normalized_context["user_id"],
                         "",
                         1 if is_agent_preview else 0,
+                        target_agent_id,
                     ),
                 )
             conn.commit()
@@ -655,7 +658,7 @@ class TopicTaskStore(SessionCheckpointStore):
                            t.current_task_id, t.current_task_status, t.source, t.website_id,
                            t.user_id, u.username AS user_username, u.display_name AS user_display_name,
                            t.external_user_id, t.visitor_id, t.auth_user_id, t.auth_username, t.agent_id, t.agent_snapshot_json,
-                           t.permission_mode, t.is_agent_preview,
+                           t.permission_mode, t.is_agent_preview, t.digest_target_agent_id,
                            t.created_at, t.updated_at,
                            COALESCE(stats.message_count, 0) AS message_count,
                            COALESCE(stats.last_message_preview, '') AS last_message_preview
@@ -754,7 +757,7 @@ class TopicTaskStore(SessionCheckpointStore):
                            t.current_task_id, t.current_task_status, t.source, t.website_id,
                            t.user_id, u.username AS user_username, u.display_name AS user_display_name,
                            t.external_user_id, t.visitor_id, t.auth_user_id, t.auth_username, t.agent_id, t.agent_snapshot_json,
-                           t.permission_mode, t.is_agent_preview,
+                           t.permission_mode, t.is_agent_preview, t.digest_target_agent_id,
                            t.created_at, t.updated_at,
                            COALESCE(stats.message_count, 0) AS message_count,
                            COALESCE(stats.last_message_preview, '') AS last_message_preview
@@ -801,7 +804,7 @@ class TopicTaskStore(SessionCheckpointStore):
                            t.current_task_id, t.current_task_status, t.source, t.website_id,
                            t.user_id, u.username AS user_username, u.display_name AS user_display_name,
                            t.external_user_id, t.visitor_id, t.auth_user_id, t.auth_username, t.agent_id, t.agent_snapshot_json,
-                           t.permission_mode, t.is_agent_preview,
+                           t.permission_mode, t.is_agent_preview, t.digest_target_agent_id,
                            t.created_at, t.updated_at,
                            COALESCE(stats.message_count, 0) AS message_count,
                            COALESCE(stats.last_message_preview, '') AS last_message_preview
@@ -3111,6 +3114,7 @@ class TopicTaskStore(SessionCheckpointStore):
             "agent": agent_summary_from_snapshot(snapshot),
             "permission_mode": normalize_permission_mode(row.get("permission_mode")),
             "is_agent_preview": bool(row.get("is_agent_preview")),
+            "digest_target_agent_id": str(row.get("digest_target_agent_id") or "") or None,
             "current_task_id": str(row.get("current_task_id") or "") or None,
             "current_task_status": str(row.get("current_task_status") or "") or None,
             "source": str(row.get("source") or "web"),
