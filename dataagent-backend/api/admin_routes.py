@@ -128,6 +128,7 @@ def _build_admin_settings_response(updated_at: str = "") -> AdminSettingsRespons
         widget_allowed_sites=[
             site for site in (payload.get("widget_allowed_sites") or []) if isinstance(site, dict)
         ],
+        skills_output_dir=str(payload.get("skills_output_dir") or ""),
         skills_root_dir=str(resolve_skills_root_dir()),
         updated_at=updated_at,
     )

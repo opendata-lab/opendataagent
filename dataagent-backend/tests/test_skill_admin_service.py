@@ -285,9 +285,25 @@ def test_merge_settings_defaults_to_current_bundled_skills_when_runtime_missing(
     assert merged["skill_runtime"][PLATFORM_TOOLS_SKILL]["enabled"] is True
 
 
+def test_merge_settings_migrates_legacy_sql_skill_to_current_bundled_skills():
+    merged = _merge_settings_payload(
+        {
+            "skills_output_dir": f"../.claude/skills/{LEGACY_SQL_SKILL}",
+            "skill_runtime": {LEGACY_SQL_SKILL: {"enabled": True}},
+        },
+        {},
+    )
+
+    assert merged["skills_output_dir"] == f"../.claude/skills/{BUSINESS_SKILL}"
+    assert LEGACY_SQL_SKILL not in merged["skill_runtime"]
+    assert merged["skill_runtime"][BUSINESS_SKILL]["enabled"] is True
+    assert merged["skill_runtime"][PLATFORM_TOOLS_SKILL]["enabled"] is True
+
+
 def test_merge_settings_preserves_explicit_bundled_skill_disabled():
     merged = _merge_settings_payload(
         {
+            "skills_output_dir": f"../.claude/skills/{BUSINESS_SKILL}",
             "skill_runtime": {
                 BUSINESS_SKILL: {"enabled": True},
                 PLATFORM_TOOLS_SKILL: {"enabled": False},
@@ -306,6 +322,7 @@ def test_merge_settings_payload_keeps_provider_and_model_empty_without_enabled_p
         {
             "provider_id": "",
             "model": "",
+            "skills_output_dir": f"../.claude/skills/{BUSINESS_SKILL}",
             "session_mysql_database": "dataagent",
         },
         {},
@@ -349,6 +366,14 @@ def test_bootstrap_admin_settings_persists_blank_provider_and_model(monkeypatch)
 
     monkeypatch.setattr(skill_admin_service, "get_skill_admin_store", lambda: FakeStore())
     monkeypatch.setattr(skill_admin_service, "get_runtime_registry_store", lambda: registry)
+    monkeypatch.setattr(
+        skill_admin_service,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            skills_output_dir=f"../.claude/skills/{BUSINESS_SKILL}",
+        ),
+    )
+    monkeypatch.setattr(skill_admin_service, "update_settings", lambda patch: patch)
 
     resolved = skill_admin_service.bootstrap_admin_settings()
 
@@ -362,12 +387,9 @@ def test_bootstrap_admin_settings_persists_blank_provider_and_model(monkeypatch)
 
 def test_bootstrap_never_overrides_database_connection_from_stored_settings(monkeypatch):
     # 2026-11-06: a settings row copied from an older deployment carried
-    # mysql_host/port; bootstrap must never apply stored settings onto deployment
-    # MySQL configuration.
-    from config import get_settings
-
-    original_host = get_settings().mysql_host
-    original_db = get_settings().session_mysql_database
+    # mysql_host/port; bootstrap applied it over the env and every later
+    # connection hit a MySQL without the session schema (1049).
+    applied = {}
 
     class FakeStore:
         def init_schema(self):
@@ -397,12 +419,20 @@ def test_bootstrap_never_overrides_database_connection_from_stored_settings(monk
 
     monkeypatch.setattr(skill_admin_service, "get_skill_admin_store", lambda: FakeStore())
     monkeypatch.setattr(skill_admin_service, "get_runtime_registry_store", lambda: FakeRegistry())
+    monkeypatch.setattr(
+        skill_admin_service,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            skills_output_dir=f"../.claude/skills/{BUSINESS_SKILL}",
+        ),
+    )
+    monkeypatch.setattr(skill_admin_service, "update_settings", lambda patch: applied.update(patch))
 
     resolved = skill_admin_service.bootstrap_admin_settings()
 
     assert resolved["provider_id"] == "openrouter"
-    assert get_settings().mysql_host == original_host
-    assert get_settings().session_mysql_database == original_db
+    assert applied["skills_output_dir"] == f"../.claude/skills/{BUSINESS_SKILL}"
+    assert not {key for key in applied if key.startswith("mysql_") or key == "session_mysql_database"}
 
 
 def test_current_settings_does_not_fallback_when_provider_registry_is_unavailable(monkeypatch):
@@ -938,6 +968,7 @@ def test_update_skill_runtime_moves_primary_when_disabling_current(monkeypatch):
         skill_admin_service,
         "current_settings_payload",
         lambda: {
+            "skills_output_dir": f"../.claude/skills/{BUSINESS_SKILL}",
             "skill_runtime": {
                 BUSINESS_SKILL: {"enabled": True},
                 "marketing-insights": {"enabled": True},
@@ -946,17 +977,23 @@ def test_update_skill_runtime_moves_primary_when_disabling_current(monkeypatch):
     )
     monkeypatch.setattr(
         skill_admin_service,
+        "_settings_path_for_skill_folder",
+        lambda folder: f"../.claude/skills/{folder}",
+    )
+    monkeypatch.setattr(
+        skill_admin_service,
         "persist_admin_settings",
         lambda payload: captured.setdefault("payload", payload) or payload,
     )
     result = skill_admin_service.update_skill_runtime(BUSINESS_SKILL, False)
 
+    assert captured["payload"]["skills_output_dir"] == "../.claude/skills/marketing-insights"
     assert captured["payload"]["skill_runtime"][BUSINESS_SKILL]["enabled"] is False
     assert captured["payload"]["skill_runtime"]["marketing-insights"]["enabled"] is True
     assert result == {"skill_id": BUSINESS_SKILL, "enabled": False}
 
 
-def test_resolve_enabled_skill_runtime_enables_bundled_skills_when_runtime_is_empty(monkeypatch, tmp_path):
+def test_resolve_enabled_skill_runtime_ignores_deleted_legacy_sql_skill(monkeypatch, tmp_path):
     discovery_root = tmp_path / ".claude" / "skills"
     (discovery_root / BUSINESS_SKILL).mkdir(parents=True)
     (discovery_root / BUSINESS_SKILL / "SKILL.md").write_text("# Business\n", encoding="utf-8")
@@ -968,7 +1005,10 @@ def test_resolve_enabled_skill_runtime_enables_bundled_skills_when_runtime_is_em
     monkeypatch.setattr(
         skill_admin_service,
         "current_settings_payload",
-        lambda: {"skill_runtime": {}},
+        lambda: {
+            "skills_output_dir": f"../.claude/skills/{LEGACY_SQL_SKILL}",
+            "skill_runtime": {LEGACY_SQL_SKILL: {"enabled": True}},
+        },
     )
 
     runtime = skill_admin_service.resolve_enabled_skill_runtime()
@@ -1183,6 +1223,7 @@ def test_import_skill_rejects_missing_skill_md(monkeypatch, tmp_path):
 
 def test_uninstall_skill_removes_managed_folder_and_runtime(monkeypatch, tmp_path):
     settings = {
+        "skills_output_dir": "../.claude/skills/marketing-insights",
         "skill_runtime": {
             BUSINESS_SKILL: {"enabled": True},
             "marketing-insights": {"enabled": True},
@@ -1199,6 +1240,7 @@ def test_uninstall_skill_removes_managed_folder_and_runtime(monkeypatch, tmp_pat
         change_source="upload",
     )
     monkeypatch.setattr(skill_admin_service, "reindex_documents_from_disk", lambda *args, **kwargs: [])
+    monkeypatch.setattr(skill_admin_service, "_settings_path_for_skill_folder", lambda folder: f"../.claude/skills/{folder}")
 
     result = skill_admin_service.uninstall_skill("marketing-insights")
 
@@ -1208,6 +1250,7 @@ def test_uninstall_skill_removes_managed_folder_and_runtime(monkeypatch, tmp_pat
     assert result["removed_documents"][0]["folder"] == "marketing-insights"
     assert "marketing-insights/SKILL.md" not in store.documents
     assert "marketing-insights" not in persisted["skill_runtime"]
+    assert persisted["skills_output_dir"] == f"../.claude/skills/{BUSINESS_SKILL}"
 
 
 def test_export_skill_as_zip_packs_folder_contents(monkeypatch, tmp_path):

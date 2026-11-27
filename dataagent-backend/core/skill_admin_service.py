@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from config import get_settings, update_settings
 from core.provider_runtime import (
     normalize_api_format,
     request_model_text,
@@ -33,10 +34,12 @@ logger = logging.getLogger(__name__)
 MANAGED_FILE_SUFFIXES = {".json", ".md", ".markdown", ".py"}
 DEFAULT_PROVIDER_ID = "openrouter"
 MODEL_DETECTION_TIMEOUT_SECONDS = 30
+LEGACY_SQL_SKILL_FOLDER = "dataagent-nl2sql"
 DEFAULT_PRIMARY_SKILL_FOLDER = "chart-visualization"
 # 与数据平台无关的通用展示能力，可被任意智能体单独启用，不依赖平台工具
 CHART_VISUALIZATION_SKILL_FOLDER = "chart-visualization"
 REPORT_GENERATION_SKILL_FOLDER = "report-generation"
+DEFAULT_SKILLS_OUTPUT_DIR = f"../.claude/skills/{DEFAULT_PRIMARY_SKILL_FOLDER}"
 # 必须覆盖仓库内所有随发布携带的 skill：它决定 source=bundled，而 bundled 是
 # 「不可卸载、不可覆盖导入」的唯一依据。漏掉一个，该 skill 就会被判成 managed，
 # 管理员能从 UI 卸载它，uninstall_skill() 会 rmtree 掉仓库跟踪的目录。
@@ -53,6 +56,10 @@ DEFAULT_ENABLED_BUILTIN_SKILL_FOLDERS = (
 )
 SKILL_FOLDER_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 PROVIDER_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _backend_root() -> Path:
+    return Path(__file__).resolve().parent.parent
 
 
 def current_settings_payload() -> dict[str, Any]:
@@ -75,9 +82,11 @@ def current_settings_payload() -> dict[str, Any]:
 
 
 def _runtime_settings_payload() -> dict[str, Any]:
+    cfg = get_settings()
     return {
         "provider_id": "",
         "model": "",
+        "skills_output_dir": cfg.skills_output_dir,
         # Widget allowlist is managed exclusively from the settings page and
         # persisted in da_agent_settings; there is no env-var source.
         "widget_allowed_sites": [],
@@ -138,7 +147,7 @@ def _normalize_widget_allowed_sites(raw: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def _normalize_skill_runtime(raw: Any) -> dict[str, dict[str, bool]]:
+def _normalize_skill_runtime(raw: Any, *, fallback_folder: str = "") -> dict[str, dict[str, bool]]:
     normalized: dict[str, dict[str, bool]] = {}
     if isinstance(raw, dict):
         for folder, entry in raw.items():
@@ -147,9 +156,15 @@ def _normalize_skill_runtime(raw: Any) -> dict[str, dict[str, bool]]:
                 continue
             enabled = bool(entry.get("enabled")) if isinstance(entry, dict) else bool(entry)
             normalized[folder_name] = {"enabled": enabled}
-    if not normalized:
+    legacy_enabled = bool((normalized.get(LEGACY_SQL_SKILL_FOLDER) or {}).get("enabled"))
+    if LEGACY_SQL_SKILL_FOLDER in normalized:
+        normalized.pop(LEGACY_SQL_SKILL_FOLDER, None)
+
+    if not normalized and fallback_folder and fallback_folder != LEGACY_SQL_SKILL_FOLDER:
+        normalized[fallback_folder] = {"enabled": True}
+    if not raw or fallback_folder == LEGACY_SQL_SKILL_FOLDER or legacy_enabled:
         for folder in DEFAULT_ENABLED_BUILTIN_SKILL_FOLDERS:
-            normalized[folder] = {"enabled": True}
+            normalized.setdefault(folder, {"enabled": True})
     return normalized
 
 
@@ -159,6 +174,13 @@ def _enabled_skill_folders(skill_runtime: dict[str, dict[str, bool]]) -> list[st
         for folder, entry in (skill_runtime or {}).items()
         if folder and bool((entry or {}).get("enabled"))
     )
+
+
+def _folder_from_skills_output_dir(raw: str | None) -> str:
+    value = str(raw or "").replace("\\", "/").strip().rstrip("/")
+    if not value:
+        return ""
+    return value.rsplit("/", 1)[-1]
 
 
 def _normalize_model_detections(raw: Any) -> dict[str, dict[str, str]]:
@@ -423,8 +445,14 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
         current_provider_settings,
         patch_provider_settings,
     )
+    configured_skills_output_dir = str(base.get("skills_output_dir") or "").strip()
+    fallback_skill_folder = _folder_from_skills_output_dir(configured_skills_output_dir)
+    normalized_skills_output_dir = configured_skills_output_dir or DEFAULT_SKILLS_OUTPUT_DIR
+    if fallback_skill_folder == LEGACY_SQL_SKILL_FOLDER:
+        normalized_skills_output_dir = DEFAULT_SKILLS_OUTPUT_DIR
     skill_runtime = _normalize_skill_runtime(
         update.get("skill_runtime") if "skill_runtime" in update else base.get("skill_runtime"),
+        fallback_folder=fallback_skill_folder,
     )
     widget_allowed_sites = _normalize_widget_allowed_sites(base.get("widget_allowed_sites"))
 
@@ -451,6 +479,7 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
     flattened = {
         "provider_id": provider_id,
         "model": model,
+        "skills_output_dir": normalized_skills_output_dir,
         "provider_settings": provider_settings,
         "skill_runtime": skill_runtime,
         "widget_allowed_sites": widget_allowed_sites,
@@ -463,10 +492,22 @@ def _merge_settings_payload(current: dict[str, Any] | None, patch: dict[str, Any
     return flattened
 
 
+def runtime_patch_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    patch: dict[str, Any] = {}
+    # Database connections come only from deployment config, never from stored settings.
+    if "skills_output_dir" in payload:
+        patch["skills_output_dir"] = payload.get("skills_output_dir")
+    return patch
+
+
 def validate_settings_payload(payload: dict[str, Any]):
     provider_id = str(payload.get("provider_id") or "").strip().lower()
     if provider_id and not PROVIDER_ID_RE.match(provider_id):
         raise ValueError("provider_id must match A-Za-z0-9._- and be at most 64 characters")
+
+    raw_skills_dir = str(payload.get("skills_output_dir") or "").replace("\\", "/")
+    if raw_skills_dir and "/.claude/skills/" not in raw_skills_dir and not raw_skills_dir.startswith(".claude/skills/"):
+        raise ValueError("skills_output_dir must be under .claude/skills")
 
 
 def _short_error(exc: Exception) -> str:
@@ -589,6 +630,7 @@ def bootstrap_admin_settings() -> dict[str, Any]:
     validate_settings_payload(merged)
     registry = get_runtime_registry_store()
     registry.init_schema()
+    update_settings(runtime_patch_from_payload(merged))
 
     if not db_payload:
         store.save_settings_record(merged)
@@ -605,6 +647,7 @@ def persist_admin_settings(payload: dict[str, Any]) -> dict[str, Any]:
     merged = _merge_settings_payload(current, settings_patch)
     validate_settings_payload(merged)
 
+    update_settings(runtime_patch_from_payload(merged))
     store = get_skill_admin_store()
     saved = store.save_settings_record(merged)
     return current_settings_payload() | {"updated_at": saved.get("updated_at", "")}
@@ -681,6 +724,7 @@ def resolved_chat_settings_payload() -> dict[str, Any]:
         "default_provider_id": default_provider_id,
         "default_model": default_model,
         "providers": providers,
+        "skills_output_dir": str(resolved.get("skills_output_dir") or ""),
     }
 
 
@@ -829,9 +873,14 @@ def _skill_source(folder: str) -> str:
     return "bundled" if _is_builtin_skill_folder(folder) else "managed"
 
 
+def _current_skill_folder() -> str:
+    return _folder_from_skills_output_dir(str(get_settings().skills_output_dir or "")) or DEFAULT_PRIMARY_SKILL_FOLDER
+
+
 def _skill_runtime_from_current_settings() -> dict[str, dict[str, bool]]:
     payload = current_settings_payload()
-    return _normalize_skill_runtime(payload.get("skill_runtime"))
+    fallback_folder = _folder_from_skills_output_dir(str(payload.get("skills_output_dir") or "")) or _current_skill_folder()
+    return _normalize_skill_runtime(payload.get("skill_runtime"), fallback_folder=fallback_folder)
 
 
 def _is_skill_enabled(folder: str, skill_runtime: dict[str, dict[str, bool]] | None = None) -> bool:
@@ -896,6 +945,12 @@ def _skill_description_from_front_matter(
     return description
 
 
+def _settings_path_for_skill_folder(folder: str) -> str:
+    discovery_root = resolve_skill_discovery_root_dir()
+    target = (discovery_root / folder).resolve()
+    return os.path.relpath(target, _backend_root()).replace("\\", "/")
+
+
 def _discovered_skill_folders() -> set[str]:
     root = resolve_skill_discovery_root_dir()
     folders: set[str] = set()
@@ -916,7 +971,7 @@ def _migrate_document_paths_to_discovery_root(store, documents: list[dict[str, A
     skill_folders = _discovered_skill_folders()
     if not skill_folders:
         return False
-    current_folder = DEFAULT_PRIMARY_SKILL_FOLDER
+    current_folder = _current_skill_folder()
     if not current_folder:
         return False
     known_paths = {
@@ -1325,7 +1380,8 @@ def import_skill_from_zip(file_name: str, content: bytes) -> dict[str, Any]:
         shutil.move(str(skill_root), str(target))
 
     current = current_settings_payload()
-    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"))
+    primary_folder = _folder_from_skills_output_dir(str(current.get("skills_output_dir") or "")) or _current_skill_folder()
+    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"), fallback_folder=primary_folder)
     enabled = bool((skill_runtime.get(folder) or {}).get("enabled")) if replaced else False
     skill_runtime[folder] = {"enabled": enabled}
     persist_admin_settings({"skill_runtime": skill_runtime})
@@ -1384,7 +1440,8 @@ def uninstall_skill(folder: str) -> dict[str, Any]:
         raise ValueError("invalid skill folder path")
 
     current = current_settings_payload()
-    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"))
+    primary_folder = _folder_from_skills_output_dir(str(current.get("skills_output_dir") or "")) or _current_skill_folder()
+    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"), fallback_folder=primary_folder)
     was_enabled = bool((skill_runtime.get(target_folder) or {}).get("enabled"))
     enabled_folders = [
         item
@@ -1403,7 +1460,10 @@ def uninstall_skill(folder: str) -> dict[str, Any]:
         store.delete_document_by_path(str(document.get("relative_path") or ""))
 
     skill_runtime.pop(target_folder, None)
-    persist_admin_settings({"skill_runtime": skill_runtime})
+    payload: dict[str, Any] = {"skill_runtime": skill_runtime}
+    if primary_folder == target_folder and enabled_folders:
+        payload["skills_output_dir"] = _settings_path_for_skill_folder(enabled_folders[0])
+    persist_admin_settings(payload)
     return {
         "skill_id": target_folder,
         "removed_documents": removed_documents,
@@ -1428,13 +1488,19 @@ def update_skill_runtime(folder: str, enabled: bool) -> dict[str, Any]:
         raise ValueError(f"skill folder not found: {target_folder}（{reason}，已扫描 {root}）")
 
     current = current_settings_payload()
-    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"))
+    primary_folder = _folder_from_skills_output_dir(str(current.get("skills_output_dir") or "")) or _current_skill_folder()
+    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"), fallback_folder=primary_folder)
     skill_runtime[target_folder] = {"enabled": bool(enabled)}
     enabled_folders = [folder for folder in _enabled_skill_folders(skill_runtime) if folder in available_folders]
     if not enabled_folders:
         raise ValueError("当前运行时至少需要保留一个启用 Skill")
 
-    persist_admin_settings({"skill_runtime": skill_runtime})
+    next_primary_folder = primary_folder if primary_folder in enabled_folders else enabled_folders[0]
+    payload: dict[str, Any] = {"skill_runtime": skill_runtime}
+    if next_primary_folder != primary_folder:
+        payload["skills_output_dir"] = _settings_path_for_skill_folder(next_primary_folder)
+
+    persist_admin_settings(payload)
     return {
         "skill_id": target_folder,
         "enabled": bool(skill_runtime.get(target_folder, {}).get("enabled")),
@@ -1444,15 +1510,13 @@ def update_skill_runtime(folder: str, enabled: bool) -> dict[str, Any]:
 def resolve_enabled_skill_runtime() -> dict[str, Any]:
     current = current_settings_payload()
     available_folders = _discovered_skill_folders()
-    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"))
+    primary_folder = _folder_from_skills_output_dir(str(current.get("skills_output_dir") or "")) or _current_skill_folder()
+    skill_runtime = _normalize_skill_runtime(current.get("skill_runtime"), fallback_folder=primary_folder)
     enabled_folders = [folder for folder in _enabled_skill_folders(skill_runtime) if folder in available_folders]
-    if not enabled_folders and DEFAULT_PRIMARY_SKILL_FOLDER in available_folders:
-        enabled_folders = [DEFAULT_PRIMARY_SKILL_FOLDER]
-    primary_folder = (
-        DEFAULT_PRIMARY_SKILL_FOLDER
-        if DEFAULT_PRIMARY_SKILL_FOLDER in enabled_folders
-        else (enabled_folders[0] if enabled_folders else DEFAULT_PRIMARY_SKILL_FOLDER)
-    )
+    if not enabled_folders and primary_folder in available_folders:
+        enabled_folders = [primary_folder]
+    if primary_folder not in enabled_folders and enabled_folders:
+        primary_folder = enabled_folders[0]
 
     discovery_root = resolve_skill_discovery_root_dir()
     roots = {

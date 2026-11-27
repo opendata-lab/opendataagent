@@ -670,6 +670,7 @@ class TopicTaskStore(SessionCheckpointStore):
                                    1
                                ) AS last_message_preview
                         FROM da_agent_message
+                        WHERE show_in_ui = 1
                         GROUP BY topic_id
                     ) stats ON stats.topic_id = t.topic_id
                     WHERE {where_sql}
@@ -768,6 +769,7 @@ class TopicTaskStore(SessionCheckpointStore):
                                    1
                                ) AS last_message_preview
                         FROM da_agent_message
+                        WHERE show_in_ui = 1
                         GROUP BY topic_id
                     ) stats ON stats.topic_id = t.topic_id
                     WHERE {where_sql}
@@ -814,6 +816,7 @@ class TopicTaskStore(SessionCheckpointStore):
                                    1
                                ) AS last_message_preview
                         FROM da_agent_message
+                        WHERE show_in_ui = 1
                         GROUP BY topic_id
                     ) stats ON stats.topic_id = t.topic_id
                     WHERE t.topic_id = %s
@@ -976,11 +979,11 @@ class TopicTaskStore(SessionCheckpointStore):
                 cur.execute(
                     """
                     SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content,
-                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json,
+                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
                            m.created_at, m.updated_at, task.finished_at
                     FROM da_agent_message m
                     LEFT JOIN da_agent_task task ON task.task_id = m.task_id AND m.sender_type = 'assistant'
-                    WHERE m.topic_id = %s
+                    WHERE m.topic_id = %s AND m.show_in_ui = 1
                     ORDER BY m.seq_id ASC, m.created_at ASC
                     """,
                     (topic_id,),
@@ -1021,7 +1024,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     """
                     SELECT COUNT(*) AS total
                     FROM da_agent_message
-                    WHERE topic_id = %s
+                    WHERE topic_id = %s AND show_in_ui = 1
                     """,
                     (topic_id,),
                 )
@@ -1029,11 +1032,11 @@ class TopicTaskStore(SessionCheckpointStore):
                 cur.execute(
                     f"""
                     SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content,
-                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json,
+                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
                            m.created_at, m.updated_at, task.finished_at
                     FROM da_agent_message m
                     LEFT JOIN da_agent_task task ON task.task_id = m.task_id AND m.sender_type = 'assistant'
-                    WHERE m.topic_id = %s
+                    WHERE m.topic_id = %s AND m.show_in_ui = 1
                     ORDER BY m.seq_id {sort_direction}, m.created_at {sort_direction}
                     LIMIT %s OFFSET %s
                     """,
@@ -1069,8 +1072,8 @@ class TopicTaskStore(SessionCheckpointStore):
                     """
                     INSERT INTO da_agent_message (
                         message_id, topic_id, task_id, sender_type, type, status, content,
-                        seq_id, usage_json, error_json
-                    ) VALUES (%s, %s, %s, 'user', 'chat', 'success', %s, %s, NULL, NULL)
+                        seq_id, usage_json, error_json, show_in_ui
+                    ) VALUES (%s, %s, %s, 'user', 'chat', 'success', %s, %s, NULL, NULL, 1)
                     """,
                     (message_id, topic_id, task_id, content or "", seq_id),
                 )
@@ -1111,8 +1114,8 @@ class TopicTaskStore(SessionCheckpointStore):
                     """
                     INSERT INTO da_agent_message (
                         message_id, topic_id, task_id, sender_type, type, status, content,
-                        seq_id, usage_json, error_json
-                    ) VALUES (%s, %s, %s, 'assistant', 'assistant', %s, '', %s, NULL, NULL)
+                        seq_id, usage_json, error_json, show_in_ui
+                    ) VALUES (%s, %s, %s, 'assistant', 'assistant', %s, '', %s, NULL, NULL, 1)
                     """,
                     (message_id, topic_id, task_id, status, seq_id),
                 )
@@ -1170,6 +1173,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     WHERE topic_id = %s
                       AND task_id = %s
                       AND sender_type = 'assistant'
+                      AND show_in_ui = 1
                     ORDER BY seq_id ASC
                     LIMIT 1
                     """,
@@ -1201,11 +1205,11 @@ class TopicTaskStore(SessionCheckpointStore):
                 cur.execute(
                     """
                     SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content,
-                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json,
+                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
                            m.created_at, m.updated_at, task.finished_at
                     FROM da_agent_message m
                     LEFT JOIN da_agent_task task ON task.task_id = m.task_id
-                    WHERE m.task_id = %s AND m.sender_type = 'assistant'
+                    WHERE m.task_id = %s AND m.sender_type = 'assistant' AND m.show_in_ui = 1
                     ORDER BY m.seq_id ASC
                     LIMIT 1
                     """,
@@ -1233,7 +1237,7 @@ class TopicTaskStore(SessionCheckpointStore):
         both sources. The question is the first user message of the same task.
         """
         self._ensure_ready()
-        where = ["m.sender_type = 'assistant'", "m.feedback IN ('like', 'dislike')"]
+        where = ["m.sender_type = 'assistant'", "m.show_in_ui = 1", "m.feedback IN ('like', 'dislike')"]
         params: list[Any] = []
         if agent_id:
             where.append("COALESCE(NULLIF(k.agent_id, ''), t.agent_id) = %s")
@@ -1332,7 +1336,7 @@ class TopicTaskStore(SessionCheckpointStore):
                 cur.execute(
                     f"""
                     SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content,
-                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json,
+                           m.seq_id, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
                            m.created_at, m.updated_at, task.finished_at
                     FROM da_agent_message m
                     JOIN da_agent_topic t ON t.topic_id = m.topic_id
@@ -1384,6 +1388,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     WHERE m.topic_id = %s
                       AND m.message_id = %s
                       AND m.sender_type = 'assistant'
+                      AND m.show_in_ui = 1
                       AND {context_sql}
                     LIMIT 1
                     """,
@@ -1402,6 +1407,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     WHERE topic_id = %s
                       AND message_id = %s
                       AND sender_type = 'assistant'
+                      AND show_in_ui = 1
                     LIMIT 1
                     """,
                     (safe_feedback, topic_id, message_id),
@@ -3060,6 +3066,7 @@ class TopicTaskStore(SessionCheckpointStore):
             "usage": _safe_json_load(row.get("usage_json")),
             "attachments": _safe_json_load(row.get("attachments_json")) or [],
             "feedback": str(row.get("feedback") or ""),
+            "show_in_ui": bool(row.get("show_in_ui")),
             "error": _safe_json_load(row.get("error_json")),
             "created_at": to_rfc3339(row.get("created_at")),
             "updated_at": to_rfc3339(row.get("updated_at")),

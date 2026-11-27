@@ -109,7 +109,7 @@ class SkillAdminStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT settings_key, provider_id, model_name, raw_json, updated_at
+                    SELECT settings_key, provider_id, model_name, skills_output_dir, raw_json, updated_at
                     FROM da_agent_settings
                     WHERE settings_key = 'default'
                     LIMIT 1
@@ -131,19 +131,21 @@ class SkillAdminStore:
                 cur.execute(
                     """
                     INSERT INTO da_agent_settings (
-                        settings_key, provider_id, model_name, raw_json
+                        settings_key, provider_id, model_name, skills_output_dir, raw_json
                     ) VALUES (
-                        'default', %s, %s, %s
+                        'default', %s, %s, %s, %s
                     )
                     ON DUPLICATE KEY UPDATE
                         provider_id = VALUES(provider_id),
                         model_name = VALUES(model_name),
+                        skills_output_dir = VALUES(skills_output_dir),
                         raw_json = VALUES(raw_json),
                         updated_at = CURRENT_TIMESTAMP
                     """,
                     (
                         normalized["provider_id"],
                         normalized["model"],
+                        normalized["skills_output_dir"],
                         raw_json,
                     ),
                 )
@@ -443,6 +445,7 @@ class SkillAdminStore:
         normalized = {
             "provider_id": str(data.get("provider_id") or "").strip(),
             "model": str(data.get("model") or "").strip(),
+            "skills_output_dir": str(data.get("skills_output_dir") or ""),
         }
         normalized.update(_normalize_settings_blob(data))
         return normalized
@@ -453,6 +456,7 @@ class SkillAdminStore:
         normalized = {
             "provider_id": str(row.get("provider_id") or ""),
             "model": str(row.get("model_name") or ""),
+            "skills_output_dir": str(row.get("skills_output_dir") or ""),
             "updated_at": to_rfc3339(row.get("updated_at")),
         }
         raw_json = row.get("raw_json")

@@ -71,6 +71,7 @@ class Settings(BaseSettings):
 
     # ---- Skills ----
     skills_root_dir: str = ""
+    skills_output_dir: str = "../.claude/skills/chart-visualization"
     dataagent_upload_max_bytes: int = 20 * 1024 * 1024
     # ---- Agent 交互能力 ----
     # Expose AskUserQuestion cards; write approval gates remain independent.

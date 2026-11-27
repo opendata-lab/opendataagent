@@ -1,13 +1,13 @@
-"""Drop dead table da_agent_chunk and dead columns across task/topic/message/provider/mcp/settings tables.
+"""Drop dead table da_agent_chunk and dead columns across task/topic/message/provider/mcp tables.
 
 Revision ID: 20261127_000048
 Revises: 20261127_000047
 Create Date: 2026-11-27 00:00:00
 
 Every DDL step checks current schema state first so re-running after a partial
-MySQL implicit-commit failure is idempotent. Any historical da_agent_message
-rows with show_in_ui = 0 are deleted before dropping the column so hidden legacy
-rows cannot surface in the chat UI.
+MySQL implicit-commit failure is idempotent. Keeps da_agent_settings.skills_output_dir
+(legacy skill path/runtime fallback), da_agent_message.show_in_ui (preserves any
+historical hidden lifecycle rows), and da_agent_widget_event (behaviour telemetry).
 """
 from __future__ import annotations
 
@@ -29,7 +29,6 @@ _DROP_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("da_agent_task", ("debug_enabled", "last_event_seq", "from_task_id")),
     ("da_model_provider", ("supports_partial_messages", "provider_type")),
     ("da_mcp_server", ("oauth_required",)),
-    ("da_agent_settings", ("skills_output_dir",)),
     ("da_agent_profile", ("data_scope_json",)),
     (
         "da_agent_message",
@@ -40,7 +39,6 @@ _DROP_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "correlation_id",
             "parent_correlation_id",
             "content_type",
-            "show_in_ui",
         ),
     ),
     ("da_agent_topic", ("chat_topic_id", "chat_conversation_id")),
@@ -53,12 +51,6 @@ def upgrade() -> None:
 
     if inspector.has_table("da_agent_chunk"):
         op.drop_table("da_agent_chunk")
-
-    inspector = inspect(bind)
-    if inspector.has_table("da_agent_message"):
-        msg_cols = {col["name"] for col in inspector.get_columns("da_agent_message")}
-        if "show_in_ui" in msg_cols:
-            bind.exec_driver_sql("DELETE FROM da_agent_message WHERE show_in_ui = 0")
 
     inspector = inspect(bind)
     for table, index_name in _DROP_INDEXES:

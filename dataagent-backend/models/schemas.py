@@ -258,6 +258,7 @@ class AdminSettingsResponse(BaseModel):
     model: str
     providers: List[ProviderConfig] = Field(default_factory=list)
     widget_allowed_sites: List[WidgetAllowedSite] = Field(default_factory=list)
+    skills_output_dir: str = ""
     skills_root_dir: str = ""
     updated_at: str = ""
 
@@ -265,6 +266,7 @@ class AdminSettingsResponse(BaseModel):
 class AdminSettingsUpdateRequest(BaseModel):
     provider_id: Optional[str] = None
     model: Optional[str] = None
+    skills_output_dir: Optional[str] = None
     providers: Optional[List[ProviderSettingsUpdate]] = None
     widget_allowed_sites: Optional[List[WidgetAllowedSite]] = None
 
@@ -488,6 +490,7 @@ class TopicMessage(BaseModel):
     # switched, so the change can be reverted without touching stored data.
     records: Optional[List[Dict[str, Any]]] = None
     resume_after_seq: int = 0
+    show_in_ui: bool = True
     feedback: str = ""
     # Files this message's run generated in the topic workspace (per-run diff),
     # so the chat surface can offer direct downloads on the message itself.

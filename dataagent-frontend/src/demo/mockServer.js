@@ -142,6 +142,7 @@ const demoWidgetMessage = (seq, sender, content, ts) => ({
   content,
   seq_id: seq,
   feedback: '',
+  show_in_ui: 1,
   created_at: ts,
   updated_at: ts
 })

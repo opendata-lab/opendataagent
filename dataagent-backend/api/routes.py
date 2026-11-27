@@ -82,6 +82,7 @@ async def api_health():
     cfg = get_settings()
     return {
         "status": "ok",
+        "skills_output_dir": cfg.skills_output_dir,
         "redis_host": cfg.redis_host,
         "redis_port": cfg.redis_port,
     }
@@ -251,7 +252,7 @@ def api_update_message_feedback(
 
     store = _get_store()
     message = store.get_message(message_id, context=store_ctx)
-    if not message or str(message.get("topic_id") or "") != topic_id:
+    if not message or str(message.get("topic_id") or "") != topic_id or not message.get("show_in_ui", True):
         raise HTTPException(status_code=404, detail="Message not found")
     if str(message.get("sender_type") or "") != "assistant":
         raise HTTPException(status_code=400, detail="feedback is only supported for assistant messages")
