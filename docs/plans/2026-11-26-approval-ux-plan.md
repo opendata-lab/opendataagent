@@ -21,7 +21,7 @@
    - `ui/PermissionCard.vue`：标题“{名} 需要你确认”；按钮“允许 / 本会话内允许此工具（非破坏性才显示）/ 拒绝”；拒绝后可选说明输入框；提交 `remember` 与 `note`。
    - 决策请求的调用处（主应用 `useNl2SqlChat`/SDK `useConversation`/Widget）透传 `remember`、`note`。
    - 类型声明 `types/index.d.ts` 同步。
-4. **文档**：`docs/TODO.md` 中“等待审批的工具调用显示为执行失败”移入已完成并链接本 PR；新增“撤销本会话的工具授权入口”待办。
+4. **文档**：`docs/TODO.md` 中“等待审批的工具调用显示为执行失败”移入已完成并链接本 PR。
 
 ## 验证
 
