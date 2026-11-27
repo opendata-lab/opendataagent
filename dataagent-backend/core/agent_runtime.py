@@ -46,13 +46,14 @@ def _build_system_prompt(
         "# 运行时上下文",
         f"- 当前日期：{today}（时区：{tz_name}）",
         f"- 已启用 Skills：当前已启用：{enabled_skills_text}。",
+        "- 目录：工作区 `/mnt/workspace`（可写，交付文件放 `output/`）；临时文件 `/tmp`；"
+        "已保存结果 `/mnt/results` 与技能 `/opt/skills` 只读。",
     ]
-    lines.append("- 可写临时目录：/tmp。仅存放中间过程文件，运行结束即可能失效；最终交付文件仍必须写入工作区 `output/`。")
+    if database_hint:
+        lines.append(f"- 用户显式提供的 database hint: {database_hint}")
     custom_prompt = str((agent_snapshot or {}).get("system_prompt") or "").strip()
     if custom_prompt:
         lines.extend(["", "# 智能体系统提示词", custom_prompt])
-    if database_hint:
-        lines.append(f"- 用户显式提供的 database hint: {database_hint}")
     return "\n".join(lines)
 
 def resolve_agent_skill_runtime(
