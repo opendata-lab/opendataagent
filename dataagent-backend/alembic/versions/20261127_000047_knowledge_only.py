@@ -25,8 +25,12 @@ depends_on = None
 
 TABLE = "da_agent_experience"
 TOPIC_TABLE = "da_agent_topic"
+PROFILE_TABLE = "da_agent_profile"
 OLD_INDEX = "idx_da_agent_experience_kind"
 NEW_INDEX = "idx_da_agent_experience_status_updated"
+DIGEST_AGENT_ID = "agent_experience_digest"
+OLD_DIGEST_DESCRIPTION = "内置：每天读取前一天的会话记录，提炼候选经验，供管理员在记忆页面审核。"
+NEW_DIGEST_DESCRIPTION = "内置：每天读取前一天的会话记录，提炼候选知识，供管理员在知识页面审核。"
 
 
 def upgrade() -> None:
@@ -87,6 +91,25 @@ def upgrade() -> None:
                     nullable=True,
                     comment="知识总结会话对应的来源助手",
                 ),
+            )
+
+    inspector = inspect(bind)
+    if inspector.has_table(PROFILE_TABLE):
+        profile_columns = {col["name"] for col in inspector.get_columns(PROFILE_TABLE)}
+        if {"agent_id", "description"} <= profile_columns:
+            bind.execute(
+                sa.text(
+                    f"""
+                    UPDATE `{PROFILE_TABLE}`
+                    SET `description` = :new_desc
+                    WHERE `agent_id` = :agent_id AND `description` = :old_desc
+                    """
+                ),
+                {
+                    "new_desc": NEW_DIGEST_DESCRIPTION,
+                    "agent_id": DIGEST_AGENT_ID,
+                    "old_desc": OLD_DIGEST_DESCRIPTION,
+                },
             )
 
 

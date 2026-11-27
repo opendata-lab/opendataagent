@@ -158,7 +158,11 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
 
 迁移 `20261127_000047` 会删除 `da_agent_experience` 的 `kind` 与 `inject_mode` 列（原有 `memory` 行原样保留为知识），并将全部知识改为按需读取（系统提示词仅列最多 100 条目录，模型按需 `grep`/`read`）。原有「始终注入（`inject_mode='always'`）」的条目升级后不再无条件写入系统提示词，可能因超出目录上限或模型跳过读取而不生效。
 
-**升级前**（先执行 `scripts/backup-db.sh` 备份，该迁移同样不支持 `alembic downgrade`），先查出所有生效中的始终注入条目，把其中必须无条件遵守的硬性规则迁入对应助手的**角色设定**（系统提示词）；全局硬性规则按需加入相关助手的角色设定：
+**升级前**请依次完成以下步骤（该迁移不支持 `alembic downgrade`）：
+
+1. 如已开启每日总结，先关闭 `DATAAGENT_EXPERIENCE_DIGEST_ENABLED` 并等待当前运行中的总结任务全部结束（升级前启动的总结会话未记录结构化的来源助手 `digest_target_agent_id`，升级后其产出的候选会被丢弃）；升级完成后再重新开启。
+2. 执行 `scripts/backup-db.sh` 备份数据库。
+3. 查出所有生效中的始终注入条目，把其中必须无条件遵守的硬性规则迁入对应助手的**角色设定**（系统提示词）；全局硬性规则按需加入相关助手的角色设定：
 
 ```sql
 SELECT experience_id, scope, agent_id, title, when_text, content

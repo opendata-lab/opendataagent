@@ -67,7 +67,10 @@ def _throwaway_schema(schema: str):
 
 
 def test_downgrade_raises_restore_backup_error():
+    from core import experience
+
     mig = _load_migration_module()
+    assert mig.NEW_DIGEST_DESCRIPTION == experience.digest_agent_payload()["description"]
     with pytest.raises(RuntimeError, match="restore-db.sh"):
         mig.downgrade()
 
@@ -98,6 +101,22 @@ def test_upgrade_converts_memory_rows_widens_content_and_is_idempotent():
                          '排除退款订单', '["task_1"]', 'topic_digest_1', 'pending', ''),
                         ('exp_know_1', 'knowledge', '全局知识', '查数前', 'always', 'global', NULL,
                          '先看口径文档', '[]', NULL, 'active', 'admin')
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO da_agent_profile
+                        (agent_id, name, description, system_prompt,
+                         allowed_tools_json, mcp_server_ids_json, skill_folders_json,
+                         max_turns, plan_timeout_action, env_vars_json, visibility_json,
+                         preset_questions_json, remote_mcp_enabled, is_default, is_builtin)
+                    VALUES
+                        ('agent_experience_digest', '经验总结',
+                         '内置：每天读取前一天的会话记录，提炼候选经验，供管理员在记忆页面审核。',
+                         '', '[]', '[]', '["experience-digest"]',
+                         0, 'park', '{}', '{"mode": "selected"}',
+                         '[]', 0, 0, 1)
+                    ON DUPLICATE KEY UPDATE description = VALUES(description)
                     """
                 )
         finally:
@@ -172,6 +191,10 @@ def test_upgrade_converts_memory_rows_widens_content_and_is_idempotent():
                 )
                 cur.execute("SELECT CHAR_LENGTH(content) AS n FROM da_agent_experience WHERE experience_id = 'exp_know_1'")
                 assert cur.fetchone()["n"] == 25000
+
+                # Default digest assistant description is updated to mention 知识页面.
+                cur.execute("SELECT description FROM da_agent_profile WHERE agent_id = 'agent_experience_digest'")
+                assert cur.fetchone()["description"] == "内置：每天读取前一天的会话记录，提炼候选知识，供管理员在知识页面审核。"
         finally:
             conn.close()
 
@@ -236,6 +259,21 @@ def test_upgrade_recovers_from_partial_state_after_kind_dropped():
                 # digest_target_agent_id not yet added, alembic_version still stamped at 20261127_000046.
                 cur.execute("DROP INDEX idx_da_agent_experience_kind ON da_agent_experience")
                 cur.execute("ALTER TABLE da_agent_experience DROP COLUMN kind")
+                cur.execute(
+                    """
+                    INSERT INTO da_agent_profile
+                        (agent_id, name, description, system_prompt,
+                         allowed_tools_json, mcp_server_ids_json, skill_folders_json,
+                         max_turns, plan_timeout_action, env_vars_json, visibility_json,
+                         preset_questions_json, remote_mcp_enabled, is_default, is_builtin)
+                    VALUES
+                        ('agent_experience_digest', '经验总结', '自定义总结助手说明',
+                         '', '[]', '[]', '["experience-digest"]',
+                         0, 'park', '{}', '{"mode": "selected"}',
+                         '[]', 0, 0, 1)
+                    ON DUPLICATE KEY UPDATE description = VALUES(description)
+                    """
+                )
         finally:
             conn.close()
 
@@ -289,5 +327,9 @@ def test_upgrade_recovers_from_partial_state_after_kind_dropped():
                 assert row["status"] == "pending"
                 assert row["digest_topic_id"] == "topic_partial_1"
                 assert row["content"] == "部分迁移保留内容"
+
+                # Customized digest assistant description is left untouched.
+                cur.execute("SELECT description FROM da_agent_profile WHERE agent_id = 'agent_experience_digest'")
+                assert cur.fetchone()["description"] == "自定义总结助手说明"
         finally:
             conn.close()
