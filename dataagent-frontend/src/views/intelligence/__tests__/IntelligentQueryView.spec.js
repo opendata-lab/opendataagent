@@ -119,9 +119,6 @@ describe('IntelligentQueryView', () => {
 
     await wrapper.vm.handleMenuSelect('knowledge')
     expect(routerPush).toHaveBeenCalledWith({ path: '/knowledge', query: {} })
-
-    await wrapper.vm.handleMenuSelect('memories')
-    expect(routerPush).toHaveBeenCalledWith({ path: '/memories', query: {} })
   })
 
   it('preserves only agent_id when switching page menus', async () => {
@@ -161,12 +158,13 @@ describe('IntelligentQueryView', () => {
     expect(wrapper.find('.el-menu-stub').attributes('data-active')).toBe('agents')
   })
 
-  it('shows admin work menus with a pending memory count', async () => {
+  it('shows admin work menus with a pending knowledge count', async () => {
     const wrapper = mountView({}, { display_name: 'Admin', is_admin: true })
     await flushPromises()
-    for (const label of ['用户反馈', '知识', '记忆']) expect(wrapper.text()).toContain(label)
+    for (const label of ['用户反馈', '知识']) expect(wrapper.text()).toContain(label)
+    expect(wrapper.text()).not.toContain('记忆')
     expect(wrapper.find('.pending-count').text()).toBe('3')
-    expect(listExperiences).toHaveBeenCalledWith({ kind: 'memory', status: 'pending', page_size: 1 })
+    expect(listExperiences).toHaveBeenCalledWith({ status: 'pending', page_size: 1 })
   })
 
   it('shows readable menus without a role label for regular users', () => {

@@ -816,21 +816,37 @@ def test_task_system_prompt_route_contract(monkeypatch):
     assert missing.status_code == 404
 
 
-def test_knowledge_memory_admin_contract(monkeypatch):
+def test_knowledge_admin_contract(monkeypatch):
     _acc_store, admin, alice = install_fake_accounts()
     calls = []
     base = {
-        "experience_id": "exp1", "kind": "knowledge", "title": "标题", "when_text": "条件", "body": "内容",
-        "scope": "global", "agent_id": None, "inject_mode": "always", "status": "active",
+        "experience_id": "exp1",
+        "title": "标题",
+        "when_text": "条件",
+        "body": "内容",
+        "scope": "global",
+        "agent_id": None,
+        "source": "manual",
+        "status": "active",
     }
+
     def listing(**kwargs):
         calls.append(kwargs)
         return {"items": [base], "total": 1, "page": 1, "page_size": 20}
+
     monkeypatch.setattr(admin_routes.experience, "list_experiences", listing)
     monkeypatch.setattr(admin_routes.experience, "create_experience", lambda **kw: calls.append(kw) or base)
-    monkeypatch.setattr(admin_routes.experience, "update_experience", lambda id, **kw: calls.append(kw) or (base if id == "exp1" else None))
+    monkeypatch.setattr(
+        admin_routes.experience,
+        "update_experience",
+        lambda id, **kw: calls.append(kw) or (base if id == "exp1" else None),
+    )
     monkeypatch.setattr(admin_routes.experience, "delete_experience", lambda id: id == "exp1")
-    monkeypatch.setattr(admin_routes.experience, "injection_preview", lambda id: {"prompt": "preview", "items": [base]})
+    monkeypatch.setattr(
+        admin_routes.experience,
+        "injection_preview",
+        lambda agent_id, **kw: {"prompt": "preview", "items": [base], "eligible": True, "reason": "eligible", **kw},
+    )
     client = TestClient(app)
     root = "/api/v1/nl2sql-admin/experiences"
     endpoints = [
@@ -846,17 +862,21 @@ def test_knowledge_memory_admin_contract(monkeypatch):
         assert getattr(client, method)(path, headers=bearer_headers(alice.id), **kwargs).status_code == 403
     assert calls == []
     headers = bearer_headers(admin.id)
-    response = client.get(root, params={"kind": "knowledge", "keyword": "标", "scope": "global"}, headers=headers)
+    response = client.get(root, params={"keyword": "标", "scope": "global"}, headers=headers)
     assert response.status_code == 200 and response.json()["items"][0]["body"] == "内容"
-    assert calls[-1]["kind"] == "knowledge" and calls[-1]["keyword"] == "标"
-    assert client.post(root, json={"kind": "memory", "title": "t", "when_text": "w", "body": "b"}, headers=headers).status_code == 422
+    assert response.json()["items"][0]["source"] == "manual"
+    assert "kind" not in calls[-1] and calls[-1]["keyword"] == "标"
     assert client.post(root, json={"title": "t" * 41, "when_text": "w", "body": "b"}, headers=headers).status_code == 422
-    assert client.post(root, json={"title": "t", "when_text": "w", "body": "b"}, headers=headers).status_code == 200
-    assert calls[-1]["kind"] == "knowledge" and calls[-1]["status"] == "active"
+    assert client.post(root, json={"title": "t", "when_text": "w", "body": "b" * 20001}, headers=headers).status_code == 422
+    assert client.post(root, json={"title": "t", "when_text": "w", "body": "b" * 20000}, headers=headers).status_code == 200
+    assert calls[-1]["status"] == "active" and "kind" not in calls[-1] and "inject_mode" not in calls[-1]
     assert client.patch(root + "/exp1", json={"scope": "global", "title": "edited"}, headers=headers).status_code == 200
     assert set(calls[-1]) == {"scope", "title", "user_id"}
+    assert client.patch(root + "/exp1", json={"status": "disabled"}, headers=headers).status_code == 200
+    assert set(calls[-1]) == {"status", "user_id"}
     assert client.patch(root + "/missing", json={"status": "disabled"}, headers=headers).status_code == 404
-    assert client.get(root + "/injection-preview?agent_id=a", headers=headers).json()["prompt"] == "preview"
+    preview = client.get(root + "/injection-preview?agent_id=a", headers=headers).json()
+    assert preview["prompt"] == "preview" and preview["eligible"] is True
     assert client.delete(root + "/exp1", headers=headers).status_code == 200
     assert client.delete(root + "/missing", headers=headers).status_code == 404
 

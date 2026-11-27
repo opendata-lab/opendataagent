@@ -26,10 +26,11 @@
           <el-icon><ChatLineSquare /></el-icon>
           <span>用户反馈</span>
         </el-menu-item>
-        <template v-if="authStore.isAdmin">
-          <el-menu-item index="knowledge"><el-icon><Collection /></el-icon><span>知识</span></el-menu-item>
-          <el-menu-item index="memories"><el-icon><Notebook /></el-icon><span>记忆</span><span v-if="pendingMemoryCount" class="pending-count" aria-label="待审核记忆">{{ pendingMemoryCount }}</span></el-menu-item>
-        </template>
+        <el-menu-item v-if="authStore.isAdmin" index="knowledge">
+          <el-icon><Collection /></el-icon>
+          <span>知识</span>
+          <span v-if="pendingKnowledgeCount" class="pending-count" aria-label="待审核知识">{{ pendingKnowledgeCount }}</span>
+        </el-menu-item>
       </el-menu>
       <div class="intelligent-query-footer">
         <div v-if="authStore.currentUser" class="intelligent-query-user">
@@ -70,10 +71,10 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChatLineSquare, Collection, MagicStick, Notebook, Setting, User } from '@element-plus/icons-vue'
+import { ChatLineSquare, Collection, MagicStick, Setting, User } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { withAgentContext } from '@/router/agentContext'
-import { pendingMemoryCount, refreshMemoryCount, clearMemoryCount } from '@/composables/experienceCounts'
+import { pendingKnowledgeCount, refreshPendingKnowledgeCount, clearPendingKnowledgeCount } from '@/composables/experienceCounts'
 
 const route = useRoute()
 const router = useRouter()
@@ -100,13 +101,12 @@ const MENU_TO_PATH = {
   'chat-v2': '/chat',
   agents: '/agents',
   feedback: '/feedback',
-  knowledge: '/knowledge',
-  memories: '/memories'
+  knowledge: '/knowledge'
 }
 
 watch(() => [authStore.isAdmin, route.fullPath], () => {
-  if (authStore.isAdmin) refreshMemoryCount()
-  else clearMemoryCount()
+  if (authStore.isAdmin) refreshPendingKnowledgeCount()
+  else clearPendingKnowledgeCount()
 }, { immediate: true })
 
 const brandLogo = `${import.meta.env.BASE_URL}dataagent-icon.svg`

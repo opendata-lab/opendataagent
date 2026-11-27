@@ -1,5 +1,5 @@
 <template>
-  <section v-if="item.kind === 'memory'" class="entry-sources" aria-label="来源">
+  <section v-if="item.source === 'digest'" class="entry-sources" aria-label="来源">
     <h3>来源</h3>
     <el-link v-if="item.digest_topic_id" type="primary" @click="openDigest">查看总结会话</el-link>
     <p v-else class="muted">没有总结会话记录</p>

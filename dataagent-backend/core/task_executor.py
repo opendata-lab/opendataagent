@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from config import get_settings, resolve_run_limits
-from core.experience import DIGEST_AGENT_ID, INJECTION_FOLDER, active_experiences_for, prepare_injection
+from core.experience import INJECTION_FOLDER, active_experiences_for, injection_eligibility, prepare_injection
 from core.agent_profile_service import normalize_agent_snapshot, normalize_permission_mode
 from core.agent_runtime import (_build_system_prompt, _build_mcp_servers, _build_provider_env,
     resolve_agent_skill_runtime, resolve_enabled_skill_runtime, resolve_runtime_provider_selection)
@@ -139,7 +139,11 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         injection_prompt = ""
         mount_roots = dict(roots)
         agent_id = str((snapshot or {}).get("agent_id") or "")
-        if cfg.dataagent_experience_injection_enabled and agent_id and agent_id != DIGEST_AGENT_ID:
+        eligible, _reason = injection_eligibility(
+            agent_id,
+            injection_enabled=bool(cfg.dataagent_experience_injection_enabled),
+        )
+        if eligible:
             try:
                 if INJECTION_FOLDER in roots:
                     raise ValueError("Reserved injection mount name is already used by a skill")
