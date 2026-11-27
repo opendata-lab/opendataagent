@@ -1482,7 +1482,6 @@ class TopicTaskStore(SessionCheckpointStore):
         prompt: str,
         provider_id: str,
         model: str,
-        database_hint: str | None,
         debug: bool,
         timeout_seconds: int,
         sql_read_timeout_seconds: int,
@@ -1508,9 +1507,9 @@ class TopicTaskStore(SessionCheckpointStore):
                     INSERT INTO da_agent_task (
                         task_id, topic_id, from_task_id, source_queue_id, source_schedule_id, source_schedule_log_id,
                         task_status, prompt, provider_id, model_name, agent_id, agent_snapshot_json,
-                        database_hint, debug_enabled, timeout_seconds, sql_read_timeout_seconds,
+                        debug_enabled, timeout_seconds, sql_read_timeout_seconds,
                         sql_write_timeout_seconds, last_event_seq, interactive, request_key
-                    ) VALUES (%s, %s, %s, %s, %s, %s, 'waiting', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 'waiting', %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s)
                     """,
                     (
                         task_id,
@@ -1524,7 +1523,6 @@ class TopicTaskStore(SessionCheckpointStore):
                         model or "",
                         agent_id,
                         _json_dump(snapshot),
-                        database_hint,
                         1 if debug else 0,
                         int(timeout_seconds or 0),
                         int(sql_read_timeout_seconds or 0),
@@ -1572,7 +1570,7 @@ class TopicTaskStore(SessionCheckpointStore):
                            task.source_schedule_id, task.source_schedule_log_id,
                            task.task_status, task.prompt, task.provider_id, task.model_name,
                            task.agent_id, task.agent_snapshot_json,
-                           task.database_hint, task.debug_enabled, task.timeout_seconds,
+                           task.debug_enabled, task.timeout_seconds,
                            task.sql_read_timeout_seconds, task.sql_write_timeout_seconds,
                            task.last_event_seq, task.cancel_requested_at, task.started_at,
                            task.heartbeat_at, task.finished_at, task.error_json,
@@ -1600,7 +1598,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     SELECT task_id, topic_id, from_task_id, source_queue_id, source_schedule_id, source_schedule_log_id,
                            task_status, prompt, provider_id, model_name,
                            agent_id, agent_snapshot_json,
-                           database_hint, debug_enabled, timeout_seconds, sql_read_timeout_seconds,
+                           debug_enabled, timeout_seconds, sql_read_timeout_seconds,
                            sql_write_timeout_seconds, last_event_seq, cancel_requested_at, started_at,
                            heartbeat_at, finished_at, error_json, created_at, updated_at,
                            interactive, request_key
@@ -1627,7 +1625,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     SELECT task_id, topic_id, from_task_id, source_queue_id, source_schedule_id, source_schedule_log_id,
                            task_status, prompt, provider_id, model_name,
                            agent_id, agent_snapshot_json,
-                           database_hint, debug_enabled, timeout_seconds, sql_read_timeout_seconds,
+                           debug_enabled, timeout_seconds, sql_read_timeout_seconds,
                            sql_write_timeout_seconds, last_event_seq, cancel_requested_at, started_at,
                            heartbeat_at, finished_at, error_json, created_at, updated_at,
                            interactive, request_key
@@ -1654,7 +1652,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     SELECT task_id, topic_id, from_task_id, source_queue_id, source_schedule_id, source_schedule_log_id,
                            task_status, prompt, provider_id, model_name,
                            agent_id, agent_snapshot_json,
-                           database_hint, debug_enabled, timeout_seconds, sql_read_timeout_seconds,
+                           debug_enabled, timeout_seconds, sql_read_timeout_seconds,
                            sql_write_timeout_seconds, last_event_seq, cancel_requested_at, started_at,
                            heartbeat_at, finished_at, error_json, created_at, updated_at,
                            interactive, request_key
@@ -3237,7 +3235,6 @@ class TopicTaskStore(SessionCheckpointStore):
             prompt=str(parent.get("prompt") or ""),
             provider_id=str(parent.get("provider_id") or ""),
             model=str(parent.get("model") or ""),
-            database_hint=str(parent.get("database_hint") or "") or None,
             debug=bool(parent.get("debug")),
             timeout_seconds=int(parent.get("timeout_seconds") or 0),
             sql_read_timeout_seconds=int(parent.get("sql_read_timeout_seconds") or 0),
@@ -3422,7 +3419,6 @@ class TopicTaskStore(SessionCheckpointStore):
             "prompt": str(row.get("prompt") or ""),
             "provider_id": str(row.get("provider_id") or ""),
             "model": str(row.get("model_name") or ""),
-            "database_hint": str(row.get("database_hint") or "") or None,
             "debug": bool(row.get("debug_enabled")),
             "timeout_seconds": int(row.get("timeout_seconds") or 0),
             "sql_read_timeout_seconds": int(row.get("sql_read_timeout_seconds") or 0),

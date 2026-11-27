@@ -95,8 +95,7 @@ async def test_executor_forwards_approved_tools_and_builds_permission_card_field
         history=[],
         provider_id="p1",
         model="m1",
-        database_hint=None,
-    ))
+        ))
 
     assert result.task_status == "parked"
     assert captured["approved_tools"] == ["srv1:create_table"]

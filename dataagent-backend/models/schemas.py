@@ -65,7 +65,6 @@ class DeliverMessageRequest(BaseModel):
     provider_id: Optional[str] = None
     model: Optional[str] = None
     debug: bool = False
-    database: Optional[str] = None
     permission_mode: Optional[str] = None
 
 
@@ -101,7 +100,6 @@ class CreateTaskRequest(BaseModel):
     provider_id: Optional[str] = None
     model: Optional[str] = None
     debug: bool = False
-    database: Optional[str] = None
 
 
 
@@ -783,7 +781,6 @@ class TaskStatusResponse(BaseModel):
     prompt: str = ""
     provider_id: str = ""
     model: str = ""
-    database_hint: Optional[str] = None
     cancel_requested_at: Optional[str] = None
     started_at: Optional[str] = None
     heartbeat_at: Optional[str] = None

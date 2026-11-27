@@ -42,7 +42,6 @@ class TaskExecutionInput:
         question: the user prompt for this run.
         history: prior turns, used only when the topic has no session checkpoint.
         provider_id / model: selected runtime provider and model id.
-        database_hint: optional default schema/database for SQL tools.
         debug: enable verbose runtime diagnostics.
         timeout_seconds: submission-time total budget; waits on cards are not
             counted, and elapsed time accumulates across execution segments.
@@ -62,7 +61,6 @@ class TaskExecutionInput:
     history: list[dict[str, str]]
     provider_id: str
     model: str
-    database_hint: str | None
     debug: bool = False
     timeout_seconds: int | None = None
     sql_read_timeout_seconds: int | None = None
@@ -157,7 +155,7 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
             enabled_roots=mount_roots,lifetime=limits["total_timeout_seconds"],env=runtime_env)
         provider_env = _build_provider_env(api_format,api_key=str(target.get("api_key") or ""),
             auth_token=str(target.get("auth_token") or ""),base_url=str(target.get("base_url") or ""))
-        system_prompt = _build_system_prompt(params.database_hint,skills,snapshot)
+        system_prompt = _build_system_prompt(skills,snapshot)
         if not saved and params.history:
             system_prompt += "\nHistorical result caches at workspace/.dataagent/results were migrated to /mnt/results with the same filenames."
         system_prompt += injection_prompt

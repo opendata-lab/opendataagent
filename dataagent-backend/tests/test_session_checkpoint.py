@@ -17,7 +17,7 @@ def task():
     store = TopicTaskStore()
     topic = store.create_topic(title="checkpoint-test")
     task = store.create_task(topic_id=topic["topic_id"],prompt="test",provider_id="local-test",model="stub",
-        database_hint=None,debug=False,timeout_seconds=1800,sql_read_timeout_seconds=300,sql_write_timeout_seconds=60)
+        debug=False,timeout_seconds=1800,sql_read_timeout_seconds=300,sql_write_timeout_seconds=60)
     store.mark_task_running(task["task_id"])
     try: yield store,topic["topic_id"],task["task_id"]
     finally: store.delete_topic(topic["topic_id"])
