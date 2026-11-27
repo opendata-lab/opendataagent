@@ -16,18 +16,18 @@
 ## PR 2：只保留知识
 
 1. **Alembic**：先删除索引 `idx_da_agent_experience_kind`，再删除 `kind`、`inject_mode`（memory 行原样保留为知识），新建 `(status, updated_at)` 索引；`content` 改 MEDIUMTEXT（保留字符集、排序规则与可空性）。downgrade：先查 `OCTET_LENGTH(content) > 65535` 的行，有则拒绝降级并提示；`kind` 恢复规则：`digest_topic_id` 非空或 `status='pending'` 的为 memory（来源任务可能为空），其余 knowledge；删除新索引、重建 `idx_da_agent_experience_kind`，`inject_mode` 恢复为 on_demand（原值不保留，迁移说明写明）。MySQL DDL 会隐式提交，每步可单独重跑（按列与索引是否存在判断）。
-2. **后端 `core/experience.py`**：正文上限 20000（总结产出仍 500）；删除 kind / inject_mode 校验与分支、always 注入与 `MAX_INJECTED_CHARS`；创建 pending 时必须带 `digest_topic_id`，pending 可反复编辑、已审核不能退回 pending；`build_injection` 生成目录（上限 100，超出注明数量）与全部可见生效知识的文件（首行 `# 标题`、次行适用场景，不随目录截断），路径函数共用；`_row_to_item` 返回派生 `source`；`list_experiences` 增加 `source`（manual/digest）筛选，关键词搜索覆盖正文；`build_session_records` 任务头加 `topic_id`；`digest_agent_payload` 描述中的“记忆页面”改为“知识页面”；提示词加入“扩展关键词 grep、分段 read”的约定；`collect_candidates` 不再传 kind / inject_mode；`INJECTION_FOLDER` 改为 `_knowledge`；`injection_preview` 返回资格判断结果。
-3. **`models/schemas.py` / `api/admin_routes.py`**：删除请求与响应模型中的 kind、inject_mode，`_row_to_item` 同步；body 上限 20000（PATCH 只改状态时不校验正文）；列表去掉 kind 筛选、增加 `source` 筛选；`Experience` 响应加 `source`。
+2. **后端 `core/experience.py`**：正文上限 20000（总结产出仍 500）；删除 kind / inject_mode 校验与分支、always 注入与 `MAX_INJECTED_CHARS`；创建 pending 时必须带 `digest_topic_id`，pending 可反复编辑、已审核不能退回 pending；`build_injection` 生成目录（上限 100，超出注明数量）与全部可见生效知识的文件（首行 `# 标题`、次行适用场景，不随目录截断），路径函数共用；`_row_to_item` 返回派生 `source`；关键词搜索覆盖正文；`build_session_records` 任务头加 `topic_id`；`digest_agent_payload` 描述中的“记忆页面”改为“知识页面”；提示词加入“扩展关键词 grep、分段 read”的约定；`collect_candidates` 不再传 kind / inject_mode；`INJECTION_FOLDER` 保持 `_knowledge_memory`；`injection_preview` 返回资格判断结果。
+3. **`models/schemas.py` / `api/admin_routes.py`**：删除请求与响应模型中的 kind、inject_mode，`_row_to_item` 同步；body 上限 20000（PATCH 只改状态时不校验正文）；列表去掉 kind 筛选；`Experience` 响应加 `source`。
 4. **每日总结 skill** `.claude/skills/experience-digest/SKILL.md`：用词改为“知识”；删除“不要写业务口径”，改为“口径须有对话依据（用户纠正或确认）、引用用户原话、注明是否可能只适用于特定任务或部门，并列出来源任务”；同步相关测试。
 5. **前端管理页**：
-   - `KnowledgeMemoryView.vue`：单一知识列表（来源与状态筛选走后端参数、待审核队列、大编辑器 + 上传 .md/.txt：超 20000 字拒绝并提示字数、正文非空先确认、标题为空用文件名）；搜索框提示“搜索标题、适用场景或正文”；文案“知识与记忆”→“知识”；
-   - `ExperienceSources.vue`：显示条件由 `item.kind === 'memory'` 改为 `item.source === 'digest'`；Widget 来源不显示“打开会话”；
+   - `KnowledgeMemoryView.vue`：单一知识列表（状态标签页、待审核队列、大编辑器 + 上传 .md/.txt：超 20000 字拒绝并提示字数、正文非空先确认再覆盖）；搜索框提示“搜索标题、适用场景或正文”；文案“知识与记忆”→“知识”；
+   - `ExperienceSources.vue`：显示条件由 `item.kind === 'memory'` 改为 `item.source === 'digest'`；
    - `router/index.js`：删除 `/memories` 路由与菜单项，`/knowledge` 去掉 `props: { kind }`，待审核数显示在“知识”菜单；
-   - `ExperienceDrawer.vue`（加宽、去 kind）、`ExperienceFields.vue`（正文占位文案去掉“不要写业务口径定义”，上限随来源）、`entryForm.js`、`AgentExperienceCards.vue`（去额度与注入方式；目录外条目标为“目录外 · 可搜索”）、`IntelligentQueryView.vue` 相关文案、`composables/experienceCounts`。
-6. **对话展示**：`toolPresentation.js` 按设计的边界规则增加 `knowledge_read` / `knowledge_search`（详情不含哈希路径）；`ToolOutput.vue` 在图标、摘要文字、描述、状态文字、面板可展开五处加分支，标题只在从第 1 行读取且成功时由输出首个非空行 `# 标题` 取得。后端测试断言 `INJECTION_ROOT` 与前端常量一致。
+   - `ExperienceDrawer.vue`（加宽、去 kind）、`ExperienceFields.vue`（正文占位文案去掉“不要写业务口径定义”，上限随来源）、`entryForm.js`、`AgentExperienceCards.vue`（去额度与注入方式）、`IntelligentQueryView.vue` 相关文案、`composables/experienceCounts`。
+6. **对话展示**：`toolPresentation.js` 对 `read`/`grep`/`find` 按路径边界增加 `knowledge_read` / `knowledge_search`（详情不含哈希路径，不解析标题，不识别 bash）；`ToolOutput.vue` 在图标、摘要文字、描述、状态文字、面板可展开五处加分支。后端测试断言 `INJECTION_ROOT` 与前端常量一致。
 7. **测试**：
-   - 后端：修复已失效的 `tests/test_experience.py`（引用已删除的 `DIGEST_USER_ID` 与 `da_agent_topic.auth_user_id`，改按 `agent_id = DIGEST_AGENT_ID` 查询）；超过 100 条时第 101 条文件存在且目录有超出提示；source 筛选与正文搜索；创建 pending 无 `digest_topic_id` 被拒绝；长度校验（含 PATCH 只改状态）；管理员添加直接生效、每日总结为待审核、不能退回 pending；目录不含其他智能体专属、停用与待审核条目；目录上限与超出提示；文件首行标题、目录与文件路径一致；预览与运行在开关关闭、每日总结智能体时一致；迁移 up/down（含 memory 行转换、超长行拒绝降级）。
-   - 前端：上传（超长拒绝、覆盖确认）、审核流、来源区块按 `source` 显示；更新 `router/__tests__/index.spec.js`、`router/__tests__/authGuard.spec.js`、`IntelligentQueryView.spec.js` 中的 `/memories`；知识类工具展示（`/opt/skills/_knowledge` 有无结尾斜杠、bash rg、分段读取不取标题、Pi 数组输出、旧版行号前缀、普通文件读取不受影响）。
+   - 后端：修复已失效的 `tests/test_experience.py`（引用已删除的 `DIGEST_USER_ID` 与 `da_agent_topic.auth_user_id`，改按 `agent_id = DIGEST_AGENT_ID` 查询）；超过 100 条时第 101 条文件存在且目录有超出提示；正文搜索；创建 pending 无 `digest_topic_id` 被拒绝；长度校验（含 PATCH 只改状态）；管理员添加直接生效、每日总结为待审核、不能退回 pending；目录不含其他智能体专属、停用与待审核条目；目录上限与超出提示；文件首行标题、目录与文件路径一致；预览与运行在开关关闭、每日总结智能体时一致；迁移 up/down（含 memory 行转换、超长行拒绝降级）。
+   - 前端：上传（超长拒绝、覆盖确认）、审核流、来源区块按 `source` 显示；更新 `router/__tests__/index.spec.js`、`router/__tests__/authGuard.spec.js`、`IntelligentQueryView.spec.js` 中的 `/memories`；知识类工具展示（知识目录有无结尾斜杠、相似前缀目录不误判、普通文件读取与 bash 不受影响）。
 8. **本地端到端**（schema `dataagent_qa`，MySQL `127.0.0.1:3326`，Redis，真实模型，Docker 沙箱）：上传几千字口径文档 + 审核通过几条每日总结知识；用不含知识原词的口语化问题提问，确认模型通过目录或扩展关键词 grep 找到知识、分段 read 并用于回答；对话中显示“搜索知识 / 查阅知识”与书本图标；手动触发一次每日总结，确认产出待审核知识（可含有依据的口径）。
 
 ## 上线与回退
