@@ -48,10 +48,10 @@
 
 遵循“**内部一律 UTC，边界统一业务时区**”原则，一步到位交付（无过渡期、无兼容双轨）：
 
-1. **一个配置**：`DATAAGENT_TIMEZONE`（默认 `Asia/Shanghai`），统一驱动沙箱 `TZ`、系统提示词当前日期、每日经验总结日界线、定时任务默认时区、管理后台日期筛选边界、前端展示时区及评测脚本默认时区。
+1. **一个配置**：`DATAAGENT_TIMEZONE`（默认 `Asia/Shanghai`），驱动沙箱 `TZ`、系统提示词当前日期、每日经验总结日界线、新建定时任务的默认时区、管理后台按日期筛选的边界，以及反馈页的日期显示（与筛选一致）。
 2. **存储全 UTC**：所有数据库连接建立时强制 `SET time_zone = '+00:00'`；所有 Python 写入统一 naive UTC；历史路径 A 数据通过单次 Alembic 迁移按原 DB 时区一次性转正（生产 DB 已是 UTC 时零改动）。
 3. **一个序列化器**：后端所有时间字段统一输出带 `Z` 的 ISO-8601 UTC 字符串（`YYYY-MM-DDTHH:MM:SSZ`）。
-4. **一个前端格式化模块**：`dataagent-frontend`（主应用 + Widget）和 `packages/agent-conversation` 统一使用浏览器原生 `Intl.DateTimeFormat` 按业务时区格式化展示，删除全部手写切片与散落 `dayjs` 格式化。
+4. **一个前端格式化模块**：主应用与 Widget 统一用 `src/utils/time.js` 解析带 `Z` 的时间并按**浏览器本地时区**显示（通用做法，国内用户即北京时间），删除手写字符串切片。唯一例外是反馈页：它的日期筛选按业务日期，显示也按业务时区，避免外地管理员看到的日期与筛选结果不一致。SDK 包只需正确解析 `Z`，不加时区参数。
 
 ### 非目标
 
@@ -72,6 +72,7 @@ dataagent_timezone: str = "Asia/Shanghai"
 
 - 启动时通过 Pydantic `@field_validator` 用 `ZoneInfo(v)` 校验，非法 IANA 时区名直接启动失败（fail-fast）。
 - `dataagent-backend/requirements.txt` 显式加入 `tzdata`（保证任何精简容器或本地环境都有完整 IANA 数据库）。
+- 2026-11-26 删减（Codex 评审）：不加 `DATAAGENT_LEGACY_DB_TZ_OFFSET_SECONDS`、不加 Widget/SDK 的时区下发、不做评测历史数据的启发式修正。
 - `deploy/docker-compose.yml` 透传 `DATAAGENT_TIMEZONE: ${DATAAGENT_TIMEZONE:-Asia/Shanghai}`；`deploy/.env.example` 增加注释说明。
 - `dataagent_experience_digest_hour` 注释从 `on the database clock` 改为 `in DATAAGENT_TIMEZONE`。
 
@@ -81,7 +82,7 @@ dataagent_timezone: str = "Asia/Shanghai"
 
 1. **`core/db.py`** — 唯一 PyMySQL 连接入口：
    ```python
-   def connect_mysql(*, database: str | None = None, autocommit: bool = False):
+   def connect_mysql(*, database: str | None = None, autocommit: bool = False, io_timeout_seconds: int | None = None):
        cfg = get_settings()
        return pymysql.connect(
            host=cfg.mysql_host,
@@ -92,6 +93,7 @@ dataagent_timezone: str = "Asia/Shanghai"
            charset="utf8mb4",
            cursorclass=pymysql.cursors.DictCursor,
            autocommit=autocommit,
+           # 保留现有系统提示词查询的连接/读/写超时（topic_task_store._connect 的 io_timeout_seconds）
            init_command="SET time_zone = '+00:00'",
        )
    ```
@@ -124,10 +126,9 @@ dataagent_timezone: str = "Asia/Shanghai"
    - `topic_task_store`（含 `get_task_system_prompt:1672`）、`skill_admin_store`、`agent_profile_service`、`runtime_registry_store`、`experience`、`accounts/store`、`remote_mcp_tokens` 全部删除各自的 `_to_iso` / 格式化代码，统一调用 `format_utc_iso`。
    - `eval_store` 的 `list_datasets` / `get_dataset` / `list_cases` / `get_case` / `get_run` / `list_runs` / `trend_series` 在返回前统一通过 `format_utc_iso` 序列化 `created_at` / `updated_at` / `started_at` / `ingested_at`（`trend_series.time` 同样用 `format_utc_iso`）。
    - 非 DB 运行时时间戳（`interaction_policy.py:71` `deadline_at`、`topic_task_store.py:1836,1869,1940,1972` `decided_at`/`answered_at`、`mcp_admin_service.py:215` `checked_at`、`stream_events.py:27` `ts`、`topic_files.py:44` `modified_at`）统一改用 `format_utc_iso(utc_now())` / `format_utc_iso(datetime.fromtimestamp(ts, UTC))`，消除 `+00:00` 与 `Z` 混用。
-2. **向前端暴露业务时区**（不新增路由）：
-   - `GET /api/v1/nl2sql/auth/config` 返回新增字段 `"timezone": get_settings().dataagent_timezone`（例如 `"Asia/Shanghai"`）。主应用启动时已在 `useAuthStore.bootstrap()` 调用该接口，零额外请求；Widget 在挂载时异步拉取一次 `/auth/config`（未鉴权接口，同时支持宿主页 `data-timezone` 覆盖，加载前默认 `Asia/Shanghai`）。
+2. **向前端暴露业务时区**（不新增路由）：`GET /api/v1/nl2sql/auth/config` 返回新增字段 `"timezone"`，主应用 `useAuthStore.bootstrap()` 已调用该接口，零额外请求；只有反馈页使用它。Widget 与 SDK 不需要。
 3. **定时任务默认时区**：
-   - `models/schemas.py` `MessageScheduleUpsertRequest.timezone` 改为 `Optional[str] = None`；`api/routes.py`、`task_submission_service.py`、`task_coordinator.py`、`topic_task_store.py` 缺省回退到 `get_settings().dataagent_timezone`。
+   - `MessageScheduleUpsertRequest.timezone` 改为 `Optional[str] = None`；只在**创建**时把缺省值解析一次为 `get_settings().dataagent_timezone`，并用同一时区计算、保存 `next_run_at`；更新时未传时区则保留已存的值。执行路径已读取保存的时区，不需要再到处读配置。
 
 ### 4.4 日期边界查询与每日经验总结
 
@@ -142,7 +143,7 @@ dataagent_timezone: str = "Asia/Shanghai"
    - `core/experience.py:build_session_records(agent_id, day)` 与 `agents_with_tasks(day)` 改为调用 `start_utc, end_utc = business_day_utc_bounds(day)`，查询 `k.finished_at >= %s AND k.finished_at < %s`。
 2. **管理端时间范围筛选**：
    - `admin_list_topics`（`core/topic_task_store.py:724-731`）和 `list_message_feedback`（`core/topic_task_store.py:1204-1209`）将 `start`/`end` 经 `parse_query_boundary_to_utc` 转换为 naive UTC 再参与 SQL 比较（当 `end` 为纯日期 `YYYY-MM-DD` 时，转为次日 `00:00:00` 业务时区对应的 UTC 并使用 `<`，彻底避免 `23:59:59` 漏掉最后一秒的小数精度问题；当 `end` 含具体时分秒时沿用 `<=`）。
-   - `FeedbackView.vue:117-118` 直接传 `params.start = filters.range[0]`、`params.end = filters.range[1]`（`YYYY-MM-DD`），不再前端硬拼 `00:00:00` / `23:59:59`。
+   - `FeedbackView.vue:117-118` 直接传 `params.start = filters.range[0]`、`params.end = filters.range[1]`（`YYYY-MM-DD`），不再前端硬拼 `00:00:00` / `23:59:59`。换算留在后端（Codex 评审：若由各浏览器按本地午夜换算，不同时区的管理员对同一天会得到不同的统计）。
 
 ### 4.5 沙箱与系统提示词
 
@@ -155,25 +156,18 @@ dataagent_timezone: str = "Asia/Shanghai"
 
 ### 4.6 统一前端格式化模块
 
-1. **主应用与 Widget**：新建 `dataagent-frontend/src/utils/time.js`，基于浏览器原生 `Intl.DateTimeFormat`（不引入 `dayjs` timezone 插件，零额外包体积）：
-   - `setDisplayTimezone(tz)` / `getDisplayTimezone()`（默认 `'Asia/Shanghai'`，由 `authStore.bootstrap()` 与 `WidgetChat` 挂载时注入）。
-   - `parseTimestamp(val) -> Date | null`（接受 ISO `Z` / 带偏移 / `Date` / 毫秒时间戳）。
-   - `formatDateTime(val, fallback = '—')` → `YYYY-MM-DD HH:mm:ss`（业务时区）。
-   - `formatDate(val, fallback = '—')` → `MM-DD` 或 `YYYY-MM-DD`（业务时区，替代 `KnowledgeMemoryView.vue:78` 的字符串切片）。
-   - `formatShortDateTime(val, fallback = '—')` → `MM-DD HH:mm`（替代 `EvaluationResultsView.vue:272`）。
-   - `formatClockTime(val)` → `HH:mm`（替代 `WidgetChat.vue:632`）。
-   - `formatRelativeTime(val)` → 统一替代 `NL2SqlChatV2.vue:536` 与 `WidgetChat.vue:577`：用业务时区提取 `YYYY-MM-DD` 计算自然日差；当 `diffMs <= 0`（客户端时钟微偏）直接返回 `'刚刚'`，根治「-1天前」。
-   - `topicHelpers.js:41` `compareTopicsByRecency` 改为比较 `Date.parse(b) - Date.parse(a)`（规避 `2026-11-26T09:00:00Z` 与 `2026-11-26T09:00:00.123Z` 在 ASCII 字典序中 `'.' < 'Z'` 导致的倒序问题）。
-   - 全量替换 11 处散落格式化调用：`ExperienceDrawer.vue`、`UsersView.vue`、`FeedbackView.vue`、`KnowledgeMemoryView.vue`、`McpTokensView.vue`、`SkillDetailView.vue`、`EvaluationSetsView.vue`、`EvaluationSetDetailView.vue`、`EvaluationResultsView.vue`、`EvaluationRunDetailView.vue`、`NL2SqlChatV2.vue`、`WidgetChat.vue`。
-2. **独立 SDK（`packages/agent-conversation`）**：
-   - 该包零运行时依赖，在包内新增轻量的 `src/utils/time.js`（同样使用 `Intl.DateTimeFormat`）。
-   - `MessageActions.vue:83-89` 改为用 `formatClockTime(createdAt, timezone)`，通过组件/配置透传 `timezone`（默认 `'Asia/Shanghai'`），不再使用浏览器本地 `at.getHours()`。
-   - `useDeadline.js:19` 使用 `Date.parse(deadlineAt)`，后端统一输出 `Z` 后保持精确无偏差。
+1. **主应用与 Widget**：新建 `dataagent-frontend/src/utils/time.js`（浏览器原生 `Intl.DateTimeFormat`，不引入 dayjs 时区插件）：
+   - `parseTimestamp(val) -> Date | null`（接受带 `Z` / 偏移的 ISO、`Date`、毫秒时间戳）；
+   - `formatDateTime(val, { timeZone } = {})`、`formatDate`、`formatShortDateTime`、`formatClockTime`：默认按浏览器本地时区；只有反馈页传入 `authStore` 中的业务时区；
+   - `formatRelativeTime(val)`：按自然日差计算（不用“经过的小时数 / 24”，避免跨日不足 24 小时显示“0天前”）；未来时间（时钟微偏）返回“刚刚”，根治「-1天前」。
+   - `topicHelpers.js` `compareTopicsByRecency` 改为 `Date.parse` 数值比较。
+   - 替换散落的格式化：`ExperienceDrawer.vue`、`UsersView.vue`、`FeedbackView.vue`、`KnowledgeMemoryView.vue`、`McpTokensView.vue`、`SkillDetailView.vue`、`Evaluation*.vue`、`NL2SqlChatV2.vue`、`WidgetChat.vue`。
+2. **SDK（`packages/agent-conversation`）**：不加时区参数。`MessageActions.vue` 已按浏览器本地时间显示，后端改为带 `Z` 后解析正确，无需改动；`useDeadline.js` 同理。
 
-### 4.7 评测工具（`tools/dataagent-evals`）
+### 4.7 评测
 
-- `builtin/run.py:849`、`deepeval/run.py:787`、`opik/run.py:873`：将硬编码 `dt.timezone(dt.timedelta(hours=8))` 替换为 `ZoneInfo(str(expected_time.get("timezone") or os.environ.get("DATAAGENT_TIMEZONE") or "Asia/Shanghai"))`。
-- `deepeval/run.py` 与 `opik/run.py` 上报/保存摘要时同步输出 UTC `started_at`（与 `builtin/run.py:2793` 一致，统一用 `YYYY-MM-DDTHH:MM:SSZ`）。
+- 评测数据写入改为 UTC 并经统一序列化输出 `Z`（随 4.2/4.3）。
+- 不修正评测表的历史混合时间，也不改三个评测脚本写死的 +8；二者记入 `docs/TODO.md`（2026-11-26 删减）。
 
 ## 5. 历史数据迁移设计
 
@@ -181,24 +175,9 @@ dataagent_timezone: str = "Asia/Shanghai"
 
 ### 5.1 识别生产 DB 原时区（兼容两种情况）
 
-生产 DB 的 `@@global.time_zone` 目前未知，迁移必须同时覆盖两种情况：
+迁移读取数据库全局时区相对 UTC 的偏移（临时 `SET SESSION time_zone = @@global.time_zone`，执行 `SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())`，再切回 `+00:00`）。不提供手动覆盖开关。
 
-```python
-def _detect_legacy_offset_seconds(bind) -> int:
-    # 仅用于特殊恢复场景（例如把 +8 库 dump 导入到 UTC 库后再迁移）
-    override = os.environ.get("DATAAGENT_LEGACY_DB_TZ_OFFSET_SECONDS", "").strip()
-    if override:
-        return int(override)
-    # 临时切回数据库全局时区，读取原 MySQL 时钟与 UTC 的真实偏移（支持 'SYSTEM' 与 '+08:00'）
-    bind.exec_driver_sql("SET SESSION time_zone = @@global.time_zone")
-    try:
-        raw = bind.exec_driver_sql(
-            "SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())"
-        ).scalar()
-    finally:
-        bind.exec_driver_sql("SET SESSION time_zone = '+00:00'")
-    return int(raw or 0)
-```
+**前提（上线检查）**：历史数据必须一直由当前这个时区的数据库写入。若库曾从其他时区的实例导入（例如 +8 的 dump 恢复到 UTC 实例），检测到的偏移与历史数据不符，此时停止上线、人工处理，不运行迁移。
 
 - **情况 A：生产 DB 本身就是 UTC（`offset == 0`）**：记录日志后直接返回，**零数据改动**。
 - **情况 B：生产 DB 为非 UTC（如本地与常见国内部署的 `CST +08:00`，`offset == 28800`）**：对下方“路径 A 列清单”执行 `DATE_SUB(col, INTERVAL :offset SECOND)`。
@@ -212,24 +191,22 @@ def _detect_legacy_offset_seconds(bind) -> int:
 | **C. `TIMESTAMP` 类型（不动）** | `da_agent_session_checkpoint(updated_at)` | **不修改** | MySQL 内部存 UTC 纪元秒，会话切到 `+00:00` 后自动读出 UTC |
 | **D. 容器/混合列（特殊处理）** | `da_agent_sdk_record(occurred_at)`、`da_agent_widget_event(client_ts)`、`da_model_provider(validated_at)`、`eval_dataset(updated_at)`、`eval_run(started_at)` | 见下方逐项规则 | 容器内原本即 UTC，或在同列存在混合写入 |
 
-D 类 5 列的处理规则（简单明确）：
+D 类列的处理规则（简单明确；评测两列不做启发式修正）：
 1. `da_agent_widget_event.client_ts` 与 `da_model_provider.validated_at`：生产容器默认 UTC，已是 UTC，**不修改**（`UPDATE` 同表其他列时不得触碰它们）。
 2. `da_agent_sdk_record.occurred_at`：由 Pi `new Date().toISOString()` 写入 UTC，**不修改**（注：本地旧库发现极早期 2026-11-03..05 的 1445 条记录 `occurred_at == created_at`，该列仅作审计信封、不参与界面展示与排序，不做猜测式改写）。
-3. `eval_dataset.updated_at`：插入为 UTC、更新走 `ON UPDATE CURRENT_TIMESTAMP`（DB 时区）。仅当 `TIMESTAMPDIFF(SECOND, created_at, updated_at) >= offset - 60`（明确发生过 DB 时区自动更新）时减 `offset`，否则保持 `updated_at = updated_at`。
-4. `eval_run.started_at`：`builtin` 写入 UTC，`run_label` 回退可能为本地时区。仅当 `started_at > DATE_ADD(ingested_at, INTERVAL 60 SECOND)`（开始时间不可能晚于入库时间）时减 `offset`。
+3. `eval_dataset.updated_at`、`eval_run.started_at`：**不修改**（历史值混合，无法可靠判断；记入 TODO）。更新 `eval_dataset` 其他列时显式写 `updated_at = updated_at`。
 
 ### 5.3 安全细节、幂等性与回退
 
 - **防 `ON UPDATE CURRENT_TIMESTAMP` 误覆盖**：所有含 `updated_at ... ON UPDATE CURRENT_TIMESTAMP` 的表，在 `UPDATE` 中**必须显式赋值 `updated_at`**（要么一起减 `offset`，要么写 `updated_at = updated_at`），防止 MySQL 自动将 `updated_at` 覆写为迁移时刻的 `NOW()`。
 - **大表分批更新**：`da_agent_sdk_record` 按自增主键 `id` 每批 5,000 行在 `autocommit_block()` 中分批提交（沿用 `20261113_000034` 模式），避免大事务与长锁。
-- **幂等性**：由 Alembic `alembic_version` 保证只执行一次；重复运行 `alembic upgrade head` 为空操作。
-- **Downgrade 与回退边界**：
-  - `downgrade()` 读取相同的 `_detect_legacy_offset_seconds(bind)`：若 `offset == 0` 直接返回；否则对 A 类列执行 `DATE_ADD(col, INTERVAL %s SECOND)`。
-  - **关键限制**：一旦新版本对外产生新数据（已按 UTC 写入），直接执行 `alembic downgrade` 会把新写入的 UTC 行也加上 `offset`（偏移 +8 小时）。因此**生产发布前必须执行 `scripts/backup-db.sh` 全量备份**；若上线后已有新流量且需回退，以恢复备份为准，`alembic downgrade` 仅用于未放流量时的即时回退及测试验证。
+- **重跑与回退**：`da_agent_sdk_record` 分批提交，若迁移中途失败，已提交的批次已减过偏移，直接重跑会重复减。因此失败后必须先恢复备份再重跑。回退同样只走备份恢复：`downgrade()` 直接报错提示“恢复升级前备份并使用对应版本应用”（沿用 `20261027_000030` 的做法），不写反向 SQL。**生产发布前必须执行 `scripts/backup-db.sh` 全量备份。**
 
 ## 6. 已接受的取舍
 
 1. **不做用户级时区**：单配置 `DATAAGENT_TIMEZONE` 覆盖整个部署，减少前后端与定时任务的复杂度。
 2. **无过渡期 / 无双字段**：API 一次性切换为带 `Z` 的 UTC，前后端同版本一起升级（Compose 同步更新 backend 与 frontend 镜像）。
 3. **系统提示词只注日期不注时分秒**：保证 prompt prefix cache 命中率；需要具体时刻时沙箱 `date` 命令已带正确 `TZ`。
-4. **D 类极少量历史脏数据不做复杂启发式**：`da_agent_sdk_record.occurred_at` 早期记录及非容器环境写入的 `client_ts`/`validated_at` 不做不可靠猜测，保持迁移逻辑简洁可审计。
+4. **D 类极少量历史脏数据不做复杂启发式**：`da_agent_sdk_record.occurred_at` 早期记录、非容器环境写入的 `client_ts`/`validated_at`、评测表历史时间都不做不可靠猜测，保持迁移逻辑简洁可审计。
+5. **前端默认按浏览器本地时区显示**（反馈页除外）：外地用户看到的是当地时间。
+6. **回退只走备份恢复**：不写反向迁移，换取迁移逻辑简单可靠。
