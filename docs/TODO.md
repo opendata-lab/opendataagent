@@ -219,7 +219,7 @@
 
 ## 已完成
 
-- **写操作审批体验（等待审批显示失败、重复行，会话授权与拒绝说明）**（2026-11-26）：拦截待审批工具时标记 `awaiting_approval: true` 且 `is_error: false`，恢复执行复用原 `tool_call_id` 合并为同一行（等待确认 → 正在执行 → 已执行 / 执行失败 / 已拒绝 / 未执行）；卡片标题改为“{名} 需要你确认”，保留“工具：中文名（真实名）”，非破坏性工具支持“本会话内允许此工具”（持久化至 `da_agent_topic.approved_tools_json`，破坏性工具忽略 `remember`），拒绝时支持填写可选说明。主应用、Widget、SDK 同步生效。[设计](design/2026-11-26-approval-ux-design.md) · [计划](plans/2026-11-26-approval-ux-plan.md)
+- **写操作审批体验（等待审批显示失败、重复行，会话授权与拒绝说明）**（2026-11-26，[#87](https://github.com/opendata-lab/opendataagent/pull/87)）：拦截待审批工具时标记 `awaiting_approval: true` 且 `is_error: false`，恢复执行复用原 `tool_call_id` 合并为同一行（等待确认 → 正在执行 → 已执行 / 执行失败 / 已拒绝 / 未执行）；卡片标题改为“{名} 需要你确认”，保留“工具：中文名（真实名）”，非破坏性工具支持“本会话内允许此工具”（持久化至 `da_agent_topic.approved_tools_json`，破坏性工具忽略 `remember`），拒绝时支持填写可选说明。主应用、Widget、SDK 同步生效。[设计](design/2026-11-26-approval-ux-design.md) · [计划](plans/2026-11-26-approval-ux-plan.md)
 
 - **MCP 会话文件在浏览器中下载**（2026-11-22，用户报告点击文件链接后返回 401）：下载使用同一 DataAgent 地址的登录会话或 MCP 令牌，并校验会话归属。本地 Chromium 已验证普通用户点击真实附件下载。[实现与回归](plans/2026-11-19-remote-assistant-plan.md#浏览器下载-mcp-会话文件2026-11-22)
 
