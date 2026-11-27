@@ -598,6 +598,7 @@ class TopicMessage(BaseModel):
     error: Optional[Dict[str, Any]] = None
     created_at: str = ""
     updated_at: str = ""
+    finished_at: Optional[str] = None
 
 
 class TopicSummary(BaseModel):
@@ -796,6 +797,7 @@ class CancelTaskResponse(BaseModel):
     task_id: str
     task_status: str
     cancel_requested_at: Optional[str] = None
+    finished_at: Optional[str] = None
 
 
 class MessageQueueRecord(BaseModel):

@@ -1017,18 +1017,26 @@ describe('WidgetChat history conversations', () => {
     }))
   })
 
-  it('renders sdk text deltas in the web-style assistant body', async () => {
+  it('shows the answer finish time after streaming and after history reloads', async () => {
+    const createdAt = '2026-11-27T09:00:00'
+    const finishedAt = '2026-11-27T09:05:00'
+    let finishStream
+    let releaseHistory
+    const historyReady = new Promise((resolve) => { releaseHistory = resolve })
     apiMocks.topicApi.getTopicMessages.mockImplementation(async (topicId) => {
       if (topicId === 'topic-new') {
+        await historyReady
         return {
           topic_id: topicId,
-          total: 1,
-          items: [{
+          total: 2,
+          items: [{ message_id: 'msg-user', sender_type: 'user', content: '你好', created_at: createdAt, seq_id: 1 }, {
             message_id: 'msg-topic-new',
             sender_type: 'assistant',
             status: 'success',
             blocks: [{ type: 'main_text', text: 'smoke-ok' }],
-            seq_id: 1
+            created_at: createdAt,
+            finished_at: finishedAt,
+            seq_id: 2
           }]
         }
       }
@@ -1040,8 +1048,10 @@ describe('WidgetChat history conversations', () => {
       options.onRecord({ record_type: 'stream', data: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'smoke-' } } })
       options.onRecord({ record_type: 'stream', data: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } } })
       options.onRecord({ record_type: 'stream', data: { type: 'content_block_stop', index: 0 } })
+      await new Promise((resolve) => { finishStream = resolve })
       options.onRecord({ record_type: 'done', data: {} })
     })
+    apiMocks.taskApi.getTask.mockResolvedValue({ task_status: 'finished', finished_at: finishedAt })
     const { wrapper } = mountChat({ config: { displayMode: 'inline' } })
     await flushPromises()
 
@@ -1049,10 +1059,25 @@ describe('WidgetChat history conversations', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
+    const userTime = '.query-message-user .query-message-time'
+    const answerTime = '.query-message-assistant .query-message-time'
+    const liveUserTime = wrapper.get(userTime).text()
+    expect(wrapper.find(answerTime).exists()).toBe(false)
     expect(wrapper.findAll('.query-main-text').some((item) => item.text().includes('smoke-ok'))).toBe(true)
     expect(apiMocks.taskApi.deliverMessage).toHaveBeenCalledWith(expect.objectContaining({
       agent_id: 'agent_widget'
     }))
+
+    finishStream()
+    await flushPromises()
+    expect(wrapper.get(answerTime).text()).toBe('09:05')
+    expect(wrapper.get(userTime).text()).toBe(liveUserTime)
+
+    releaseHistory()
+    await flushPromises()
+    expect(wrapper.get(answerTime).text()).toBe('09:05')
+    expect(wrapper.get(userTime).text()).toBe('09:00')
+    wrapper.unmount()
   })
 
   it.each(['inline', 'floating'])('renders and answers AskUserQuestion in %s mode, with retry on failure', async (displayMode) => {

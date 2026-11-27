@@ -149,8 +149,10 @@ describe('status translation', () => {
 
 describe('the event stream', () => {
   it('synthesises a terminal item once the task is genuinely done', async () => {
+    const finishedAt = '2026-11-27T09:05:00Z'
     const api = makeApi({
       taskApi: {
+        getTask: async () => ({ task_id: 't-1', task_status: 'finished', finished_at: finishedAt }),
         streamSdkEvents: async (_taskId, { onRecord }) => {
           onRecord({ seq_id: 1, kind: 'text' })
           onRecord({ seq_id: 2, kind: 'text' })
@@ -163,7 +165,7 @@ describe('the event stream', () => {
     )
 
     expect(items.map((i) => i.type)).toEqual(['event', 'event', 'terminal'])
-    expect(items[2].run.status).toBe('finished')
+    expect(items[2].run).toMatchObject({ status: 'finished', finishedAt })
   })
 
   it('treats an early upstream EOF as an interruption, not a completion', async () => {
@@ -266,6 +268,8 @@ describe('it talks to the client that actually exists', () => {
             status: 'failed',
             error: { message: '模型调用超时' },
             feedback: 'like',
+            created_at: '2026-11-27T09:00:00Z',
+            finished_at: '2026-11-27T09:05:00Z',
             resume_after_seq: 12,
             task_id: 'task-1',
             attachments: [{ name: '明细.csv', rel_path: 'output/rows.csv', size: 2048 }],
@@ -280,6 +284,8 @@ describe('it talks to the client that actually exists', () => {
     expect(messages[0]).toMatchObject({
       status: 'failed',
       feedback: 'like',
+      createdAt: '2026-11-27T09:00:00Z',
+      finishedAt: '2026-11-27T09:05:00Z',
       resumeAfterSeq: 12,
     })
     expect(messages[0].error).toEqual({ message: '模型调用超时' })

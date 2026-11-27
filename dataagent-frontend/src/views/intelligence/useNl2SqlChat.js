@@ -117,7 +117,6 @@ export function useNl2SqlChat(options) {
       resume_after_seq: 0,
       error: null,
       attachments: [],
-      created_at: new Date().toISOString(),
       _v2state: reactive(createChatState()),
     })
     messages.value.push(assistant)
@@ -261,15 +260,18 @@ export function useNl2SqlChat(options) {
       })
       // A hard backend failure can end the stream without a terminal done/error
       // record, leaving _v2state on 'streaming'. Reconcile against the task status.
-      if (assistant._v2state.status !== 'error' && !controller?.signal?.aborted && runId === runToken) {
+      if (!controller?.signal?.aborted && runId === runToken) {
         try {
           const taskState = await api.taskApi.getTask(taskId)
-          if (String(taskState?.task_status || '') === 'error') {
-            assistant._v2state.status = 'error'
-            assistant._v2state.errorText = extractErrorText(taskState?.error) || '会话执行失败'
-            assistant.error = { message: assistant._v2state.errorText }
-          } else if (assistant._v2state.status !== 'done') {
-            assistant._v2state.status = 'done'
+          if (taskState?.finished_at) assistant.finished_at = taskState.finished_at
+          if (assistant._v2state.status !== 'error') {
+            if (String(taskState?.task_status || '') === 'error') {
+              assistant._v2state.status = 'error'
+              assistant._v2state.errorText = extractErrorText(taskState?.error) || '会话执行失败'
+              assistant.error = { message: assistant._v2state.errorText }
+            } else if (assistant._v2state.status !== 'done') {
+              assistant._v2state.status = 'done'
+            }
           }
         } catch { /* keep current state if status lookup fails */ }
       }
@@ -470,7 +472,7 @@ export function useNl2SqlChat(options) {
     const assistantId = activeAssistantId.value
     runToken += 1
     abortController.value?.abort()
-    await api.taskApi.cancelTask(taskId)
+    const task = await api.taskApi.cancelTask(taskId)
     activeTaskId.value = ''
     activeAssistantId.value = ''
     isSubmitting.value = false
@@ -479,6 +481,7 @@ export function useNl2SqlChat(options) {
     const assistant = messages.value.find((m) => m.id === assistantId)
     if (assistant) {
       assistant.status = 'cancelled'
+      if (task?.finished_at) assistant.finished_at = task.finished_at
       assistant.error = assistant.error || { message: '任务已取消' }
     }
   }

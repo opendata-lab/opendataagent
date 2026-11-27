@@ -83,6 +83,7 @@ export function createHttpTransport(endpointOrOptions, maybeOptions = {}) {
       taskId: String(raw.task_id || raw.taskId || ''),
       status: String(raw.status || 'idle'),
       detail: String(raw.detail || ''),
+      finishedAt: String(raw.finishedAt || raw.finished_at || '') || undefined,
       metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : undefined
     }
   }

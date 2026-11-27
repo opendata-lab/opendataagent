@@ -230,7 +230,7 @@
                   </a>
                 </div>
                 <div class="query-message-footer query-message-footer-assistant">
-                  <span v-if="msg.created_at" class="query-message-time">{{ formatMessageTime(msg.created_at) }}</span>
+                  <span v-if="msg.finished_at || msg.created_at" class="query-message-time">{{ formatMessageTime(msg.finished_at || msg.created_at) }}</span>
                   <button
                     type="button"
                     class="query-message-tool query-message-copy"
@@ -927,6 +927,7 @@ const runMockSend = async (text) => {
       triggerRef(messages)
 
       assistant.status = 'success'
+      assistant.finished_at = new Date().toISOString()
       emit('event', { name: 'message', payload: { id: assistant.id, content: replyText } })
     } catch (e) {
       console.error(e)

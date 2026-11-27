@@ -129,10 +129,11 @@ export function useConversation({ transport, generation, emit, settings }) {
    * rating, on an answer that is finished — so "the run ended" and "the turn
    * ended" must not be two separate things a caller can forget to do.
    */
-  const closeTurn = (taskId, status, detail) => {
+  const closeTurn = (taskId, status, detail, finishedAt) => {
     const assistant = assistantFor(taskId)
     if (!assistant) return
     assistant.status = status
+    if (finishedAt) assistant.finishedAt = finishedAt
     if (status === 'failed') {
       assistant._v2state.status = 'error'
       assistant._v2state.errorText = detail || '会话执行失败'
@@ -274,7 +275,7 @@ export function useConversation({ transport, generation, emit, settings }) {
           continue
         }
         flushEvents()
-        closeTurn(taskId, item.run.status, item.run.detail)
+        closeTurn(taskId, item.run.status, item.run.detail, item.run.finishedAt)
         setRun({ ...item.run, metadata: item.run.metadata || runMetadata.get(item.run.taskId) })
         await refreshMessages(at)
         return
@@ -419,7 +420,7 @@ export function useConversation({ transport, generation, emit, settings }) {
       // The turn has to end with the run. Cancelling only the run leaves the
       // open assistant streaming forever: a blinking cursor and "正在处理" on an
       // answer that was stopped, and no copy or rating on what it did produce.
-      closeTurn(taskId, next.status, next.detail)
+      closeTurn(taskId, next.status, next.detail, next.finishedAt)
       setRun(next)
     } catch (error) {
       if (!stale(at)) fail(error)

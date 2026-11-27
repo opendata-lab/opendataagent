@@ -42,6 +42,10 @@ that calls `preventDefault()` shows it itself, otherwise the card expands in pla
 }
 ```
 
+For an assistant message, forward DataAgent's `finished_at` as `finishedAt`.
+The SDK uses it for the message timestamp and falls back to `createdAt` when
+the finish time is unavailable. User timestamps come from `createdAt`.
+
 A host that cannot start a run yet, for example because it is still
 processing the previous run's result, should answer `POST {endpoint}/messages`
 with HTTP 409. The message queue treats 409 as "busy" and retries for about 20
@@ -68,7 +72,7 @@ data: {"seq_id":12, ...}
 : ping
 
 event: done
-data: {"task_id":"t-1","status":"finished","detail":"","metadata":{"mode":"model"}}
+data: {"task_id":"t-1","status":"finished","detail":"","finished_at":"2026-11-27T09:05:00Z","metadata":{"mode":"model"}}
 ```
 
 - `agent-event` — one runtime event. `seq_id` drives resumption via `after_id`.
@@ -82,6 +86,8 @@ data: {"task_id":"t-1","status":"finished","detail":"","metadata":{"mode":"model
 Send `done` **after** any server-side work that the host will observe. If
 finishing a run also produces data the page will reload, commit that first;
 otherwise the client refreshes before your write lands.
+Include the task's `finished_at` in `done` so the timestamp appears on the
+live turn. Custom transports return it as `run.finishedAt`.
 
 ## Run status
 

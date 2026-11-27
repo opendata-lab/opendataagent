@@ -324,6 +324,7 @@ export function normalizeConversationMessage(item) {
   // snapshots, so Vue need not proxy every nested tool payload on first render.
   return shallowReactive({
     ...base,
+    finishedAt: String(item?.finishedAt || item?.finished_at || '') || undefined,
     status: String(item?.status || 'success'),
     error: item?.error || null,
     renderVersion: 0,
@@ -357,6 +358,7 @@ export function hydrateMessageFromApi(item) {
     feedback: String(item?.feedback || ''),
     attachments: Array.isArray(item?.attachments) ? item.attachments : [],
     created_at: item?.created_at || '',
+    finished_at: item?.finished_at || '',
     _v2state: reactive(buildV2StateFromStoredRecords(item)),
   })
 }

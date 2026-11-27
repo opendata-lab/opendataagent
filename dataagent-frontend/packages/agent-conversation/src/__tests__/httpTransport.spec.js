@@ -197,12 +197,13 @@ describe('event stream', () => {
       'event: agent-event\ndata: {"seq_id":1,"kind":"text"}\n\n',
       ': ping\n\n',
       'event: agent-event\ndata: {"seq_id":2,"kind":"text"}\n\n',
-      'event: done\ndata: {"task_id":"t-1","status":"finished","detail":"","metadata":{"mode":"model"}}\n\n'
+      'event: done\ndata: {"task_id":"t-1","status":"finished","detail":"","finished_at":"2026-11-27T09:05:00Z","metadata":{"mode":"model"}}\n\n'
     ]))
 
     const items = await drain(transport().streamEvents({ afterId: 0 }))
 
     expect(items.map((i) => i.type)).toEqual(['event', 'event', 'terminal'])
+    expect(items[2].run.finishedAt).toBe('2026-11-27T09:05:00Z')
     expect(items[0].seqId).toBe(1)
     expect(items[2].run).toMatchObject({ taskId: 't-1', status: 'finished', metadata: { mode: 'model' } })
   })
