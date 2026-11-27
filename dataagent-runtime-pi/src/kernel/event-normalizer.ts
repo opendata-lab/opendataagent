@@ -13,7 +13,7 @@
  */
 
 import type { AgentEvent as PiAgentEvent } from "@earendil-works/pi-agent-core";
-import type { NeutralAgentEvent } from "../protocol/frames.js";
+import type { NeutralAgentEvent, ToolStartedPayload } from "../protocol/frames.js";
 import type { RunStateMachine } from "./run-state-machine.js";
 import type { UiToolResult } from "./ui-tool-result-registry.js";
 import { redact } from "../observability/redaction.js";
@@ -61,7 +61,8 @@ export class EventNormalizer {
     private readonly uiResults?: {
       take(toolCallId: string): UiToolResult | null;
     },
-    turnOffset = 0
+    turnOffset = 0,
+    private readonly toolTitles?: ReadonlyMap<string, string>
   ) {
     this.turnCounter = turnOffset;
     this.currentTurnId = `turn-${turnOffset}`;
@@ -69,6 +70,18 @@ export class EventNormalizer {
 
   public get turnId(): string {
     return this.currentTurnId;
+  }
+
+  public toolStarted(toolCallId: string, toolName: string, input: unknown): NeutralAgentEvent | null {
+    const toolTitle = this.toolTitles?.get(toolName);
+    const payload: ToolStartedPayload = {
+      turn_id: this.currentTurnId,
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      ...(toolTitle ? { tool_title: toolTitle } : {}),
+      input,
+    };
+    return this.sm.createEvent("tool.started", payload);
   }
 
   /**
@@ -160,12 +173,7 @@ export class EventNormalizer {
       case "tool_execution_start": {
         this.turnHasTools = true;
         events.push(
-          this.sm.createEvent("tool.started", {
-            turn_id: this.currentTurnId,
-            tool_call_id: piEvent.toolCallId,
-            tool_name: piEvent.toolName,
-            input: redact(piEvent.args ?? {}),
-          })
+          this.toolStarted(piEvent.toolCallId, piEvent.toolName, redact(piEvent.args ?? {}))
         );
         break;
       }

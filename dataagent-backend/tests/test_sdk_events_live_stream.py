@@ -93,9 +93,12 @@ async def test_live_stream_orders_snapshot_deltas_rows_and_out_of_writer_rows(li
     assert _summary(got) == [("turn.started", 1), ("content.started", 2), ("text", "he")]
 
     writer.ingest(_delta(4, "llo"))
-    writer.ingest(_event(5, "tool.started", {"turn_id": "t", "tool_call_id": "x"}))
+    writer.ingest(_event(5, "tool.started", {
+        "turn_id": "t", "tool_call_id": "x", "tool_name": "get_ontology", "tool_title": "查询本体",
+    }))
     await _settle()
     assert _summary(got)[3:] == [("delta", "llo"), ("tool.started", 3)]
+    assert store.rows[2]["data"]["tool_title"] == got[4]["data"]["tool_title"] == "查询本体"
 
     # A row written outside the writer (e.g. a card) arrives on the next poll.
     store.append_sdk_record(task_id=TASK, topic_id="topic-1", turn_index=1,

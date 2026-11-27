@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Type } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
 import { logDiagnostic } from "../protocol/channel.js";
@@ -19,8 +20,13 @@ export interface McpBridgeResult {
 export interface McpProbeResult {
   toolCount: number;
   toolNames: string[];
+  toolTitles: Record<string, string>;
   latencyMs: number;
   toolAnnotations: Record<string, Record<string, unknown>>;
+}
+
+function mcpToolTitle(tool: Tool): string | undefined {
+  return tool.title || tool.annotations?.title;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -97,6 +103,7 @@ export async function probeMcpServer(
     return {
       toolCount: toolNames.length,
       toolAnnotations: Object.fromEntries(toolsList.tools.map(tool => [tool.name, tool.annotations ?? {}])),
+      toolTitles: Object.fromEntries(toolsList.tools.map(tool => [tool.name, mcpToolTitle(tool) || tool.name])),
       toolNames,
       latencyMs: Math.max(0, Date.now() - startedAt),
     };
@@ -287,6 +294,7 @@ export async function connectMcpServers(
 
       for (const mcpTool of toolsList.tools) {
         const toolName = mcpTool.name;
+        const title = mcpToolTitle(mcpTool);
         const toolDescription = mcpTool.description || "";
         const inputSchema = (mcpTool.inputSchema as Record<string, unknown>) || Type.Object({});
 
@@ -295,7 +303,8 @@ export async function connectMcpServers(
           mcpServerName: server.name,
           mcpServerIdentity: createHash("sha256").update(JSON.stringify(server)).digest("hex"),
           mcpAnnotations: mcpTool.annotations ?? {},
-          label: toolName,
+          label: title || toolName,
+          mcpTitle: title,
           description: toolDescription,
           parameters: inputSchema,
           prepareArguments: (args: unknown) => prepareArguments(args, inputSchema, toolName),

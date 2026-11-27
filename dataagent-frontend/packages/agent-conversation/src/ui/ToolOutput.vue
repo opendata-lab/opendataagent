@@ -257,8 +257,10 @@ const toolOutput = computed(() => props.tool?.output)
 const outputPayload = computed(() => normalizeOutput(toolOutput.value) || {})
 const kind = computed(() => String(outputPayload.value.kind || 'raw'))
 const toolName = computed(() => String(props.tool?.name || '').trim())
+const toolTitle = computed(() => props.tool?.tool_title)
 const toolAction = computed(() => describeToolAction({
   name: toolName.value,
+  tool_title: toolTitle.value,
   input: toolInput.value
 }))
 const bootstrapSkillName = computed(() => String(props.tool?._skillBootstrapName || '').trim())
@@ -297,6 +299,7 @@ const durationText = computed(() => {
 })
 
 const displayLabel = computed(() => {
+  if (toolAction.value.title) return toolAction.value.label
   if (outputPayload.value.tool_label) return String(outputPayload.value.tool_label)
 
   const map = {
@@ -397,8 +400,10 @@ const traceSummaryText = computed(() => {
     return detail ? `执行技能：${detail}` : '正在准备技能上下文'
   }
   if (traceKind.value === 'tool') {
-    return toolAction.value.description
-      ? `执行工具：${toolAction.value.description}`
+    const { title, description } = toolAction.value
+    if (title) return description ? `${title}：${description}` : title
+    return description
+      ? `执行工具：${description}`
       : (displayLabel.value || (detail ? `执行工具：${detail}` : '执行工具'))
   }
 

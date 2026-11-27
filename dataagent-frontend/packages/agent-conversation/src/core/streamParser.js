@@ -271,6 +271,7 @@ export function blockToToolProp(block) {
   const hasOutput = block.output != null
   return {
     name: block.name,
+    tool_title: block.tool_title,
     input: block.input,
     output: block.output,
     status: hasOutput ? (block.is_error ? 'failed' : 'success') : (block.status === 'done' ? 'pending' : 'streaming'),

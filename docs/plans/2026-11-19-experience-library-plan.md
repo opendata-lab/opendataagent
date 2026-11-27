@@ -11,6 +11,7 @@
 - `ui/ToolOutput.vue`：图标改用 `iconKind`；新增下载、问号、清单三个图标路径；删除“名称含 image → 生成图片”的文字推断；结构化结果不变。
 - 测试：更新 `src/views/intelligence/__tests__/toolPresentation.spec.js`（含 `Tool` 技能回退），新增 `packages/agent-conversation/src/__tests__/toolPresentation.spec.js`，用本地会话记录里的真实名称断言文字与图标：`odw_search_tables`/`search_ontology` → 文字为工具名、放大镜；`odw_query_readonly` → 数据库；`get_ontology`/`odw_get_table_ddl` → 文档；`odw_export_metadata` → 导出；`odw_resolve_datasource` → 扳手；`AskUserQuestion` → 向用户提问；`ExitPlanMode` → 提交计划；`find` → 搜索文件；`bash` → 执行命令。`historyRender.spec.js` 中“输出更新不重新分类”的断言保持通过。
 - 验证：`nvm use`；`npx vitest run --cache=false <touched specs>`；`npm run test:sdk -- --cache=false`；`npm run build`；本地打开一个含 MCP 调用的历史会话目视确认图标。
+- MCP 工具中文名（同一 PR）：Pi 注册 MCP 工具时解析 `title` → `annotations.title` → 工具名，`tool.started` 携带可选 `tool_title`（含审批恢复）；`contracts/agent-events` 与 `sdk-block-projection` 契约、后端历史投影、SDK reducer / `blockToToolProp` / `ToolOutput` / 类型声明同步；验证 Pi MCP 测试、后端事件与投影契约测试、前端全量单测、`build`、`build:widget`、`test:sdk-types`。完整烟测：本地真实模型调用一次带 `title` 的 MCP 工具，核对实时、刷新后的历史与 Widget 显示一致。OntoFoundry 更新内置 SDK 包（SDK 版本 0.3.0 → 0.3.1）。
 - 回退：撤销该 PR。
 
 ## PR 2：只保留知识

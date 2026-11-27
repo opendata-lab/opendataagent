@@ -167,10 +167,8 @@ export const describeToolAction = (tool = {}) => {
     input.note
   )
 
-  // Text follows the tool's real identity: only the runtime's own tools get a
-  // fixed Chinese label; every other tool (MCP, custom) is shown by its name.
-  // MCP tools arrive without an mcp__ prefix, so names are never guessed from
-  // substrings like "search" or "read".
+  // Exact tool names determine built-in behavior. Custom tools can supply
+  // a display title while their names still determine their icons.
   let kind = BUILTIN_KINDS[lowerName] || 'tool'
   if (kind === 'tool' && (lowerName === '' || lowerName === 'tool')) {
     // Older runtimes recorded some calls under a generic "Tool" name; only for
@@ -179,6 +177,7 @@ export const describeToolAction = (tool = {}) => {
     else if (command) kind = 'shell'
   }
   const special = SPECIAL_TOOLS[lowerName]
+  const title = kind === 'tool' && !special ? firstFilled(tool?.tool_title) : ''
   const iconKind = kind !== 'tool' ? kind : (special?.icon || iconKindFromName(name))
 
   // Render MCP tool names (mcp__<server>__<tool>) as "<server> / <tool>"
@@ -193,7 +192,7 @@ export const describeToolAction = (tool = {}) => {
     search: '搜索文件',
     edit: '修改文件',
     skill: '执行技能',
-    tool: special?.label || (displayName ? `执行工具：${displayName}` : '执行工具')
+    tool: special?.label || title || (displayName ? `执行工具：${displayName}` : '执行工具')
   }
 
   let detail = ''
@@ -217,6 +216,7 @@ export const describeToolAction = (tool = {}) => {
     kind,
     iconKind,
     label: labelMap[kind],
+    title,
     detail,
     preview: detail,
     input,

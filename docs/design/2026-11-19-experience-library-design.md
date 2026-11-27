@@ -68,6 +68,7 @@
   - 内置工具按名称精确匹配（不区分大小写），图标和文字都固定：`bash` → 执行命令，`read` → 读取文件，`write`/`edit` → 修改文件，`ls` → 查看目录，`grep`/`find`/`glob` → 搜索文件，`skill` → 执行技能；`AskUserQuestion` → 向用户提问（新增问号图标），`ExitPlanMode` → 提交计划（新增清单图标）。保留回退：名称为空或为 `Tool`、且带技能名的历史记录识别为技能。
   - 其余工具只按名称里的动作词选**图标**（按单词匹配，名称按 `_`、`-`、驼峰拆词），文字仍是工具名：query/sql → 数据库；search/find/lookup → 放大镜；list → 目录；get/describe/ddl/schema/metadata/read → 文档；export/download → 导出（新增下载图标）；chart/plot/image → 图表；write/update/create/delete → 编辑；都不含 → 扳手。
   - 识别只依据工具名和输入；结构化结果（SQL、图表、Python）展示不变；删除 `ToolOutput.vue` 中“名称含 image 即显示生成图片”的文字推断（图标仍由动作词给出图表）。
+  - **MCP 工具显示中文名**（用户 2026-11-26）：按 MCP 标准，显示名依次取工具的 `title`、`annotations.title`、工具名。Pi 在 `tool.started` 中携带可选的 `tool_title`（普通调用与审批后恢复的调用都带），后端历史投影保留；主应用、Widget 与 SDK 共用 `blockToToolProp` / `ToolOutput`，显示为“标题：说明”（无说明时只显示标题）。图标仍按工具名的动作词选择。OntoFoundry 与 OpenDataWorks 的 MCP 服务为每个工具提供中文 `title`（ontofoundry#115、opendataworks#525）；OntoFoundry 内嵌的对话使用打包的 SDK，需在本项合入后更新其内置包。
   - 图标预览与真实工具名对比：<https://claude.ai/artifact/Fgqi649PBQYv3B7EJYQ7Dt>（私有页面）。
   - 此项是现有缺陷，代码改动单独成 PR，先于知识修订合入。
 

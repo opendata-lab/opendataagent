@@ -18,6 +18,7 @@ function toCanonical(blocks) {
       canonical.push({
         kind: 'tool_use',
         tool_name: block.name ?? null,
+        ...('tool_title' in block ? { tool_title: block.tool_title } : {}),
         input: block.input ?? null,
         output: block.output ?? null,
         is_error: Boolean(block.is_error),

@@ -10,6 +10,10 @@
 
 ## DataAgent 运行时与插件
 
+### MCP 工具标题完整烟测
+
+- 2026-11-26，MCP 工具标题已接入 Pi、事件存储、历史投影和会话组件。本次验证环境无 Docker 和数据库访问，Pi 全量测试中 12 项在修改前后均因启动 Docker 时报 `spawn ELOOP` 失败，另有 5 项 Docker 集成测试跳过。待在可用的 Docker 环境重跑这些测试，并使用真实模型与 MySQL 执行 MCP 调用，核对实时 SSE、审批恢复和重载历史的标题一致。见[实施计划](plans/2026-11-19-experience-library-plan.md#mcp-工具标题)。
+
 ### 独立登录 Widget 的统一账号与续聊
 
 - **现状**（2026-11-24）：DataAgent 仓库侧（计划第 1、2、3、5 步）已在分支 `feat/user-accounts` 完成：新增 `da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant` 及整数 `user_id` 外键迁移 `20261123_000042`（Alembic 只建表并重建 MCP 令牌表；旧数据由手动执行的 `scripts/migrate-accounts.sh` 迁移；迁移只能向前，回退用 `scripts/backup-db.sh` / `scripts/restore-db.sh`），统一 `core/accounts` 模块（移除 `core/auth.py` 与关闭认证/匿名 Widget 旁路），上线用户管理（仅停用不物理删除）、角色管理、个人资料、助手独立授权及服务端受信任代理配置页，并同步更新本地冒烟、评测脚本、部署配置与手册。

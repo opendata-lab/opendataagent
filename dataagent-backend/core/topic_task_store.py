@@ -243,6 +243,9 @@ def _project_sdk_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                     "is_error": False,
                     "_idx": len(current_turn_blocks),
                 }
+                tool_title = data.get("tool_title")
+                if isinstance(tool_title, str) and tool_title:
+                    block["tool_title"] = tool_title
                 current_turn_blocks.append(block)
                 ordered_blocks.append(block)
                 if tool_id:

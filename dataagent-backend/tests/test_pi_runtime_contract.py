@@ -186,7 +186,7 @@ async def test_run_event_payload_is_the_event_itself(tmp_path: Path):
     cell = _stub_cell(
         """
         read()
-        event(1, "tool.started", {"tool_call_id": "t1", "tool_name": "run_sql", "input": {"sql": "select 1"}})
+        event(1, "tool.started", {"tool_call_id": "t1", "tool_name": "run_sql", "tool_title": "查询数据", "input": {"sql": "select 1"}})
         event(2, "tool.completed", {"tool_call_id": "t1", "output": "rows: 1", "is_error": False})
         event(3, "run.completed", {"terminal_status": "success", "answer": "ok"})
         """
@@ -199,6 +199,7 @@ async def test_run_event_payload_is_the_event_itself(tmp_path: Path):
     started = writer.events[0]
     assert started["type"] == "tool.started"
     assert started["payload"]["tool_name"] == "run_sql"
+    assert started["payload"]["tool_title"] == "查询数据"
     assert "event" not in started["payload"]
     completed = writer.events[1]
     assert completed["payload"]["output"] == "rows: 1"
