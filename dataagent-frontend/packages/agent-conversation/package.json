@@ -1,6 +1,6 @@
 {
   "name": "@opendataagent/agent-conversation",
-  "version": "0.3.0",
+  "version": "0.3.3",
   "description": "Embeddable agent conversation element backed by the DataAgent runtime.",
   "license": "GPL-3.0-only",
   "type": "module",
