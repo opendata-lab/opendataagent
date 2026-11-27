@@ -9,10 +9,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-import pymysql
-
 from config import get_settings
 from core.agent_record_compat import normalize_tool_output
+from core.db import connect_mysql
 from core.task_status import to_downstream_status
 from core.agent_profile_service import (
     DEFAULT_AGENT_ID,
@@ -22,20 +21,15 @@ from core.agent_profile_service import (
     normalize_permission_mode,
 )
 from core.permission_gate import normalize_permission_decision
+from core.time_utils import to_rfc3339
 from core.topic_workspace import delete_topic_workspace
 
 logger = logging.getLogger(__name__)
 
 
-def _to_iso(value) -> str:
-    if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds")
-    return str(value) if value is not None else ""
-
-
 def _json_default(value):
     if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds")
+        return to_rfc3339(value)
     return str(value)
 
 
@@ -76,14 +70,12 @@ def _parse_client_ts(value: Any) -> datetime | None:
     text = str(value or "").strip()
     if not text:
         return None
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone().replace(tzinfo=None)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
     return parsed
 
 
@@ -440,27 +432,7 @@ class TopicTaskStore(SessionCheckpointStore):
         self._ready_lock = threading.Lock()
 
     def _connect(self, database: str | None, *, io_timeout_seconds: int | None = None):
-        cfg = get_settings()
-        timeouts = (
-            {
-                "connect_timeout": io_timeout_seconds,
-                "read_timeout": io_timeout_seconds,
-                "write_timeout": io_timeout_seconds,
-            }
-            if io_timeout_seconds
-            else {}
-        )
-        return pymysql.connect(
-            host=cfg.mysql_host,
-            port=cfg.mysql_port,
-            user=cfg.mysql_user,
-            password=cfg.mysql_password,
-            database=database,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            autocommit=False,
-            **timeouts,
-        )
+        return connect_mysql(database=database, io_timeout_seconds=io_timeout_seconds)
 
     def _schema_name(self) -> str:
         cfg = get_settings()
@@ -738,8 +710,8 @@ class TopicTaskStore(SessionCheckpointStore):
         user_id: int | None = None,
         agent_id: str | None = None,
         keyword: str | None = None,
-        start: str | None = None,
-        end: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
@@ -771,14 +743,12 @@ class TopicTaskStore(SessionCheckpointStore):
             filters.append("t.title LIKE %s")
             params.append(f"%{safe_keyword}%")
 
-        safe_start = str(start or "").strip()
-        if safe_start:
+        if start is not None:
             filters.append("t.created_at >= %s")
-            params.append(safe_start)
-        safe_end = str(end or "").strip()
-        if safe_end:
-            filters.append("t.created_at <= %s")
-            params.append(safe_end)
+            params.append(start)
+        if end is not None:
+            filters.append("t.created_at < %s")
+            params.append(end)
 
         where_sql = " AND ".join(filters) if filters else "1 = 1"
         safe_page = max(1, int(page or 1))
@@ -1295,8 +1265,8 @@ class TopicTaskStore(SessionCheckpointStore):
         *,
         agent_id: str | None = None,
         feedback: str | None = None,
-        start: str | None = None,
-        end: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
@@ -1311,13 +1281,12 @@ class TopicTaskStore(SessionCheckpointStore):
         if agent_id:
             where.append("COALESCE(NULLIF(k.agent_id, ''), t.agent_id) = %s")
             params.append(agent_id)
-        # Same string bounds as admin_list_topics: inclusive on both ends.
-        if str(start or "").strip():
+        if start is not None:
             where.append("COALESCE(m.feedback_at, m.updated_at) >= %s")
-            params.append(str(start).strip())
-        if str(end or "").strip():
-            where.append("COALESCE(m.feedback_at, m.updated_at) <= %s")
-            params.append(str(end).strip())
+            params.append(start)
+        if end is not None:
+            where.append("COALESCE(m.feedback_at, m.updated_at) < %s")
+            params.append(end)
         base_where = " AND ".join(where)
         list_where = base_where + (" AND m.feedback = %s" if feedback else "")
         list_params = [*params, *([feedback] if feedback else [])]
@@ -1377,7 +1346,7 @@ class TopicTaskStore(SessionCheckpointStore):
                     "task_id": str(row.get("task_id") or "") or None,
                     "agent_id": str(row.get("agent_id") or ""),
                     "feedback": str(row.get("feedback") or ""),
-                    "feedback_at": _to_iso(row.get("feedback_at")),
+                    "feedback_at": to_rfc3339(row.get("feedback_at")),
                     "question": str(row.get("question") or ""),
                     "answer": str(row.get("answer") or ""),
                     "topic_title": str(row.get("title") or ""),
@@ -1775,12 +1744,11 @@ class TopicTaskStore(SessionCheckpointStore):
             conn.close()
         if not row:
             return None
-        created_at = row.get("created_at")
         return {
             "task_id": str(row.get("task_id") or ""),
             "prompt_sha256": str(row.get("prompt_sha256") or ""),
             "byte_length": int(row.get("byte_length") or 0),
-            "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+            "created_at": to_rfc3339(row.get("created_at")) or None,
             "content": str(row.get("content") or ""),
         }
 
@@ -2649,7 +2617,7 @@ class TopicTaskStore(SessionCheckpointStore):
                 "record_type": str(row.get("record_type") or ""),
                 "event_type": row.get("event_type"),
                 "data": data,
-                "created_at": _to_iso(row["created_at"]) if row.get("created_at") else None,
+                "created_at": to_rfc3339(row["created_at"]) if row.get("created_at") else None,
             })
         return result
 
@@ -3317,8 +3285,8 @@ class TopicTaskStore(SessionCheckpointStore):
             "auth_display_name": resolved_display,
             "message_count": int(row.get("message_count") or 0),
             "last_message_preview": str(row.get("last_message_preview") or ""),
-            "created_at": _to_iso(row.get("created_at")),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
         if include_messages:
             topic["messages"] = self.list_topic_messages(topic["topic_id"])
@@ -3414,8 +3382,8 @@ class TopicTaskStore(SessionCheckpointStore):
             "feedback": str(row.get("feedback") or ""),
             "show_in_ui": bool(row.get("show_in_ui")),
             "error": _safe_json_load(row.get("error_json")),
-            "created_at": _to_iso(row.get("created_at")),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
         if normalized["sender_type"] == "assistant":
             normalized["blocks"] = list(history.get("blocks") or []) if history else []
@@ -3451,13 +3419,13 @@ class TopicTaskStore(SessionCheckpointStore):
             "sql_read_timeout_seconds": int(row.get("sql_read_timeout_seconds") or 0),
             "sql_write_timeout_seconds": int(row.get("sql_write_timeout_seconds") or 0),
             "last_event_seq": int(row.get("last_event_seq") or 0),
-            "cancel_requested_at": _to_iso(row.get("cancel_requested_at")) or None,
-            "started_at": _to_iso(row.get("started_at")) or None,
-            "heartbeat_at": _to_iso(row.get("heartbeat_at")) or None,
-            "finished_at": _to_iso(row.get("finished_at")) or None,
+            "cancel_requested_at": to_rfc3339(row.get("cancel_requested_at")) or None,
+            "started_at": to_rfc3339(row.get("started_at")) or None,
+            "heartbeat_at": to_rfc3339(row.get("heartbeat_at")) or None,
+            "finished_at": to_rfc3339(row.get("finished_at")) or None,
             "error": _safe_json_load(row.get("error_json")),
-            "created_at": _to_iso(row.get("created_at")),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
 
     def _normalize_queue_row(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -3474,8 +3442,8 @@ class TopicTaskStore(SessionCheckpointStore):
             "status": str(row.get("status") or "queued"),
             "last_task_id": str(row.get("last_task_id") or "") or None,
             "error_message": str(row.get("error_message") or "") or None,
-            "created_at": _to_iso(row.get("created_at")),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
 
     def _normalize_schedule_row(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -3493,11 +3461,11 @@ class TopicTaskStore(SessionCheckpointStore):
             "enabled": bool(row.get("enabled")),
             "last_task_id": str(row.get("last_task_id") or "") or None,
             "last_queue_id": str(row.get("last_queue_id") or "") or None,
-            "last_run_at": _to_iso(row.get("last_run_at")) or None,
-            "next_run_at": _to_iso(row.get("next_run_at")) or None,
+            "last_run_at": to_rfc3339(row.get("last_run_at")) or None,
+            "next_run_at": to_rfc3339(row.get("next_run_at")) or None,
             "last_error_message": str(row.get("last_error_message") or "") or None,
-            "created_at": _to_iso(row.get("created_at")),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
 
     def _normalize_schedule_log_row(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -3508,9 +3476,9 @@ class TopicTaskStore(SessionCheckpointStore):
             "task_id": str(row.get("task_id") or "") or None,
             "status": str(row.get("status") or "running"),
             "error_message": str(row.get("error_message") or "") or None,
-            "started_at": _to_iso(row.get("started_at")) or None,
-            "finished_at": _to_iso(row.get("finished_at")) or None,
-            "created_at": _to_iso(row.get("created_at")),
+            "started_at": to_rfc3339(row.get("started_at")) or None,
+            "finished_at": to_rfc3339(row.get("finished_at")) or None,
+            "created_at": to_rfc3339(row.get("created_at")),
         }
 
 

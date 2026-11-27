@@ -163,6 +163,7 @@
 ## 评测
 
 - **参考 SQL 无处执行**（2026-10-27 拆分复核，codex 审查发现）：三个评测器（builtin / deepeval / opik）的 `expected_result.reference_query` 仍 POST `/api/v1/nl2sql/query/execute`，该接口随平台直连代理一起删除，带参考 SQL 的用例会以 `reference_sql_failed` 失败。需要决定参考结果的来源：数据集里预先存放期望行，或由评测侧显式配置一个外部只读查询入口；然后同步改三个评测器、`dataset/schema-v2.json`、README、示例与测试。
+- **评测时间历史混合数据与脚本硬编码 +8**（2026-11-26，全栈时区统一缩减项）：`eval_dataset.updated_at` 与 `eval_run.started_at` 历史行存在 UTC 与数据库本地时区混合写入（本次 `20261127_000045` 迁移按设计不做启发式猜测改写）；同时 `tools/dataagent-evals/{builtin,deepeval,opik}/run.py` 的相对日期校验仍硬编码 `+08:00`，且 `deepeval`/`opik` 上报摘要尚未携带带偏移的 `started_at`。要做：将三个评测脚本改为读取 `expected_time.timezone` / `DATAAGENT_TIMEZONE` 并统一上报 RFC 3339 `Z` 的 `started_at`；如需清理存量评测时间，按具体批次人工核对后一次性修正。来源：[设计](design/2026-11-26-timezone-unification-design.md#47-评测) · [计划](plans/2026-11-26-timezone-unification-plan.md)。
 
 ## Plugin 打包与导入
 
@@ -221,6 +222,8 @@
 
 - **写操作审批体验（等待审批显示失败、重复行，会话授权与拒绝说明）**（2026-11-26，[#87](https://github.com/opendata-lab/opendataagent/pull/87)）：拦截待审批工具时标记 `awaiting_approval: true` 且 `is_error: false`，恢复执行复用原 `tool_call_id` 合并为同一行（等待确认 → 正在执行 → 已执行 / 执行失败 / 已拒绝 / 未执行）；卡片标题改为“{名} 需要你确认”，保留“工具：中文名（真实名）”，非破坏性工具支持“本会话内允许此工具”（持久化至 `da_agent_topic.approved_tools_json`，破坏性工具忽略 `remember`），拒绝时支持填写可选说明。主应用、Widget、SDK 同步生效。[设计](design/2026-11-26-approval-ux-design.md) · [计划](plans/2026-11-26-approval-ux-plan.md)
 
+- **Widget 历史时间显示为负数**（2026-11-26，[PR #81](https://github.com/opendata-lab/opendataagent/pull/81)）：后端统一 UTC 存储与 RFC 3339 `Z` 输出，前端新建 `src/utils/time.js` 按本地自然日差计算相对时间并将未来时钟微偏钳制为「刚刚」，同时改用数值比较排序话题；[设计](design/2026-11-26-timezone-unification-design.md) · [计划](plans/2026-11-26-timezone-unification-plan.md)。
+
 - **MCP 会话文件在浏览器中下载**（2026-11-22，用户报告点击文件链接后返回 401）：下载使用同一 DataAgent 地址的登录会话或 MCP 令牌，并校验会话归属。本地 Chromium 已验证普通用户点击真实附件下载。[实现与回归](plans/2026-11-19-remote-assistant-plan.md#浏览器下载-mcp-会话文件2026-11-22)
 
 - **Pi 依赖就绪后的后端全量测试**（2026-11-24，回应 2026-11-22 后端交接）：`test_agent_record_compat.py` 与 Pi 端到端用例通过，全量 596 项通过、15 项数据库集成用例跳过。实库迁移和浏览器联调见[统一账号验证计划](plans/2026-11-19-unified-conversation-history-plan.md#独立登录-widget-的账号归属2026-11-23)。
@@ -255,14 +258,3 @@
 - **评审后简化方案同步（2026-11-03）**：原“简化待同步”已完成文档修订，采用卡片结束当前段后续聊、大输出自动落盘返回 `/mnt/results` 路径、7 个基础工具固定启用并保留编辑能力；删除延迟批次补跑及专用导出路径，统一迁移、超时清理、协议和验收要求。结果见[设计](design/2026-11-03-agent-runtime-sandbox-architecture-design.md) 3.2–3.7、[计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)和[评审修订](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)。后续代码实现及凭据无关验证也已完成，见本节运行时整合记录。
 
 - **运行时与沙箱方案评审补齐（文档修订，2026-11-03）**：对照[静态评审报告](reports/2026-11-03-agent-runtime-sandbox-architecture-review.md)的 R1–R8 共 8 项问题，已在[设计文档](design/2026-11-03-agent-runtime-sandbox-architecture-design.md)（3.2–3.6、4.1–4.2 节）与[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)（Step 0–Step 5）中逐项补齐机制、涉及文件与验收标准；代码实现与凭据无关冒烟已完成，真实 provider 验收单列上方。
-
-### 全栈时区统一（新）
-
-- **现状**（2026-11-26 核实）：沙箱跑在 UTC、系统提示词无当前日期，北京时间 0–8 点模型日期错一天；数据库时间有三种写法（MySQL 时钟、Python UTC、后端容器本地时区），同一行可差 8 小时（`da_agent_sdk_record`、`da_user`、定时消息等）；接口时间格式不统一，前端按浏览器时区解析。生产 MySQL 时区待确认。
-- **要做**：存储统一 UTC，接口统一带 `Z`，前端按业务时区（`DATAAGENT_TIMEZONE`，默认 Asia/Shanghai）显示；沙箱 `TZ` 与提示词日期；历史数据迁移。分两个 PR。下方“Widget 历史时间显示为负数”随 PR 2 解决。
-- **来源**：用户 2026-11-26；Neon 排查（`~/.agents/handoffs/2026-11-26-neon-timezone-audit/`）。[设计](design/2026-11-26-timezone-unification-design.md) · [计划](plans/2026-11-26-timezone-unification-plan.md)
-
-### Widget 历史时间显示为负数
-
-- **现状**（2026-11-20，单助手 MCP 端到端测试截图）：平台登录模式的 Widget 历史列表把刚刚的会话显示为「-1天前」，网页 Chat 同一会话显示正常。疑似把无时区的数据库时间按浏览器本地时区解析。
-- **要做**：在受信任宿主的 Widget 上复查相对时间，核对与网页 Chat 使用的后端时间格式。

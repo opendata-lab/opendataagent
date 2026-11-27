@@ -106,9 +106,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import dayjs from 'dayjs'
 import { dataagentApi } from '@/api/dataagent'
 import { withAgentContext } from '@/router/agentContext'
+import { formatDateTime } from '@/utils/time'
 import TextCodeEditor from '@/components/TextCodeEditor.vue'
 
 const route = useRoute()
@@ -144,7 +144,7 @@ const filteredCases = computed(() => {
   )
 })
 
-const formatTime = (val) => val ? dayjs(val).format('YYYY-MM-DD HH:mm:ss') : '-'
+const formatTime = (val) => formatDateTime(val, '-')
 
 const notifyError = (error, fallback) => {
   if (!error?.__odwNotified) ElMessage.error(error?.message || fallback)

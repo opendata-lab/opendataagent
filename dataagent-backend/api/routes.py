@@ -26,7 +26,7 @@ from core.followup_suggestions import generate_followup_suggestions
 from core.skill_admin_service import resolved_chat_settings_payload
 from core.permission_gate import normalize_permission_decision
 from core.task_coordinator import get_task_coordinator
-from core.task_submission_service import compute_next_run_at, current_utc_naive, submit_message_task
+from core.task_submission_service import compute_next_run_at, submit_message_task
 from core.topic_files import TopicFileError, list_files, save_upload
 from core.topic_task_store import get_topic_task_store
 from models.schemas import (
@@ -864,8 +864,9 @@ def api_create_message_schedule(payload: MessageScheduleUpsertRequest, request: 
     if not topic_id:
         raise HTTPException(status_code=400, detail="topic_id is required")
     _require_writable_topic(topic_id, ctx, check_agent_access=True)
+    schedule_tz = str(payload.timezone or "").strip() or get_settings().dataagent_timezone
     try:
-        next_run_at = compute_next_run_at(payload.cron_expr, payload.timezone) if payload.enabled else None
+        next_run_at = compute_next_run_at(payload.cron_expr, schedule_tz) if payload.enabled else None
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"invalid cron_expr or timezone: {exc}") from exc
     created = _get_store().create_message_schedule(
@@ -875,7 +876,7 @@ def api_create_message_schedule(payload: MessageScheduleUpsertRequest, request: 
         message_content=payload.message_content,
         cron_expr=str(payload.cron_expr or "").strip(),
         enabled=bool(payload.enabled),
-        timezone=str(payload.timezone or "").strip() or "Asia/Shanghai",
+        timezone=schedule_tz,
         next_run_at=next_run_at,
     )
     return MessageScheduleRecord.model_validate(created)
@@ -888,10 +889,16 @@ def api_update_message_schedule(schedule_id: str, payload: MessageScheduleUpsert
     store = _get_store()
     topic_id = str(payload.topic_id or "").strip()
     _require_writable_topic(topic_id, ctx, check_agent_access=True)
-    if not store.get_message_schedule(schedule_id, context=store_ctx):
+    existing = store.get_message_schedule(schedule_id, context=store_ctx)
+    if not existing:
         raise HTTPException(status_code=404, detail="Message schedule not found")
+    schedule_tz = (
+        str(payload.timezone or "").strip()
+        or str(existing.get("timezone") or "").strip()
+        or get_settings().dataagent_timezone
+    )
     try:
-        next_run_at = compute_next_run_at(payload.cron_expr, payload.timezone) if payload.enabled else None
+        next_run_at = compute_next_run_at(payload.cron_expr, schedule_tz) if payload.enabled else None
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"invalid cron_expr or timezone: {exc}") from exc
     updated = store.update_message_schedule(
@@ -902,7 +909,7 @@ def api_update_message_schedule(schedule_id: str, payload: MessageScheduleUpsert
         message_content=payload.message_content,
         cron_expr=str(payload.cron_expr or "").strip(),
         enabled=bool(payload.enabled),
-        timezone=str(payload.timezone or "").strip() or "Asia/Shanghai",
+        timezone=schedule_tz,
         next_run_at=next_run_at,
     )
     if not updated:

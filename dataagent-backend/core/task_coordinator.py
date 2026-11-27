@@ -6,18 +6,19 @@ import os
 import socket
 import uuid
 from contextlib import suppress
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import redis.asyncio as redis
 
 from config import get_settings
 from core.accounts import AgentAccessDeniedError, get_account_store, require_agent_access
-from core.experience import DIGEST_AGENT_ID, candidates_changed, collect_candidates, db_now, run_daily_digest
+from core.experience import DIGEST_AGENT_ID, candidates_changed, collect_candidates, run_daily_digest
 from core.logging_config import task_id_var, topic_id_var
 from core.task_control import PARKED_TASK_STATUSES, CancelReason
-from core.task_submission_service import compute_next_run_at, current_utc_naive, submit_message_task
+from core.task_submission_service import compute_next_run_at, submit_message_task
 from core.task_executor import TaskExecutionInput, execute_task_stream
+from core.time_utils import get_business_tz, utc_now
 from core.topic_files import diff_generated_files, snapshot_workspace_state
 from core.topic_task_store import TopicTaskStore, get_topic_task_store
 
@@ -547,7 +548,7 @@ class TaskCoordinator:
         """
         while not self._closing:
             try:
-                now = await asyncio.to_thread(db_now)
+                now = datetime.now(get_business_tz())
                 if now.hour >= int(self.settings.dataagent_experience_digest_hour):
                     day = (now - timedelta(days=1)).date()
                     claimed = await self._redis.set(f"da:experience:digest:{day.isoformat()}", self.instance_id, ex=86400, nx=True)
@@ -566,7 +567,7 @@ class TaskCoordinator:
             try:
                 if await self._acquire_schedule_lock():
                     try:
-                        for schedule in self.store.list_due_message_schedules(now_utc=current_utc_naive(), limit=batch_size):
+                        for schedule in self.store.list_due_message_schedules(now_utc=utc_now(), limit=batch_size):
                             await self._fire_schedule(schedule)
                     finally:
                         await self._release_schedule_lock()
@@ -580,7 +581,7 @@ class TaskCoordinator:
         schedule_id = str(schedule.get("schedule_id") or "")
         if not schedule_id:
             return
-        fired_at = current_utc_naive()
+        fired_at = utc_now()
         schedule_log = None
         queue = None
         try:

@@ -62,6 +62,7 @@ import { MoreFilled } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
 import ExperienceFields from '@/components/experience/ExperienceFields.vue'
 import ExperienceSources from '@/components/experience/ExperienceSources.vue'
+import { formatDate as formatCalendarDate } from '@/utils/time'
 import ExperienceDrawer from '@/components/experience/ExperienceDrawer.vue'
 import { entryForm, entryPayload } from '@/components/experience/entryForm'
 import { pendingMemoryCount, refreshMemoryCount } from '@/composables/experienceCounts'
@@ -75,7 +76,7 @@ const drawerOpen = ref(false), drawerItem = ref(null), drawerEditing = ref(false
 const selected = computed(() => items.value.find(item => item.experience_id === selectedId.value))
 let sequence = 0, timer
 const scopeName = item => item.scope === 'global' ? '全局' : agents.value.find(a => a.agent_id === item.agent_id)?.name || item.agent_id
-const formatDate = value => String(value || '').slice(5, 10)
+const formatDate = value => formatCalendarDate(value, { format: 'MM-DD', fallback: '' })
 function selectCandidate(item) { selectedId.value = item.experience_id; reviewForm.value = entryForm(item) }
 function openDrawer(item, editing) { drawerItem.value = item; drawerEditing.value = editing; drawerOpen.value = true }
 async function load() {

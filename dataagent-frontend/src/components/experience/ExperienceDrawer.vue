@@ -35,6 +35,7 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { dataagentApi } from '@/api/dataagent'
+import { formatDateTime } from '@/utils/time'
 import ExperienceFields from './ExperienceFields.vue'
 import ExperienceSources from './ExperienceSources.vue'
 import { entryForm, entryPayload } from './entryForm'
@@ -44,7 +45,7 @@ const emit = defineEmits(['update:modelValue', 'saved', 'change', 'delete', 'edi
 const fieldsRef = ref(), saving = ref(false), form = ref(entryForm(null))
 const drawerTitle = computed(() => props.editing ? (props.item ? `编辑${props.item.kind === 'knowledge' ? '知识' : '记忆'}` : '新增知识') : props.item?.title || '')
 const scopeName = computed(() => props.item?.scope === 'global' ? '全局（所有助手）' : props.agents.find(a => a.agent_id === props.item?.agent_id)?.name || props.item?.agent_id)
-const formatTime = value => String(value || '').replace('T', ' ').slice(0, 19)
+const formatTime = value => formatDateTime(value, '')
 watch(() => [props.modelValue, props.item, props.editing], () => { if (props.modelValue) form.value = entryForm(props.item) })
 async function save() {
   if (saving.value || !await fieldsRef.value.validate()) return

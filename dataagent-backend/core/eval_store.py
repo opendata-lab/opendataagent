@@ -9,34 +9,44 @@ import uuid
 from contextlib import contextmanager
 from typing import Any
 
-import pymysql
-import pymysql.cursors
-
-from config import get_settings
+from core.db import connect_mysql
+from core.time_utils import to_rfc3339, utc_now
 
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 200
 
 
-def _now_str() -> str:
-    return dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+def _serialize_timestamps(row: dict[str, Any] | None, *fields: str) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    for field in fields:
+        if row.get(field) is not None:
+            row[field] = to_rfc3339(row[field])
+    return row
+
+
+def _parse_aware_timestamp(value: Any) -> dt.datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, dt.datetime):
+        return value if value.tzinfo is not None and value.utcoffset() is not None else None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
 
 
 class EvalStore:
 
     def _connect(self):
-        cfg = get_settings()
-        return pymysql.connect(
-            host=cfg.mysql_host,
-            port=cfg.mysql_port,
-            user=cfg.mysql_user,
-            password=cfg.mysql_password,
-            database=cfg.session_mysql_database,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            autocommit=False,
-        )
+        return connect_mysql()
 
     @contextmanager
     def _conn(self):
@@ -67,7 +77,10 @@ class EvalStore:
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
-                return cur.fetchall()
+                rows = cur.fetchall()
+        for row in rows:
+            _serialize_timestamps(row, "created_at", "updated_at")
+        return rows
 
     def get_dataset(self, dataset_id: str) -> dict[str, Any] | None:
         with self._conn() as conn:
@@ -82,13 +95,13 @@ class EvalStore:
                     """,
                     (dataset_id,),
                 )
-                return cur.fetchone()
+                return _serialize_timestamps(cur.fetchone(), "created_at", "updated_at")
 
     def create_dataset(self, dataset_id: str, name: str, *, description: str = "",
                        category: str = "", suite_tags: list[str] | None = None,
                        case_count: int = 0, dataset_hash: str = "",
                        user_id: int | None = None, created_by: str = "") -> dict[str, Any]:
-        now = _now_str()
+        now = utc_now()
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -157,7 +170,10 @@ class EvalStore:
                     "FROM eval_case WHERE dataset_id = %s ORDER BY id",
                     (dataset_id,),
                 )
-                return cur.fetchall()
+                rows = cur.fetchall()
+        for row in rows:
+            _serialize_timestamps(row, "updated_at")
+        return rows
 
     def get_case(self, dataset_id: str, case_id: str) -> dict[str, Any] | None:
         with self._conn() as conn:
@@ -166,7 +182,7 @@ class EvalStore:
                     "SELECT * FROM eval_case WHERE dataset_id = %s AND case_id = %s",
                     (dataset_id, case_id),
                 )
-                return cur.fetchone()
+                return _serialize_timestamps(cur.fetchone(), "created_at", "updated_at")
 
     def get_case_full_json(self, dataset_id: str) -> list[dict[str, Any]]:
         """Return full case_json for all cases in a dataset, ordered deterministically."""
@@ -187,7 +203,7 @@ class EvalStore:
 
     def replace_cases(self, dataset_id: str, cases: list[dict[str, Any]], dataset_hash: str) -> int:
         """Delete all existing cases and insert new ones; refresh dataset stats."""
-        now = _now_str()
+        now = utc_now()
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM eval_case WHERE dataset_id = %s", (dataset_id,))
@@ -218,7 +234,7 @@ class EvalStore:
 
     def upsert_case(self, dataset_id: str, case: dict[str, Any], dataset_hash: str, case_count: int) -> dict[str, Any]:
         """Insert or update a single case; caller provides pre-computed hash/count."""
-        now = _now_str()
+        now = utc_now()
         case_id = str(case.get("case_id") or "")
         with self._conn() as conn:
             with conn.cursor() as cur:
@@ -267,7 +283,7 @@ class EvalStore:
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM eval_run WHERE run_id = %s", (run_id,))
-                return cur.fetchone()
+                return _serialize_timestamps(cur.fetchone(), "started_at", "ingested_at")
 
     def ingest_run(self, summary: dict[str, Any], cases: list[dict[str, Any]],
                    *, run_id: str = "", started_at: str = "") -> dict[str, Any]:
@@ -293,19 +309,9 @@ class EvalStore:
         if isinstance(raw_avg, (int, float)):
             avg_score = float(raw_avg)
 
-        resolved_started: str | None = None
-        if started_at:
-            resolved_started = started_at
-        else:
-            label = str(summary.get("run_label") or "").strip()
-            if label:
-                try:
-                    dt.datetime.strptime(label, "%Y%m%d-%H%M%S")
-                    resolved_started = f"{label[:4]}-{label[4:6]}-{label[6:8]} {label[9:11]}:{label[11:13]}:{label[13:15]}"
-                except (ValueError, IndexError):
-                    pass
+        resolved_started: dt.datetime | None = _parse_aware_timestamp(started_at)
 
-        now = _now_str()
+        now = utc_now()
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -391,7 +397,10 @@ class EvalStore:
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
-                return cur.fetchall()
+                rows = cur.fetchall()
+        for row in rows:
+            _serialize_timestamps(row, "started_at", "ingested_at")
+        return rows
 
     def list_run_cases(self, run_id: str) -> list[dict[str, Any]]:
         with self._conn() as conn:
@@ -481,7 +490,8 @@ class EvalStore:
             row["avg_input_tokens"] = _nested_value(counts, "input_tokens", "average")
             row["avg_output_tokens"] = _nested_value(counts, "output_tokens", "average")
             row["avg_cache_tokens"] = _nested_value(counts, "cache_tokens", "average")
-            row["time"] = str(row.get("started_at") or row.get("ingested_at") or "")
+            _serialize_timestamps(row, "started_at", "ingested_at")
+            row["time"] = row.get("started_at") or row.get("ingested_at") or ""
         return rows
 
 

@@ -12,8 +12,8 @@ from core import live_events
 logger = logging.getLogger(__name__)
 
 
-def _parse_occurred_at(value: Any) -> Any:
-    """Producer timestamp as a datetime, or None if it is not usable.
+def _parse_occurred_at(value: Any) -> datetime | None:
+    """Producer timestamp as an aware datetime, or None if missing/naive/invalid.
 
     A malformed timestamp must not cost us the record: ordering falls back to
     the row's own created_at, which is close enough for display.
@@ -22,9 +22,12 @@ def _parse_occurred_at(value: Any) -> Any:
     if not text:
         return None
     try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
 
 # Payload keys are deliberately aligned with the SDK path's projected block
 # fields (``output`` / ``is_error``) rather than inventing parallel names

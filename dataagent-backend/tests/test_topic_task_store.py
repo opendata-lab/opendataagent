@@ -286,14 +286,18 @@ def test_record_widget_events_returns_zero_for_empty_list():
 
 
 def test_parse_client_ts_handles_iso_and_z_suffix():
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     ts = _parse_client_ts("2026-05-29T10:00:00Z")
     assert isinstance(ts, datetime)
+    assert ts == datetime(2026, 5, 29, 10, 0, 0, tzinfo=timezone.utc)
 
-    ts2 = _parse_client_ts("2026-05-29T10:00:00")
-    assert isinstance(ts2, datetime)
+    ts_offset = _parse_client_ts("2026-05-29T18:00:00+08:00")
+    assert isinstance(ts_offset, datetime)
+    assert ts_offset.astimezone(timezone.utc) == datetime(2026, 5, 29, 10, 0, 0, tzinfo=timezone.utc)
 
+    # Naive timestamps without offset are dropped rather than guessed.
+    assert _parse_client_ts("2026-05-29T10:00:00") is None
     assert _parse_client_ts("") is None
     assert _parse_client_ts("not-a-date") is None
 
@@ -568,13 +572,13 @@ def test_get_task_system_prompt_returns_none_when_not_recorded():
 
 
 def test_get_task_system_prompt_serializes_record():
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     row = {
         "task_id": "task_1",
         "prompt_sha256": "a" * 64,
         "byte_length": 12,
-        "created_at": datetime(2026, 10, 22, 12, 0, 0),
+        "created_at": datetime(2026, 10, 22, 12, 0, 0, tzinfo=timezone.utc),
         "content": "系统提示",
     }
     store = _make_store_with_sql_log([], fetched=row)
@@ -585,6 +589,6 @@ def test_get_task_system_prompt_serializes_record():
         "task_id": "task_1",
         "prompt_sha256": "a" * 64,
         "byte_length": 12,
-        "created_at": "2026-10-22T12:00:00",
+        "created_at": "2026-10-22T12:00:00Z",
         "content": "系统提示",
     }

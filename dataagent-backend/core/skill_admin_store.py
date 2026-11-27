@@ -8,23 +8,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import pymysql
-
 from config import get_settings
+from core.db import connect_mysql
+from core.time_utils import to_rfc3339
 
 logger = logging.getLogger(__name__)
 KNOWN_SKILL_CATEGORIES = {"reference", "scripts", "assets"}
 
 
-def _to_iso(value: Any) -> str:
-    if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds")
-    return str(value) if value is not None else ""
-
-
 def _json_default(value: Any) -> str:
     if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds")
+        return to_rfc3339(value)
     return str(value)
 
 
@@ -89,17 +83,7 @@ class SkillAdminStore:
         self._ready_lock = threading.Lock()
 
     def _connect(self, database: str | None):
-        cfg = get_settings()
-        return pymysql.connect(
-            host=cfg.mysql_host,
-            port=cfg.mysql_port,
-            user=cfg.mysql_user,
-            password=cfg.mysql_password,
-            database=database,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            autocommit=False,
-        )
+        return connect_mysql(database=database)
 
     def _schema_name(self) -> str:
         cfg = get_settings()
@@ -494,7 +478,7 @@ class SkillAdminStore:
             "provider_id": str(row.get("provider_id") or ""),
             "model": str(row.get("model_name") or ""),
             "skills_output_dir": str(row.get("skills_output_dir") or ""),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
         raw_json = row.get("raw_json")
         if raw_json:
@@ -521,8 +505,8 @@ class SkillAdminStore:
             "version_count": int(row.get("version_count") or 0),
             "last_change_source": str(row.get("last_change_source") or ""),
             "last_change_summary": str(row.get("last_change_summary") or ""),
-            "created_at": _to_iso(row.get("created_at")),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
         if include_content:
             item["current_content"] = str(row.get("current_content") or "")
@@ -548,7 +532,7 @@ class SkillAdminStore:
             "file_size": int(row.get("file_size") or 0),
             "metadata": metadata,
             "parent_version_id": int(row.get("parent_version_id") or 0) or None,
-            "created_at": _to_iso(row.get("created_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
             "is_current": int(row.get("current_version_id") or 0) == int(row.get("id") or 0),
         }
         if include_content:

@@ -4,15 +4,14 @@ import json
 import re
 import threading
 import uuid
-from datetime import datetime
 from typing import Any
 
-import pymysql
-
 from config import get_settings
+from core.db import connect_mysql
 from core.mcp_admin_service import available_mcp_servers as list_available_mcp_servers
 from core.agent_visibility import normalize_agent_visibility
 from core.interaction_policy import PLAN_TIMEOUT_ACTIONS, normalize_plan_timeout_action
+from core.time_utils import to_rfc3339
 
 DEFAULT_AGENT_ID = "agent_default"
 DEFAULT_AGENT_NAME = "默认助手"
@@ -33,12 +32,6 @@ RESERVED_ENV_PREFIXES = (
     "REDIS_",
 )
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def _to_iso(value: Any) -> str:
-    if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds")
-    return str(value) if value is not None else ""
 
 
 def _safe_json_load(raw: Any, fallback: Any) -> Any:
@@ -289,17 +282,7 @@ class AgentProfileStore:
         self._ready_lock = threading.Lock()
 
     def _connect(self, database: str | None):
-        cfg = get_settings()
-        return pymysql.connect(
-            host=cfg.mysql_host,
-            port=cfg.mysql_port,
-            user=cfg.mysql_user,
-            password=cfg.mysql_password,
-            database=database,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            autocommit=False,
-        )
+        return connect_mysql(database=database)
 
     def _schema_name(self) -> str:
         return get_settings().session_mysql_database
@@ -334,8 +317,8 @@ class AgentProfileStore:
             "remote_mcp_enabled": bool(row.get("remote_mcp_enabled")),
             "is_default": bool(row.get("is_default")),
             "is_builtin": bool(row.get("is_builtin")),
-            "created_at": _to_iso(row.get("created_at")),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
         return item
 

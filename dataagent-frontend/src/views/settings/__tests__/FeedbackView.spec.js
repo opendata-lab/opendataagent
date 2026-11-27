@@ -12,12 +12,13 @@ vi.mock('@/api/dataagent', () => ({ dataagentApi: apiMocks }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
 
 import FeedbackView from '../FeedbackView.vue'
+import { localDayRange } from '@/utils/time'
 
 const page = (items, extra = {}) => ({ items, total: items.length, page: 1, page_size: 20, likes: 1, dislikes: 1, ...extra })
 
 const webRow = {
   message_id: 'msg-1', topic_id: 'topic-1', agent_id: 'agent_a', feedback: 'dislike',
-  feedback_at: '2026-11-19T08:00:00', question: '各渠道退款率', answer: '退款率如下', source: 'web'
+  feedback_at: '2026-11-19T08:00:00Z', question: '各渠道退款率', answer: '退款率如下', source: 'web'
 }
 const widgetRow = { ...webRow, message_id: 'msg-2', topic_id: 'topic-2', feedback: 'like', source: 'widget' }
 
@@ -72,8 +73,9 @@ describe('FeedbackView', () => {
     wrapper.vm.$.setupState.filters.feedback = 'dislike'
     wrapper.vm.$.setupState.filters.range = ['2026-11-01', '2026-11-19']
     await flushPromises()
+    const expectedRange = localDayRange('2026-11-01', '2026-11-19')
     expect(apiMocks.listFeedback).toHaveBeenLastCalledWith({
-      page: 1, page_size: 20, feedback: 'dislike', start: '2026-11-01 00:00:00', end: '2026-11-19 23:59:59'
+      page: 1, page_size: 20, feedback: 'dislike', start: expectedRange.start, end: expectedRange.end
     })
     wrapper.unmount()
   })

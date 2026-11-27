@@ -5,13 +5,12 @@ revokes their own tokens, and disabling the account stops all of them.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 import hashlib
 import secrets
 
-import pymysql
-
-from config import get_settings
+from core.db import connect_mysql
+from core.time_utils import to_rfc3339, utc_now
 
 TOKEN_PREFIX = "dak_"
 _VISIBLE_AFTER_REVOCATION = timedelta(days=30)
@@ -20,26 +19,11 @@ _SELECT_FIELDS = "t.id, t.name, t.token_prefix, t.user_id, t.created_at, t.last_
 
 
 def _connect():
-    cfg = get_settings()
-    return pymysql.connect(
-        host=cfg.mysql_host,
-        port=cfg.mysql_port,
-        user=cfg.mysql_user,
-        password=cfg.mysql_password,
-        database=cfg.session_mysql_database,
-        charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=False,
-    )
+    return connect_mysql()
 
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
-
-
-def _now() -> datetime:
-    # MySQL DATETIME stores UTC here at second precision.
-    return datetime.now(UTC).replace(tzinfo=None, microsecond=0)
 
 
 def _record(row: dict) -> dict:
@@ -50,7 +34,7 @@ def _record(row: dict) -> dict:
     }
     for field in ("created_at", "last_used_at", "revoked_at"):
         if row[field] is not None:
-            record[field] = row[field].isoformat(timespec="seconds") + "Z"
+            record[field] = to_rfc3339(row[field])
     return record
 
 
@@ -60,7 +44,7 @@ def create_token(user_id: int, name: str) -> tuple[dict, str]:
         cursor.execute(
             """INSERT INTO da_mcp_access_token (token_hash, token_prefix, user_id, name, created_at)
                VALUES (%s, %s, %s, %s, %s)""",
-            (_hash(token), token[:len(TOKEN_PREFIX) + 6], int(user_id), name, _now()),
+            (_hash(token), token[:len(TOKEN_PREFIX) + 6], int(user_id), name, utc_now()),
         )
         cursor.execute(f"SELECT {_SELECT_FIELDS} FROM da_mcp_access_token t WHERE t.id = %s", (cursor.lastrowid,))
         item = _record(cursor.fetchone())
@@ -75,7 +59,7 @@ def list_tokens(user_id: int) -> list[dict]:
             f"""SELECT {_SELECT_FIELDS} FROM da_mcp_access_token t
                 WHERE t.user_id = %s AND (t.revoked_at IS NULL OR t.revoked_at >= %s)
                 ORDER BY t.created_at DESC, t.id DESC""",
-            (int(user_id), _now() - _VISIBLE_AFTER_REVOCATION),
+            (int(user_id), utc_now() - _VISIBLE_AFTER_REVOCATION),
         )
         return [_record(row) for row in cursor.fetchall()]
 
@@ -86,7 +70,7 @@ def revoke_token(token_id: int, *, user_id: int) -> dict | None:
     with _connect() as connection, connection.cursor() as cursor:
         cursor.execute(
             "UPDATE da_mcp_access_token SET revoked_at = COALESCE(revoked_at, %s) WHERE id = %s AND user_id = %s",
-            (_now(), *params),
+            (utc_now(), *params),
         )
         cursor.execute(f"SELECT {_SELECT_FIELDS} FROM da_mcp_access_token t WHERE t.id = %s AND t.user_id = %s", params)
         row = cursor.fetchone()
@@ -107,7 +91,7 @@ def find_active_token(token: str) -> dict | None:
 
 
 def record_use(token_id: int, last_used_at: datetime | None) -> None:
-    now = _now()
+    now = utc_now()
     cutoff = now - _USE_INTERVAL
     if last_used_at is not None and last_used_at > cutoff:
         return

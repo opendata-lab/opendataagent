@@ -4,12 +4,10 @@ from __future__ import annotations
 import logging
 import re
 import threading
-from datetime import UTC, datetime
 from typing import Any, Callable, Iterable, Sequence
 
 import pymysql
 
-from config import get_settings
 from core.accounts.models import (
     AccountDisabledError,
     AccountNotFoundError,
@@ -23,21 +21,13 @@ from core.accounts.permissions import (
     ROLE_ADMIN,
     ROLE_USER,
 )
+from core.db import connect_mysql
+from core.time_utils import to_rfc3339, utc_now
 
 logger = logging.getLogger(__name__)
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$")
 _ROLE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-
-
-def _to_iso(value: Any) -> str:
-    if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds") + "Z"
-    return str(value) if value is not None else ""
 
 
 def validate_username(raw: Any) -> str:
@@ -58,17 +48,7 @@ class AccountStore:
     """Single MySQL store for da_user, da_user_identity, da_role, da_user_role, da_agent_grant."""
 
     def _connect(self):
-        cfg = get_settings()
-        return pymysql.connect(
-            host=cfg.mysql_host,
-            port=int(cfg.mysql_port or 3306),
-            user=cfg.mysql_user,
-            password=cfg.mysql_password,
-            database=cfg.session_mysql_database,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            autocommit=False,
-        )
+        return connect_mysql()
 
     def _hydrate_users(self, cur, rows: list[dict[str, Any]]) -> list[User]:
         if not rows:
@@ -113,7 +93,7 @@ class AccountStore:
                     id=int(i["id"]),
                     source=str(i["source"]),
                     subject=str(i["subject"]),
-                    created_at=_to_iso(i.get("created_at")),
+                    created_at=to_rfc3339(i.get("created_at")),
                 )
             )
 
@@ -129,9 +109,9 @@ class AccountStore:
                     is_active=bool(row.get("is_active")),
                     roles=roles,
                     identities=tuple(identities_by_uid.get(uid) or ()),
-                    created_at=_to_iso(row.get("created_at")),
-                    updated_at=_to_iso(row.get("updated_at")),
-                    last_login_at=_to_iso(row.get("last_login_at")) or None,
+                    created_at=to_rfc3339(row.get("created_at")),
+                    updated_at=to_rfc3339(row.get("updated_at")),
+                    last_login_at=to_rfc3339(row.get("last_login_at")) or None,
                 )
             )
         return users
@@ -452,7 +432,7 @@ class AccountStore:
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE da_user SET last_login_at = %s WHERE id = %s",
-                    (_utc_now(), int(user_id)),
+                    (utc_now(), int(user_id)),
                 )
             conn.commit()
         finally:
@@ -503,7 +483,7 @@ class AccountStore:
                         if not user.is_active:
                             raise AccountDisabledError("账号已停用")
                         updates = ["last_login_at = %s"]
-                        params: list[Any] = [_utc_now()]
+                        params: list[Any] = [utc_now()]
                         if _fill_display(row):
                             updates.append("display_name = %s")
                             params.append(raw_display)
@@ -534,7 +514,7 @@ class AccountStore:
                             (clean_source, clean_subject, existing_user.id),
                         )
                         updates = ["last_login_at = %s"]
-                        params = [_utc_now()]
+                        params = [utc_now()]
                         if _fill_display(existing_row):
                             updates.append("display_name = %s")
                             params.append(raw_display)
@@ -551,7 +531,7 @@ class AccountStore:
                     password_hash = default_password_hash_fn()
                     user_role_id = self._get_builtin_role_id(cur, ROLE_USER)
                     initial_display = raw_display or candidate_username
-                    now = _utc_now()
+                    now = utc_now()
                     cur.execute(
                         """
                         INSERT INTO da_user
@@ -640,8 +620,8 @@ class AccountStore:
                     "is_builtin": bool(row.get("is_builtin")),
                     "user_count": int(row.get("user_count") or 0),
                     "agent_ids": grants_by_role.get(rid, []),
-                    "created_at": _to_iso(row.get("created_at")),
-                    "updated_at": _to_iso(row.get("updated_at")),
+                    "created_at": to_rfc3339(row.get("created_at")),
+                    "updated_at": to_rfc3339(row.get("updated_at")),
                 }
             )
         return result

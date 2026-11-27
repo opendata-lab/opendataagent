@@ -70,10 +70,10 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
+import { formatDateTime } from '@/utils/time'
 import McpTokenCreateDialog from './McpTokenCreateDialog.vue'
 
 const STATUS_META = {
@@ -86,7 +86,7 @@ const loading = ref(false)
 const revokingId = ref(null)
 const createOpen = ref(false)
 
-const formatTime = (value) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '—')
+const formatTime = (value) => formatDateTime(value)
 
 const formatPrefix = (prefix) => {
   const raw = String(prefix || '').trim()

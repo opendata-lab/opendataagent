@@ -50,7 +50,9 @@ def test_lists_rated_answers_with_question_counts_and_filters(turns):
         topic_id, message_id = made[key]
         assert store.update_message_feedback(topic_id=topic_id, message_id=message_id, feedback=value)
 
-    scope = {"start": "2000-01-01 00:00:00"}
+    from datetime import datetime, timezone
+
+    scope = {"start": datetime(2000, 1, 1, tzinfo=timezone.utc)}
     agents = ["agent_fb_a", "agent_fb_b"]
     page = {**store.list_message_feedback(**scope)}
     mine = [item for item in page["items"] if item["agent_id"] in agents]
