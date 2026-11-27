@@ -57,6 +57,7 @@ services:
       DATAAGENT_CONFIG: /app/docker/dataagent/dataagent_config.py
       DATAAGENT_LOG_DIR: /var/log/dataagent-backend
       DATAAGENT_LOG_LEVEL: ${DATAAGENT_LOG_LEVEL:-INFO}
+      DATAAGENT_TIMEZONE: ${DATAAGENT_TIMEZONE:-Asia/Shanghai}
     ports:
     - 8900:8900
     depends_on:

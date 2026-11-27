@@ -1,7 +1,10 @@
 """Skill-agnostic prompt, resource selection and provider configuration."""
 from __future__ import annotations
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+from config import get_settings
 from core.provider_runtime import build_provider_env as _build_provider_env
 from core.mcp_admin_service import resolve_runtime_mcp_servers
 from core.skill_admin_service import resolve_enabled_skill_runtime, resolve_runtime_provider_selection
@@ -33,9 +36,17 @@ def _build_system_prompt(
     skill_runtime: dict[str, Any] | None = None,
     agent_snapshot: dict[str, Any] | None = None,
 ) -> str:
+    tz_name = get_settings().dataagent_timezone
+    today = datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
     enabled_skills = list((skill_runtime or {}).get("enabled_folders") or [])
     enabled_skills_text = "、".join(enabled_skills) if enabled_skills else "未配置"
-    lines = [_load_system_prompt_template(), "", "# 运行时上下文", f"- 已启用 Skills：当前已启用：{enabled_skills_text}。"]
+    lines = [
+        _load_system_prompt_template(),
+        "",
+        "# 运行时上下文",
+        f"- 当前日期：{today}（时区：{tz_name}）",
+        f"- 已启用 Skills：当前已启用：{enabled_skills_text}。",
+    ]
     lines.append("- 可写临时目录：/tmp。仅存放中间过程文件，运行结束即可能失效；最终交付文件仍必须写入工作区 `output/`。")
     custom_prompt = str((agent_snapshot or {}).get("system_prompt") or "").strip()
     if custom_prompt:

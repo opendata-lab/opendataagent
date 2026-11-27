@@ -113,3 +113,43 @@ def test_build_system_prompt_omits_generic_model_known_methodology():
 
 def test_legacy_lf_system_prompt_template_is_removed():
     assert not (BACKEND_ROOT / "prompts" / "system_prompt.py").exists()
+
+
+def test_dataagent_timezone_defaults_and_validates(monkeypatch):
+    from pydantic import ValidationError
+    import pytest
+
+    monkeypatch.delenv("DATAAGENT_TIMEZONE", raising=False)
+    assert Settings(_env_file=None).dataagent_timezone == "Asia/Shanghai"
+
+    monkeypatch.setenv("DATAAGENT_TIMEZONE", " America/Los_Angeles ")
+    assert Settings(_env_file=None).dataagent_timezone == "America/Los_Angeles"
+
+    for invalid in ("", "   ", "Invalid/Zone", "Mars/Olympus", "UTC+8"):
+        monkeypatch.setenv("DATAAGENT_TIMEZONE", invalid)
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None)
+
+
+def test_build_system_prompt_includes_business_date_and_timezone_without_clock_time(monkeypatch):
+    from datetime import datetime, timezone
+
+    # 2026-11-26T17:30:00Z is 2026-11-27 in Asia/Shanghai and 2026-11-26 in America/Los_Angeles.
+    fixed_utc = datetime(2026, 11, 26, 17, 30, 45, tzinfo=timezone.utc)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_utc.astimezone(tz) if tz is not None else fixed_utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(agent_runtime, "datetime", FixedDateTime)
+
+    monkeypatch.setattr(agent_runtime, "get_settings", lambda: SimpleNamespace(dataagent_timezone="Asia/Shanghai"))
+    prompt_shanghai = agent_runtime._build_system_prompt(None, {"enabled_folders": ["example"]})
+    assert "- 当前日期：2026-11-27（时区：Asia/Shanghai）" in prompt_shanghai
+    assert "01:30" not in prompt_shanghai
+
+    monkeypatch.setattr(agent_runtime, "get_settings", lambda: SimpleNamespace(dataagent_timezone="America/Los_Angeles"))
+    prompt_la = agent_runtime._build_system_prompt(None, {"enabled_folders": ["example"]})
+    assert "- 当前日期：2026-11-26（时区：America/Los_Angeles）" in prompt_la
+    assert "09:30" not in prompt_la

@@ -59,6 +59,7 @@ async def test_outcomes_and_checkpoint_transaction(setup,monkeypatch,outcome,exp
     assert ctx.to_init_payload()['sandbox']['runId']==ctx.run_id
     assert 'control-only-token' not in str(ctx.to_init_payload())
     assert calls['identity']=={'X-Agent-User-Id':'7','X-Agent-Id':'agent_default'}
+    assert ctx.runtime_env['TZ']=='Asia/Shanghai'
     assert ctx.runtime_env['DATAAGENT_PYTHON_BIN']=='/usr/local/bin/python'
     assert ctx.runtime_env['SKILLS_ROOT_DIR']=='/opt/skills'
     assert 'MYSQL_PASSWORD' not in ctx.runtime_env
@@ -99,3 +100,18 @@ async def test_tokens_persist_across_segments_and_task_baseline_is_checkpointed(
     assert result.usage == {'input_tokens': 30, 'output_tokens': 5}
     assert calls['commit']['state']['usage']['tokens'] == result.usage
     assert calls['commit']['state']['workspace_before'] == params.workspace_before
+
+
+@pytest.mark.asyncio
+async def test_sandbox_runtime_env_inherits_configured_timezone(setup, monkeypatch):
+    calls, _, params = setup
+    cfg = Settings(_env_file=None, dataagent_timezone='America/Los_Angeles')
+    monkeypatch.setattr(executor, 'get_settings', lambda: cfg)
+
+    async def execute(ctx, **kwargs):
+        calls['ctx'] = ctx
+        return PiRunOutcome(terminal_status='success', answer='ok')
+
+    monkeypatch.setattr(executor, 'execute_pi_run', execute)
+    await executor.execute_task_stream(params)
+    assert calls['ctx'].runtime_env['TZ'] == 'America/Los_Angeles'

@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 from functools import lru_cache
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, field_validator, model_validator, AliasChoices
 from typing import Literal
@@ -27,6 +28,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8900
     debug: bool = False
+    # Deployment business timezone (IANA name). Drives sandbox TZ, system prompt
+    # date, daily experience digest boundaries, schedule defaults, admin filters,
+    # and frontend display timezone.
+    dataagent_timezone: str = "Asia/Shanghai"
 
     # ---- LLM Provider / Model ----
     llm_provider: str = ""  # anthropic | openrouter | anyrouter | anthropic_compatible
@@ -107,7 +112,7 @@ class Settings(BaseSettings):
     # Both off by default: the daily digest spends model tokens, and approved
     # entries only reach prompts once an operator turns injection on.
     dataagent_experience_digest_enabled: bool = False
-    dataagent_experience_digest_hour: int = Field(default=2, ge=0, le=23)  # on the database clock
+    dataagent_experience_digest_hour: int = Field(default=2, ge=0, le=23)  # in DATAAGENT_TIMEZONE
     dataagent_experience_injection_enabled: bool = False
     dataagent_context_max_inline_result_bytes: int = 16 * 1024
     dataagent_context_protect_tail_turns: int = 6
@@ -160,6 +165,20 @@ class Settings(BaseSettings):
         ):
             _warn_legacy_sandbox_network()
         return values
+
+    @field_validator("dataagent_timezone", mode="before")
+    @classmethod
+    def validate_timezone(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("DATAAGENT_TIMEZONE must be a valid IANA timezone name (e.g. 'Asia/Shanghai')")
+        normalized = value.strip()
+        try:
+            ZoneInfo(normalized)
+        except (ZoneInfoNotFoundError, KeyError, ValueError) as exc:
+            raise ValueError(
+                f"DATAAGENT_TIMEZONE={normalized!r} is not a valid IANA timezone name"
+            ) from exc
+        return normalized
 
     @field_validator("dataagent_sandbox_network_enabled", mode="before")
     @classmethod
