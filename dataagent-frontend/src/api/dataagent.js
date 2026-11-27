@@ -178,10 +178,6 @@ export const dataagentApi = {
     return dataagentRequest.get(`/v1/dataagent/agents/${encodeURIComponent(agentId)}/profile`)
   },
 
-  getAgentConfiguration(agentId) {
-    return dataagentRequest.get(`/v1/dataagent/agents/${encodeURIComponent(agentId)}/configuration`)
-  },
-
   createAgent(data) {
     return dataagentRequest.post('/v1/dataagent/agents', data)
   },
@@ -305,10 +301,6 @@ export const dataagentApi = {
     return dataagentRequest.delete(`/v1/nl2sql-eval/datasets/${encodeURIComponent(datasetId)}/cases/${encodeURIComponent(caseId)}`)
   },
 
-  replaceEvalCases(datasetId, cases) {
-    return dataagentRequest.put(`/v1/nl2sql-eval/datasets/${encodeURIComponent(datasetId)}/cases`, { cases })
-  },
-
   // ---- Evaluation runs ----
 
   listEvalRuns(params = {}) {
@@ -359,10 +351,6 @@ export const dataagentApi = {
 
   createUser(data) {
     return dataagentRequest.post('/v1/dataagent/users', data)
-  },
-
-  getUser(userId) {
-    return dataagentRequest.get(`/v1/dataagent/users/${encodeURIComponent(userId)}`)
   },
 
   updateUser(userId, data) {

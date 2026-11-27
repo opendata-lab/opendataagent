@@ -164,44 +164,10 @@ def test_merge_provider_settings_can_reenable_provider_with_models():
     merged = _merge_provider_settings(
         current,
         patch,
-        legacy_payload={"provider_id": "anyrouter", "model": "claude-opus-4-6"},
     )
 
     provider = merged["anyrouter"]
     assert provider["enabled_models"] == ["claude-opus-4-6"]
-    assert provider["validation_status"] == "verified"
-    assert provider["enabled"] is True
-
-
-def test_merge_provider_settings_preserves_partial_capability_flag():
-    merged = _merge_provider_settings(
-        {
-            "anthropic_compatible": {
-                "provider_id": "anthropic_compatible",
-                "auth_token": "relay-token",
-                "base_url": "https://relay.example.invalid",
-                "provider_enabled": True,
-                "enabled_models": ["claude-sonnet-4.5"],
-                "model_detections": {
-                    "claude-sonnet-4.5": {
-                        "status": "verified",
-                        "message": "模型检测通过",
-                        "checked_at": "2026-04-17T10:00:00",
-                    }
-                },
-                "supports_partial_messages": True,
-            }
-        },
-        {
-            "anthropic_compatible": {
-                "provider_id": "anthropic_compatible",
-                "supports_partial_messages": False,
-            }
-        },
-    )
-
-    provider = merged["anthropic_compatible"]
-    assert provider["supports_partial_messages"] is False
     assert provider["validation_status"] == "verified"
     assert provider["enabled"] is True
 
@@ -404,11 +370,6 @@ def test_bootstrap_admin_settings_persists_blank_provider_and_model(monkeypatch)
         skill_admin_service,
         "get_settings",
         lambda: types.SimpleNamespace(
-            llm_provider="",
-            claude_model="",
-            anthropic_api_key="",
-            anthropic_auth_token="",
-            anthropic_base_url="",
             skills_output_dir=f"../.claude/skills/{BUSINESS_SKILL}",
         ),
     )
@@ -420,6 +381,8 @@ def test_bootstrap_admin_settings_persists_blank_provider_and_model(monkeypatch)
     assert captured["saved"]["model"] == ""
     assert resolved["provider_id"] == ""
     assert resolved["model"] == ""
+    assert resolved["skill_runtime"][BUSINESS_SKILL]["enabled"] is True
+    assert resolved["skill_runtime"][PLATFORM_TOOLS_SKILL]["enabled"] is True
 
 
 def test_bootstrap_never_overrides_database_connection_from_stored_settings(monkeypatch):
@@ -460,19 +423,15 @@ def test_bootstrap_never_overrides_database_connection_from_stored_settings(monk
         skill_admin_service,
         "get_settings",
         lambda: types.SimpleNamespace(
-            llm_provider="",
-            claude_model="",
-            anthropic_api_key="",
-            anthropic_auth_token="",
-            anthropic_base_url="",
             skills_output_dir=f"../.claude/skills/{BUSINESS_SKILL}",
         ),
     )
     monkeypatch.setattr(skill_admin_service, "update_settings", lambda patch: applied.update(patch))
 
-    skill_admin_service.bootstrap_admin_settings()
+    resolved = skill_admin_service.bootstrap_admin_settings()
 
-    assert applied["llm_provider"] == "openrouter"
+    assert resolved["provider_id"] == "openrouter"
+    assert applied["skills_output_dir"] == f"../.claude/skills/{BUSINESS_SKILL}"
     assert not {key for key in applied if key.startswith("mysql_") or key == "session_mysql_database"}
 
 
@@ -500,7 +459,7 @@ def test_current_settings_does_not_fallback_when_provider_registry_is_unavailabl
         skill_admin_service.current_settings_payload()
 
 
-def test_resolve_runtime_provider_selection_returns_api_format_and_partial_capability(monkeypatch):
+def test_resolve_runtime_provider_selection_returns_api_format(monkeypatch):
     monkeypatch.setattr(
         skill_admin_service,
         "current_settings_payload",
@@ -516,7 +475,6 @@ def test_resolve_runtime_provider_selection_returns_api_format_and_partial_capab
                     "api_format": "/v1/chat/completions",
                     "enabled_models": ["claude-sonnet-4.5"],
                     "model_detections": {},
-                    "supports_partial_messages": False,
                 }
             },
         },
@@ -526,7 +484,8 @@ def test_resolve_runtime_provider_selection_returns_api_format_and_partial_capab
     assert resolved["provider_id"] == "custom_gateway"
     assert resolved["api_format"] == "/v1/chat/completions"
     assert resolved["model"] == "claude-sonnet-4.5"
-    assert resolved["supports_partial_messages"] is False
+    assert "supports_partial_messages" not in resolved
+    assert "provider_type" not in resolved
     assert resolved["max_output_tokens"] is None
 
 

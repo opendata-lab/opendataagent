@@ -100,8 +100,8 @@ def main():
     for scenario in ['CANCEL', 'CANCEL_BASH', 'CRASH_BASH']:
         topic = request('POST', API+'/topics', json={'title': NAME+scenario, 'agent_id': agent})['topic_id']
         topics.append(topic)
-        task = request('POST', API+'/tasks', json={'topic_id': topic, 'message_type': 'text',
-            'message_content': 'SMOKE:'+scenario, 'provider_id': NAME, 'model': 'smoke'})['task_id']
+        task = request('POST', API+'/tasks/deliver-message', json={'topic_id': topic,
+            'content': 'SMOKE:'+scenario, 'provider_id': NAME, 'model': 'smoke'})['task_id']
         until(lambda: any(x['scenario'] == scenario and x['state'] in {'running', 'finished'} for x in provider_state()))
         pids = until(lambda: cell_pids(topic))
         containers = until(lambda: sandbox_ids(topic)) if scenario != 'CANCEL' else []

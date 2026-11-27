@@ -11,7 +11,7 @@ Widget 接入（仅限可信内网，不设访问密钥）通过请求头 `X-Dat
 | `GET` / `PUT` | `/profile` | 平台登录 | 查看用户名、显示名、登录方式（`password` / `oauth`）与角色，或修改显示名 |
 | `PUT` | `/profile/password` | 平台登录 | 修改本人密码 |
 | `GET` / `POST` | `/users` | 管理员 | 列出 / 新建用户（使用系统默认初始密码） |
-| `GET` / `PUT` | `/users/{user_id}` | 管理员 | 查看 / 编辑用户、角色或启用停用（不提供物理删除） |
+| `PUT` | `/users/{user_id}` | 管理员 | 编辑用户、角色或启用停用（不提供物理删除） |
 | `POST` | `/users/{user_id}/reset-password` | 管理员 | 将普通用户密码恢复为系统默认初始密码 |
 | `GET` / `POST` / `PUT` / `DELETE` | `/roles[/{role_id}]` | 管理员 | 列出 / 管理自定义角色（内置 `admin` / `user` 不可删） |
 | `GET` / `PUT` | `/roles/{role_id}/users` | 管理员 | 查看 / 批量设置角色成员 |
@@ -40,7 +40,6 @@ GET /health
 | `GET` | `/topics/{topic_id}/messages` | 会话消息 |
 | `POST` / `GET` | `/topics/{topic_id}/files` | 上传 / 列出会话附件 |
 | `PUT` | `/topics/{topic_id}/messages/{message_id}/feedback` | 消息反馈 |
-| `POST` | `/topics/{topic_id}/messages/{message_id}/followup-suggestions` | 生成追问建议 |
 
 消息的 `created_at` 表示消息行创建时间。助手消息的 `finished_at` 来自对应任务的完成时间。用户消息或暂未记录完成时间的助手消息返回 `null`。
 
@@ -58,9 +57,7 @@ POST /tasks/deliver-message
 }
 ```
 
-所有任务使用同一档预算（总超时默认 1800 秒）。旧字段 `execution_mode` 已删除，旧客户端继续发送会被忽略。
-
-另有通用入口 `POST /tasks`，请求体用 `message_type` 与 `message_content`（不是 `question`）。
+所有任务使用同一档预算（总超时默认 1800 秒）。旧字段 `execution_mode`、`debug` 已删除，旧客户端继续发送会被忽略；旧入口 `POST /tasks` 已移除。
 
 响应：
 

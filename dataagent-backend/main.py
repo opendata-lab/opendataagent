@@ -101,11 +101,9 @@ async def startup():
 
     cfg = get_settings()
     logger.info(
-        "Starting DataAgent Backend on %s:%d provider=%s model=%s",
+        "Starting DataAgent Backend on %s:%d",
         cfg.host,
         cfg.port,
-        cfg.llm_provider,
-        cfg.claude_model,
     )
     # Effective values after env, DATAAGENT_SETTINGS and stored settings; a fresh
     # `python -c` only sees the environment.

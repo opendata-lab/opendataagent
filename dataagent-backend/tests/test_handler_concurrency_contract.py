@@ -47,7 +47,6 @@ MUST_BE_SYNC = {
         "api_list_sdk_events",
         "api_query_message_queues",
         "api_create_message_queue",
-        "api_update_message_queue",
         "api_delete_message_queue",
         "api_query_message_schedules",
         "api_create_message_schedule",
@@ -69,7 +68,6 @@ MUST_BE_SYNC = {
         "get_agents",
         "get_readable_agent_profiles",
         "get_agent",
-        "get_agent_configuration",
     },
 }
 
@@ -81,14 +79,11 @@ MUST_BE_ASYNC = {
         "api_health",
         # Awaits the task coordinator or a real coroutine.
         "api_upload_topic_file",
-        "api_generate_followup_suggestions",
         "api_deliver_message",
-        "api_create_task",
         "api_cancel_task",
         # Card persistence runs as one worker-thread operation, then awaits enqueue.
         "api_submit_permission_decision",
         "api_submit_question_answer",
-        "api_consume_message_queue",
         # Returns a StreamingResponse; the SSE generator stays on the loop.
         "api_stream_sdk_events",
     },

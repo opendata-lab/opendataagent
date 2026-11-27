@@ -22,7 +22,6 @@ from core.agent_profile_service import DEFAULT_AGENT_ID, build_agent_snapshot
 from core.provider_runtime import normalize_api_format
 from core import live_events
 from core.task_status import TERMINAL_TASK_STATUSES
-from core.followup_suggestions import generate_followup_suggestions
 from core.skill_admin_service import resolved_chat_settings_payload
 from core.permission_gate import normalize_permission_decision
 from core.task_coordinator import get_task_coordinator
@@ -31,14 +30,12 @@ from core.topic_files import TopicFileError, list_files, save_upload
 from core.topic_task_store import get_topic_task_store
 from models.schemas import (
     CancelTaskResponse,
-    CreateTaskRequest,
     PermissionDecisionRequest,
     PermissionDecisionResponse,
     QuestionAnswerRequest,
     QuestionAnswerResponse,
     CreateTopicRequest,
     DeliverMessageRequest,
-    FollowupSuggestionsResponse,
     MessageQueuePageResponse,
     MessageQueueQueryRequest,
     MessageQueueRecord,
@@ -69,10 +66,6 @@ from models.schemas import (
 
 logger = logging.getLogger(__name__)
 
-# Message-level wording, deliberately broader than the task vocabulary: it also
-# accepts statuses persisted by earlier versions.
-SUCCESS_MESSAGE_STATUSES = {"finished", "success", "completed"}
-
 router = APIRouter(prefix="/api/v1/nl2sql")
 topic_router = APIRouter(prefix="/topics")
 task_router = APIRouter(prefix="/tasks")
@@ -84,59 +77,11 @@ def _encode_sse(event: dict[str, Any]) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
-def _message_answer_text(message: dict[str, Any]) -> str:
-    blocks = message.get("blocks")
-    if isinstance(blocks, list):
-        parts = [
-            str(block.get("text") or "").strip()
-            for block in blocks
-            if isinstance(block, dict) and str(block.get("type") or "") == "main_text" and str(block.get("text") or "").strip()
-        ]
-        if parts:
-            return "\n\n".join(parts).strip()
-    return str(message.get("content") or "").strip()
-
-
-def _message_result_summary(message: dict[str, Any]) -> str:
-    blocks = message.get("blocks")
-    if not isinstance(blocks, list):
-        return ""
-    summaries: list[str] = []
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        block_type = str(block.get("type") or "").strip()
-        if block_type not in {"tool", "chart_spec"}:
-            continue
-        output = block.get("output")
-        if output is None and isinstance(block.get("payload"), dict):
-            output = block["payload"].get("output") or block["payload"].get("content")
-        text = str(output or "").strip()
-        if text:
-            summaries.append(text[:500])
-    return "\n\n".join(summaries)[:1200]
-
-
-def _previous_user_question(messages: list[dict[str, Any]], assistant_message: dict[str, Any]) -> str:
-    assistant_seq = int(assistant_message.get("seq_id") or 0)
-    for message in reversed(messages):
-        if str(message.get("sender_type") or "") != "user":
-            continue
-        if assistant_seq and int(message.get("seq_id") or 0) >= assistant_seq:
-            continue
-        content = str(message.get("content") or "").strip()
-        if content:
-            return content
-    return ""
-
-
 @router.get("/health")
 async def api_health():
     cfg = get_settings()
     return {
         "status": "ok",
-        "provider_id": cfg.llm_provider,
-        "model": cfg.claude_model,
         "skills_output_dir": cfg.skills_output_dir,
         "redis_host": cfg.redis_host,
         "redis_port": cfg.redis_port,
@@ -158,7 +103,6 @@ def api_runtime_config(_ctx: AccountContext = Depends(current_account_context)):
                 default_model=str(item.get("default_model") or ""),
                 enabled=bool(item.get("enabled")),
                 provider_enabled=bool(item.get("provider_enabled")),
-                supports_partial_messages=bool(item.get("supports_partial_messages", True)),
                 validation_status=str(item.get("validation_status") or "unverified"),
                 validation_message=str(item.get("validation_message") or ""),
             )
@@ -319,45 +263,6 @@ def api_update_message_feedback(
     return TopicMessage.model_validate(updated)
 
 
-@topic_router.post("/{topic_id}/messages/{message_id}/followup-suggestions", response_model=FollowupSuggestionsResponse)
-async def api_generate_followup_suggestions(topic_id: str, message_id: str, request: Request):
-    ctx = current_account_context(request)
-    store_ctx = ctx.to_store_context()
-    _require_topic(topic_id, store_ctx)
-    store = _get_store()
-    message = store.get_message(message_id, context=store_ctx)
-    if not message or str(message.get("topic_id") or "") != topic_id or not bool(message.get("show_in_ui", True)):
-        raise HTTPException(status_code=404, detail="Message not found")
-    if str(message.get("sender_type") or "") != "assistant":
-        raise HTTPException(status_code=400, detail="follow-up suggestions are only supported for assistant messages")
-    if str(message.get("status") or "").strip().lower() not in SUCCESS_MESSAGE_STATUSES:
-        raise HTTPException(status_code=400, detail="follow-up suggestions require a finished assistant message")
-
-    answer_text = _message_answer_text(message)
-    if not answer_text:
-        raise HTTPException(status_code=400, detail="assistant message content is empty")
-
-    topic_messages = store.list_topic_messages(topic_id)
-    previous_question = _previous_user_question(topic_messages, message)
-    task = store.get_task(str(message.get("task_id") or ""), context=store_ctx) if message.get("task_id") else {}
-    generated = await generate_followup_suggestions(
-        previous_question=previous_question,
-        answer_text=answer_text,
-        result_summary=_message_result_summary(message),
-        provider_id=str((task or {}).get("provider_id") or ""),
-        model=str((task or {}).get("model") or ""),
-        timeout_seconds=int(getattr(get_settings(), "followup_suggestions_timeout_seconds", 20) or 20),
-    )
-    return FollowupSuggestionsResponse.model_validate(
-        {
-            "topic_id": topic_id,
-            "message_id": message_id,
-            "suggestions": list(generated.get("suggestions") or []),
-            "source": str(generated.get("source") or "empty"),
-        }
-    )
-
-
 @task_router.post("/deliver-message", response_model=TaskSubmissionResponse)
 async def api_deliver_message(payload: DeliverMessageRequest, request: Request):
     ctx = current_account_context(request)
@@ -381,29 +286,6 @@ async def api_deliver_message(payload: DeliverMessageRequest, request: Request):
             message_content=content,
             provider_id=payload.provider_id,
             model=payload.model,
-            debug=bool(payload.debug),
-            agent_id=payload.agent_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return TaskSubmissionResponse.model_validate(submitted)
-
-
-@task_router.post("", response_model=TaskSubmissionResponse)
-async def api_create_task(payload: CreateTaskRequest, request: Request):
-    ctx = current_account_context(request)
-    topic_id = str(payload.topic_id or "").strip()
-    if not topic_id:
-        raise HTTPException(status_code=400, detail="topic_id is required")
-    _require_writable_topic(topic_id, ctx, check_agent_access=True)
-    try:
-        submitted = await submit_message_task(
-            topic_id=topic_id,
-            message_type=payload.message_type,
-            message_content=payload.message_content,
-            provider_id=payload.provider_id,
-            model=payload.model,
-            debug=bool(payload.debug),
             agent_id=payload.agent_id,
         )
     except ValueError as exc:
@@ -778,25 +660,6 @@ def api_create_message_queue(payload: MessageQueueUpsertRequest, request: Reques
     return MessageQueueRecord.model_validate(created)
 
 
-@queue_router.put("/{queue_id}", response_model=MessageQueueRecord)
-def api_update_message_queue(queue_id: str, payload: MessageQueueUpsertRequest, request: Request):
-    ctx = current_account_context(request)
-    store_ctx = ctx.to_store_context()
-    store = _get_store()
-    _require_writable_topic(str(payload.topic_id or "").strip(), ctx, check_agent_access=True)
-    if not store.get_message_queue(queue_id, context=store_ctx):
-        raise HTTPException(status_code=404, detail="Queue message not found")
-    updated = store.update_message_queue(
-        queue_id=queue_id,
-        topic_id=str(payload.topic_id or "").strip(),
-        message_type=str(payload.message_type or "").strip() or "text",
-        message_content=payload.message_content,
-    )
-    if not updated:
-        raise HTTPException(status_code=404, detail="Queue message not found")
-    return MessageQueueRecord.model_validate(updated)
-
-
 @queue_router.delete("/{queue_id}")
 def api_delete_message_queue(queue_id: str, request: Request):
     store = _get_store()
@@ -811,32 +674,6 @@ def api_delete_message_queue(queue_id: str, request: Request):
     if not deleted:
         raise HTTPException(status_code=404, detail="Queue message not found")
     return JSONResponse({"status": "ok"})
-
-
-@queue_router.post("/{queue_id}/consume", response_model=TaskSubmissionResponse)
-async def api_consume_message_queue(queue_id: str, request: Request):
-    store = _get_store()
-    ctx = current_account_context(request)
-    store_ctx = ctx.to_store_context()
-    queue = store.get_message_queue(queue_id, context=store_ctx)
-    if not queue:
-        raise HTTPException(status_code=404, detail="Queue message not found")
-    _require_writable_topic(str(queue.get("topic_id") or ""), ctx, check_agent_access=True)
-    if str(queue.get("status") or "") == "running":
-        raise HTTPException(status_code=409, detail="Queue message is already running")
-    try:
-        submitted = await submit_message_task(
-            topic_id=str(queue.get("topic_id") or ""),
-            message_type=str(queue.get("message_type") or "text"),
-            message_content=queue.get("message_content"),
-            source_queue_id=str(queue.get("queue_id") or ""),
-            source_schedule_id=str(queue.get("source_schedule_id") or "") or None,
-            source_schedule_log_id=str(queue.get("source_schedule_log_id") or "") or None,
-        )
-    except ValueError as exc:
-        store.mark_message_queue_failed(queue_id=queue_id, error_message=str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return TaskSubmissionResponse.model_validate(submitted)
 
 
 @schedule_router.post("/queries", response_model=MessageSchedulePageResponse)

@@ -15,7 +15,7 @@ from core.pi_runtime import resolve_mcp_probe_command
 from core.runtime_registry_store import get_runtime_registry_store
 
 MCP_TRANSPORTS = {"http", "sse", "stdio"}
-MCP_SOURCES = {"configured", "plugin"}
+MCP_SOURCES = {"configured"}
 _SERVER_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 MCP_DETECTION_PROCESS_TIMEOUT_SECONDS = 13
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ def normalize_mcp_server(
         command = ""
 
     if source not in MCP_SOURCES:
-        raise ValueError("source must be configured or plugin")
+        raise ValueError("source must be configured")
 
     return {
         "server_id": server_id,
@@ -101,7 +101,6 @@ def normalize_mcp_server(
         "args": _string_list(data.get("args") or []) if transport == "stdio" else [],
         "env": _string_map(data.get("env") or {}, field="env") if transport == "stdio" else {},
         "enabled": bool(data.get("enabled", True)),
-        "oauth_required": bool(data.get("oauth_required", False)),
         "tool_count": max(0, int(data.get("tool_count") or 0)),
         "description": str(data.get("description") or "").strip()[:512],
     }
@@ -111,7 +110,6 @@ def list_mcp_servers() -> dict[str, list[dict[str, Any]]]:
     rows = get_runtime_registry_store().list_mcp_servers()
     return {
         "configured": [row for row in rows if row.get("source") == "configured"],
-        "plugin": [row for row in rows if row.get("source") == "plugin"],
     }
 
 
@@ -174,8 +172,6 @@ def update_mcp_server(server_id: str, payload: dict[str, Any]) -> None:
     existing = store.get_mcp_server(str(server_id or "").strip())
     if not existing:
         raise KeyError("MCP server not found")
-    if existing.get("source") != "configured":
-        raise ValueError("plugin MCP server is read-only")
     requested_id = str((payload or {}).get("server_id") or server_id).strip()
     if requested_id != server_id:
         raise ValueError("server_id cannot be changed")
@@ -191,8 +187,6 @@ def delete_mcp_server(server_id: str) -> None:
     existing = store.get_mcp_server(str(server_id or "").strip())
     if not existing:
         raise KeyError("MCP server not found")
-    if existing.get("source") != "configured":
-        raise ValueError("plugin MCP server is read-only")
     store.delete_mcp_server(server_id)
 
 
@@ -298,8 +292,6 @@ def import_mcp_servers(payload: dict[str, Any]) -> int:
         if not name or not isinstance(raw_config, dict):
             raise ValueError("each imported MCP server must be an object with a name")
         existing = store.find_mcp_server_by_name(name)
-        if existing and existing.get("source") == "plugin":
-            raise ValueError(f"plugin MCP server is read-only: {name}")
         config = dict(raw_config)
         config["name"] = name
         config["server_id"] = existing.get("server_id") if existing else _new_server_id(name)

@@ -42,7 +42,6 @@ class TaskExecutionInput:
         question: the user prompt for this run.
         history: prior turns, used only when the topic has no session checkpoint.
         provider_id / model: selected runtime provider and model id.
-        debug: enable verbose runtime diagnostics.
         timeout_seconds: submission-time total budget; waits on cards are not
             counted, and elapsed time accumulates across execution segments.
         sql_read_timeout_seconds: per read-query budget exposed to skill SQL tools.
@@ -61,7 +60,6 @@ class TaskExecutionInput:
     history: list[dict[str, str]]
     provider_id: str
     model: str
-    debug: bool = False
     timeout_seconds: int | None = None
     sql_read_timeout_seconds: int | None = None
     sql_write_timeout_seconds: int | None = None
@@ -83,7 +81,6 @@ class TaskExecutionResult:
     error: dict[str, Any] | None = None
     provider_id: str = ""
     model: str = ""
-    session_id: str = ""
 
 
 async def _execute_task_stream(params: TaskExecutionInput, *,
@@ -236,7 +233,7 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         return TaskExecutionResult(task_status="parked" if outcome.terminal_status=="parked" else from_engine_outcome(outcome.terminal_status),
             content=outcome.answer or outcome.error_message,usage=accumulate_usage(previous_usage.get("tokens"),outcome.usage) or None,
             error={"code":outcome.error_code,"message":outcome.error_message} if outcome.error_code else None,
-            provider_id=provider_id,model=model,session_id=f"pi-{params.topic_id}")
+            provider_id=provider_id,model=model)
     finally:
         shutil.rmtree(injection_dir, ignore_errors=True)
 

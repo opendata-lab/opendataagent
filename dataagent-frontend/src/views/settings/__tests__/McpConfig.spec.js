@@ -166,43 +166,24 @@ describe('McpConfig', () => {
     apiMocks.importMcpServers.mockResolvedValue({ imported: 1 })
   })
 
-  it('renders both configured and plugin MCP server groups with their details', async () => {
+  it('renders configured MCP servers with their details', async () => {
     const wrapper = mountConfig()
     await flushPromises()
 
     const text = wrapper.text()
-    expect(text).toContain('共 3 个服务')
+    expect(text).toContain('共 2 个服务')
     expect(text).toContain('自定义服务 2')
-    expect(text).toContain('插件提供 1')
     expect(text).toContain('filesystem')
     expect(text).toContain('github-remote')
-    expect(text).toContain('web-tools')
     expect(text).toContain('https://mcp.github.com/sse')
     expect(text).toContain('npx -y @modelcontextprotocol/server-filesystem /data')
-    expect(text).toContain('该 MCP 服务器由平台插件提供，运行时身份和配置由平台管理。')
-    expect(text).toContain('平台托管 · 已启用')
-    expect(wrapper.findAll('.mcp-row')).toHaveLength(3)
-    expect(wrapper.findAll('.mcp-list')).toHaveLength(2)
+    expect(wrapper.findAll('.mcp-row')).toHaveLength(2)
+    expect(wrapper.findAll('.mcp-list')).toHaveLength(1)
     expect(wrapper.find('.mcp-table').exists()).toBe(false)
     const switches = wrapper.findAll('.el-switch-stub')
     expect(switches).toHaveLength(2)
     expect(switches[0].attributes('disabled')).toBeUndefined()
     expect(switches[1].attributes('disabled')).toBeUndefined()
-  })
-
-  it('renders OAuth authorization button for servers requiring OAuth and opens alert on click', async () => {
-    const wrapper = mountConfig()
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('授权')
-    const oauthServer = wrapper.vm.filteredConfiguredServers.find((s) => s.oauth_required)
-    wrapper.vm.handleOAuth(oauthServer)
-
-    expect(messageBoxMocks.alert).toHaveBeenCalledWith(
-      expect.stringContaining('github-remote'),
-      'OAuth 授权',
-      expect.any(Object)
-    )
   })
 
   it('toggles server enabled state via updateMcpServer api', async () => {
@@ -283,8 +264,7 @@ describe('McpConfig', () => {
       command: 'uvx',
       args: ['mcp-server-sqlite', '--db-path', '/tmp/test.db'],
       env: { SQLITE_MODE: 'ro' },
-      enabled: true,
-      oauth_required: false
+      enabled: true
     })
     expect(messageMocks.success).toHaveBeenCalledWith('MCP 服务已创建')
     expect(wrapper.vm.dialogVisible).toBe(false)
@@ -310,8 +290,7 @@ describe('McpConfig', () => {
       transport: 'http',
       url: 'https://mcp.slack.com/http',
       headers: { 'X-Token': 'secret' },
-      enabled: true,
-      oauth_required: false
+      enabled: true
     })
     expect(messageMocks.success).toHaveBeenCalledWith('远程 MCP 服务已添加')
   })
@@ -403,8 +382,7 @@ describe('McpConfig', () => {
       env: { REDIS_URL: 'redis://localhost:6379' },
       url: '',
       headers: {},
-      enabled: true,
-      oauth_required: false
+      enabled: true
     })
   })
 
@@ -415,16 +393,14 @@ describe('McpConfig', () => {
     wrapper.vm.searchKeyword = 'filesystem'
     expect(wrapper.vm.filteredConfiguredServers).toHaveLength(1)
     expect(wrapper.vm.filteredConfiguredServers[0].name).toBe('filesystem')
-    expect(wrapper.vm.filteredPluginServers).toHaveLength(0)
 
-    wrapper.vm.searchKeyword = 'web'
-    expect(wrapper.vm.filteredConfiguredServers).toHaveLength(0)
-    expect(wrapper.vm.filteredPluginServers).toHaveLength(1)
-    expect(wrapper.vm.filteredPluginServers[0].name).toBe('web-tools')
+    wrapper.vm.searchKeyword = 'github'
+    expect(wrapper.vm.filteredConfiguredServers).toHaveLength(1)
+    expect(wrapper.vm.filteredConfiguredServers[0].name).toBe('github-remote')
   })
 
   it('renders an actionable empty state and opens JSON import directly', async () => {
-    apiMocks.listMcpServers.mockResolvedValue({ configured: [], plugin: [] })
+    apiMocks.listMcpServers.mockResolvedValue({ configured: [] })
     const wrapper = mountConfig()
     await flushPromises()
 
@@ -457,8 +433,8 @@ describe('McpConfig read-only access', () => {
     const text = wrapper.text()
     // The page is now reachable by any signed-in user, so the data must render.
     expect(text).toContain('filesystem')
-    expect(text).toContain('web-tools')
-    expect(wrapper.findAll('.mcp-row')).toHaveLength(3)
+    expect(text).toContain('github-remote')
+    expect(wrapper.findAll('.mcp-row')).toHaveLength(2)
 
     // Nothing that would 403 against the admin-only write routes.
     expect(text).not.toContain('新建 MCP 服务')

@@ -26,7 +26,6 @@ from core.agent_draft_service import DraftConflict, agent_drafts, check_revision
 from core.agent_profile_service import (
     agent_capabilities,
     build_agent_snapshot,
-    get_agent_profile,
     list_agent_profiles,
     skill_folders_from_documents,
 )
@@ -71,7 +70,6 @@ from models.schemas import (
     AgentCatalogProfile,
     AgentDraftRevisionRequest,
     AgentPreviewMessageRequest,
-    AgentProfile,
     AgentProfileCreateRequest,
     AgentProfileUpdateRequest,
     AgentReadableProfile,
@@ -663,18 +661,6 @@ def get_readable_agent_profile(agent_id: str, user: User = Depends(current_user)
     except AgentAccessDeniedError as exc:
         raise HTTPException(status_code=404, detail="agent not found") from exc
     return AgentReadableProfile.model_validate(_readable_agent_payload(profile))
-
-
-@dataagent_router.get(
-    "/agents/{agent_id}/configuration",
-    response_model=AgentProfile,
-    dependencies=[Depends(require_admin)],
-)
-def get_agent_configuration(agent_id: str):
-    profile = get_agent_profile(agent_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="agent not found")
-    return AgentProfile.model_validate(profile)
 
 
 @dataagent_router.get("/agents/{agent_id}/slash-commands", response_model=AgentSlashCommandsResponse)

@@ -77,7 +77,7 @@ def stop():
 
 
 def run_liveness(topic):
-    accepted=request('POST',API+'/tasks',json={'topic_id':topic,'message_type':'text','message_content':'SMOKE:LIVENESS',
+    accepted=request('POST',API+'/tasks/deliver-message',json={'topic_id':topic,'content':'SMOKE:LIVENESS',
         'provider_id':'local-smoke','model':'smoke'})
     task_id=accepted['task_id'];until=time.monotonic()+30
     while time.monotonic()<until:
@@ -114,7 +114,7 @@ def main():
         'custom_models':['smoke'],'api_key':'local-fixture-only','base_url':'http://host.docker.internal:8919'})
     first=run_liveness(topic)
     # Exercise daemon mount discovery through a real sandbox tool.
-    accepted=request('POST',API+'/tasks',json={'topic_id':topic,'message_type':'text','message_content':'SMOKE:TOOLS',
+    accepted=request('POST',API+'/tasks/deliver-message',json={'topic_id':topic,'content':'SMOKE:TOOLS',
         'provider_id':'local-smoke','model':'smoke'})
     task_id=accepted['task_id'];until=time.monotonic()+30
     while time.monotonic()<until:
