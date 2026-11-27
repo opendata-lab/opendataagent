@@ -120,7 +120,7 @@
             <div class="prompt-body">
               <details class="builtin-section" open>
                 <summary>
-                  <span><Icon name="lock" />内置提示词</span
+                  <span><Icon name="lock" />平台约束</span
                   ><span class="readonly-label"
                     >只读<Icon name="chevron" class="small"
                   /></span>
@@ -128,7 +128,7 @@
                 <pre
                   class="builtin-content"
                   tabindex="0"
-                  aria-label="内置提示词，只读"
+                  aria-label="平台约束，只读"
                   >{{ builtinPrompt }}</pre>
               </details>
               <div class="custom-section">

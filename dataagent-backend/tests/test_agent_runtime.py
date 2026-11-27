@@ -56,16 +56,16 @@ def test_build_system_prompt_reads_markdown_and_appends_runtime_context():
 
     assert "你是企业级智能问数 Data Agent" in prompt
     assert "你不是单纯的 SQL 生成器" in prompt
-    assert "# 一、硬性约束" in prompt
-    assert "# 二、SQL 前确认清单" in prompt
-    assert "# 三、图表输出" in prompt
+    assert "# 约束" in prompt
+    assert "# SQL 前确认" in prompt
+    assert "# 交付" in prompt
     assert "# 运行时上下文" in prompt
     assert "当前已启用：example-business-knowledge、example-platform-tools" in prompt
     assert "用户显式提供的 database hint: example" in prompt
     assert "dataagent-nl2sql" not in prompt
     assert "通用 SQL skill" not in prompt
     assert "run_sql.py" not in prompt
-    assert "/mnt/results/" in prompt
+    assert "/mnt/results" in prompt
     assert "validate_sql.py" not in prompt
     assert "get_lineage.py" not in prompt
     assert "mcp__web" not in prompt
@@ -78,14 +78,12 @@ def test_build_system_prompt_includes_methodology_and_non_negotiables():
     required_fragments = [
         "企业级智能问数 Data Agent",
         "无论用户使用何种语言提问，必须始终使用简体中文回复",
-        "不编造表、字段、指标、口径、数据结果",
-        "不执行有副作用的操作",
-        "文件读写只在当前会话工作区目录、以及「运行时上下文」声明的可写临时目录内进行",
-        "最终交付文件必须写入工作区 `output/`",
-        "不伪造成功结果",
-        "先提出最小澄清问题",
-        "必须显式说明默认假设",
+        "不要改写查询绕开",
+        "快照表常规问数只取最新快照日期",
+        "先读对应技能的 SKILL.md",
+        "最终交付文件写入工作区 `output/`",
         "已启用 Skills",
+        "工作区 `/mnt/workspace`",
     ]
     for fragment in required_fragments:
         assert fragment in prompt
@@ -107,6 +105,9 @@ def test_build_system_prompt_omits_generic_model_known_methodology():
         "先给结论",
     ]
     for fragment in removed_fragments:
+        assert fragment not in prompt
+    # Outdated or model-known rules dropped in the 2026-11-27 slimming.
+    for fragment in ["不执行有副作用的操作", "/dataagent_runtime", "<tool_call>", "chart_spec://", "Working directory:"]:
         assert fragment not in prompt
     assert "SQL 验证层" not in prompt
     assert "run_sql.py --database" not in prompt
@@ -153,3 +154,8 @@ def test_build_system_prompt_includes_business_date_and_timezone_without_clock_t
     prompt_la = agent_runtime._build_system_prompt(None, {"enabled_folders": ["example"]})
     assert "- 当前日期：2026-11-26（时区：America/Los_Angeles）" in prompt_la
     assert "09:30" not in prompt_la
+
+
+def test_agent_role_prompt_follows_runtime_context_under_role_heading():
+    prompt = agent_runtime._build_system_prompt("db1", {"enabled_folders": []}, {"system_prompt": "你是财务助手"})
+    assert prompt.index("# 运行时上下文") < prompt.index("用户显式提供的 database hint: db1") < prompt.index("# 角色设定\n你是财务助手")

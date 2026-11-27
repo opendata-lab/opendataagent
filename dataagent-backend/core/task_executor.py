@@ -158,7 +158,6 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         provider_env = _build_provider_env(api_format,api_key=str(target.get("api_key") or ""),
             auth_token=str(target.get("auth_token") or ""),base_url=str(target.get("base_url") or ""))
         system_prompt = _build_system_prompt(params.database_hint,skills,snapshot)
-        system_prompt += "\nWorking directory: /mnt/workspace. Saved results: /mnt/results (read-only). Skills: /opt/skills (read-only)."
         if not saved and params.history:
             system_prompt += "\nHistorical result caches at workspace/.dataagent/results were migrated to /mnt/results with the same filenames."
         system_prompt += injection_prompt
