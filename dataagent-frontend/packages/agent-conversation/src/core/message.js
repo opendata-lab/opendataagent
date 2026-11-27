@@ -9,6 +9,14 @@ import { SYNTHETIC_BLOCK_POSITION } from './blockPresentation.js'
 import { stripChartSpecsFromText } from './chartSpec.js'
 
 marked.setOptions({ breaks: true, gfm: true })
+// Source is pre-escaped before parsing, so code blocks and inline code must not
+// be escaped a second time.
+marked.use({
+  renderer: {
+    code({ text }) { return `<pre><code>${text}</code></pre>\n` },
+    codespan({ text }) { return `<code>${text}</code>` },
+  },
+})
 
 // Escape before parsing so assistant-provided HTML can never inject markup.
 const escapeHtml = (text) => String(text || '')
