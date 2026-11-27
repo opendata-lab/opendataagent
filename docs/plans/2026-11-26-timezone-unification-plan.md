@@ -4,7 +4,7 @@
 - 状态：设计草案，待确认后实施
 - 交付方式：两个互相独立的 PR，各自一步到位、无过渡期：
   - **PR 1（小，先合入）**：`DATAAGENT_TIMEZONE` 配置与校验、沙箱 `TZ`、系统提示词当前日期（Step 1 的配置部分 + Step 2 的“系统提示词、沙箱与公开配置”中前两项 + Step 5 的部署配置）。不依赖存储改造，立即修复“模型日期错一天、报告时间差 8 小时”。
-  - **PR 2**：其余全部（数据库连接与 UTC 写入、统一序列化、迁移、日期边界、前端格式化、`/auth/config` 时区字段、评测脚本）。前后端与迁移同版本发布。
+  - **PR 2**：其余全部（数据库连接与 UTC 写入、统一序列化、迁移、日期边界、前端格式化）。前后端与迁移同版本发布。
 - 本地冒烟只用 schema `dataagent_qa`：本机 `dataagent` schema 与正在运行的 Docker 栈共用，在其上执行新迁移会影响旧版本后端。
 
 ## 任务拆解
@@ -12,9 +12,8 @@
 ### Step 1：配置、数据库连接与时间工具模块
 
 - `dataagent-backend/config.py`：新增 `dataagent_timezone: str = "Asia/Shanghai"`，并用 `ZoneInfo` 校验；更新 `dataagent_experience_digest_hour` 注释为按 `DATAAGENT_TIMEZONE` 计算。
-- `dataagent-backend/requirements.txt`：显式增加 `tzdata`。
-- 新增 `dataagent-backend/core/db.py`：提供唯一 `connect_mysql(*, database=None, autocommit=False, io_timeout_seconds=None)`，固定传 `init_command="SET time_zone = '+00:00'"`，保留现有 I/O 超时参数。
-- 新增 `dataagent-backend/core/time_utils.py`：提供 `get_business_tz()`、`utc_now()`、`utc_now_naive()`、`format_utc_iso()`、`parse_iso_to_utc_naive()`、`parse_query_boundary_to_utc()`（日期按业务时区、半开区间）、`business_day_utc_bounds()`。
+- 新增 `dataagent-backend/core/db.py`：提供唯一 `connect_mysql(*, database=None, autocommit=False, io_timeout_seconds=None)`，固定传 `init_command="SET time_zone = '+00:00'"` 与时间转换器 `conv`（写 aware→UTC、naive 报错；读 DATETIME 附 UTC），保留现有 I/O 超时参数。
+- 新增 `dataagent-backend/core/time_utils.py`：只提供 `utc_now()`、`get_business_tz()`、`business_day_bounds()`、`to_rfc3339()`。
 - 7 处 store 统一改为调用 `connect_mysql`：
   - `dataagent-backend/core/topic_task_store.py`
   - `dataagent-backend/core/agent_profile_service.py`
@@ -28,23 +27,22 @@
 ### Step 2：后端写入修正、API 统一序列化与业务边界
 
 - **写入修正**：
-  - `core/topic_task_store.py`：`_parse_client_ts` 改为调用 `parse_iso_to_utc_naive`（不再转后端容器本地时区）；`admin_list_topics`、`list_message_feedback` 的 `start`/`end` 筛选经 `parse_query_boundary_to_utc` 转 naive UTC（纯日期 `end` 用 `< 次日 00:00:00 UTC`）。
-  - `core/pi_event_writer.py`：`_parse_occurred_at` 改为调用 `parse_iso_to_utc_naive`（确保非 UTC 偏移不会在写入 MySQL 时被静默丢弃）。
-  - `core/skill_admin_service.py`：`_now_iso()` 改为返回 `format_utc_iso(utc_now())`。
-  - `core/runtime_registry_store.py`：`save_provider` 写入 `validated_at` 前先经 `parse_iso_to_utc_naive` 转 naive UTC `datetime`，避免带 `Z` 字符串触发 MySQL `1292` 错误。
-  - `core/eval_store.py`：删除 `dt.datetime.utcnow()`；写入时间统一用 `utc_now_naive()`，`ingest_run` 的 `started_at` 经 `parse_iso_to_utc_naive` 归一化；所有读接口与 `trend_series` 输出经 `format_utc_iso` 序列化。
-  - `core/accounts/store.py`、`core/remote_mcp_tokens.py`、`core/task_submission_service.py`：删除各自 UTC 当前时间函数，统一改调 `utc_now_naive()`。
+  - `core/topic_task_store.py`：`_parse_client_ts` 改为 `datetime.fromisoformat`，要求带偏移（不再转后端容器本地时区）；`admin_list_topics`、`list_message_feedback` 的 `start`/`end` 为 aware 时间，条件改为 `>= start AND < end`。`api/admin_routes.py` 对应参数改用 `AwareDatetime`。
+  - `core/pi_event_writer.py`：`_parse_occurred_at` 保留 aware 值，由数据库转换器换成 UTC。
+  - `core/skill_admin_service.py`：`_now_iso()` 改为返回 `to_rfc3339(utc_now())`。
+  - `core/runtime_registry_store.py`：`save_provider` 写入 `validated_at` 前用 `datetime.fromisoformat` 解析为 aware 时间，避免带 `Z` 字符串触发 MySQL `1292` 错误。
+  - `core/eval_store.py`：删除 `dt.datetime.utcnow()`；写入时间统一用 `utc_now()`；`ingest_run` 的 `started_at` 必须带偏移，否则留空；所有读接口与 `trend_series` 输出经 `to_rfc3339`。
+  - `core/accounts/store.py`、`core/remote_mcp_tokens.py`、`core/task_submission_service.py`：删除各自 UTC 当前时间函数，统一改调 `utc_now()`；与数据库值比较的 Python 代码全部改为 aware 比较。
 - **统一序列化**：
-  - 删除 `topic_task_store`（含 `get_task_system_prompt:1672`）、`skill_admin_store`、`agent_profile_service`、`runtime_registry_store`、`accounts/store`、`remote_mcp_tokens` 中各自的 `_to_iso` / `_json_default` / `+ "Z"` 逻辑，全部改调 `format_utc_iso`。
+  - 删除 `topic_task_store`（含 `get_task_system_prompt:1672`）、`skill_admin_store`、`agent_profile_service`、`runtime_registry_store`、`accounts/store`、`remote_mcp_tokens` 中各自的 `_to_iso` / `_json_default` / `+ "Z"` 逻辑，全部改调 `to_rfc3339`。
   - `interaction_policy.py:71`、`mcp_admin_service.py:215`、`stream_events.py:27`、`topic_files.py:44`、`topic_task_store.py:1836,1869,1940,1972` 统一输出 `Z` 结尾。
 - **每日经验总结与定时任务**：
-  - `core/experience.py`：删除 `db_now()`；`build_session_records` 和 `agents_with_tasks` 改用 `business_day_utc_bounds(day)`。
+  - `core/experience.py`：删除 `db_now()`；`build_session_records` 和 `agents_with_tasks` 改用 `business_day_bounds(day)`。
   - `core/task_coordinator.py`：`_experience_loop` 改用 `datetime.now(get_business_tz())`；`_fire_schedule` 缺省时区改取 `get_settings().dataagent_timezone`。
   - 定时任务：`schemas.py` 时区改为可选；只在创建时把缺省值解析为 `get_settings().dataagent_timezone` 并据此计算、保存 `next_run_at`；更新未传时区则保留已存值。执行路径不改。
 - **系统提示词、沙箱与公开配置**：
   - `core/task_executor.py`：`runtime_env` 增加 `"TZ": cfg.dataagent_timezone`。
   - `core/agent_runtime.py`：`_build_system_prompt` 在 `# 运行时上下文` 注入 `- 当前日期：{today}（时区：{tz}）`。
-  - `api/auth_routes.py`：`GET /api/v1/nl2sql/auth/config` 返回新增 `"timezone"`（仅反馈页使用）。
 
 ### Step 3：Alembic 历史数据迁移
 
@@ -57,7 +55,7 @@
 ### Step 4：前端统一格式化
 
 - 新增 `dataagent-frontend/src/utils/time.js`（`parseTimestamp`、`formatDateTime`/`formatDate`/`formatShortDateTime`/`formatClockTime` 默认浏览器本地时区、可传 `timeZone`，`formatRelativeTime` 按自然日差且未来时间返回“刚刚”）。
-- `src/stores/auth.js`：保存 `config.timezone`；`FeedbackView.vue` 显示时传入该时区，筛选直接传 `YYYY-MM-DD`。
+- `FeedbackView.vue`：用 `localDayRange` 把所选本地日期换成 `[当天 00:00, 次日 00:00)` 的 ISO 时刻发送。
 - 替换散落格式化与排序：`NL2SqlChatV2.vue`、`topicHelpers.js`（`Date.parse` 数值比较）、`UsersView.vue`、`FeedbackView.vue`、`KnowledgeMemoryView.vue`、`McpTokensView.vue`、`SkillDetailView.vue`、`ExperienceDrawer.vue`、`Evaluation*.vue`、`widget/WidgetChat.vue`。
 - Widget 不拉取时区、不加 `data-timezone`；SDK 包不改。
 - 完成后更新 `docs/TODO.md`：“Widget 历史时间显示为负数”移入“已完成”；新增“评测时间”条目（评测表历史混合时间、三个评测脚本写死 +8）。
@@ -73,7 +71,9 @@
 ### 1. 单元测试与契约测试
 
 - **后端（`pytest`）**：
-  - `tests/test_time_utils.py`（新增）：`format_utc_iso`（naive / aware / 非 UTC / 幂等）、`parse_iso_to_utc_naive`、`parse_query_boundary_to_utc`（纯日期、naive 时间、带偏移、跨午夜边界）、`business_day_utc_bounds`（东八区与负偏移如 `America/Los_Angeles`）、`Settings` 非法 `DATAAGENT_TIMEZONE` 报错。
+  - `tests/test_time_utils.py`（新增）：`to_rfc3339`（aware / 非 UTC 偏移 / naive 抛错）、`business_day_bounds`（东八区与 `America/Los_Angeles`）、`Settings` 非法 `DATAAGENT_TIMEZONE` 报错。
+  - `tests/test_db_conv.py`（新增，MySQL）：aware 非 UTC 写入后读出为同一时刻；naive 写入抛 `TypeError`；读出值带 UTC 时区；会话时区为 `+00:00`。
+  - 接口：时间入参不带偏移返回 400。
   - `tests/test_timezone_migration.py`（新增，连接本地 Docker MySQL 临时 schema）：
     - 模拟非 UTC DB（`+08:00`）：验证 A 类列全部减 8 小时、B/C/D 类列不变、`updated_at` 未被 `ON UPDATE CURRENT_TIMESTAMP` 误覆写、`downgrade` 抛错。
     - 模拟 UTC DB（`+00:00`）：验证 `upgrade` 零数据改动。
@@ -90,7 +90,6 @@
    - 验证沙箱内 `date` 输出为 `CST` / `Asia/Shanghai`，与系统提示词注入的当前日期一致；
    - 查 `da_agent_topic`、`da_agent_task`、`da_agent_message`、`da_agent_sdk_record` 新写入行，确认均为 UTC 且同行 `created_at` 与 `occurred_at` 一致。
 3. **API 与前端展示验证**：
-   - 检查 `/api/v1/nl2sql/auth/config` 返回 `"timezone": "Asia/Shanghai"`；
    - 检查 `/topics`、`/messages`、`/users`、`/feedback`、`/mcp/tokens`、`/eval/runs` 所有时间字段均以 `Z` 结尾；
    - 在浏览器（包括使用 DevTools / Playwright 模拟 `America/Los_Angeles` 时区）打开 Chat、Widget、用户管理、用户反馈、知识与记忆、MCP 令牌页：确认时间全部展示为北京时间、刚发的会话置顶不倒跳、Widget 不出现「-1天前」、反馈按“今天”日期筛选能命中刚点踩/点赞的记录。
 4. **清理**：删除冒烟创建的测试会话，停止本地服务进程。
