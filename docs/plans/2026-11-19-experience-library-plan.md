@@ -5,12 +5,12 @@
 
 初版（知识/记忆分页、审核流、按需文件、反馈用户列）已实施，验证记录见 [待办](../TODO.md#知识与记忆验证补全)。以下为 2026-11-26 修订的实施，分两个 PR。
 
-## PR 1：工具分类按名称精确匹配（修复现有缺陷，先合入）
+## PR 1：工具图标与文字分开确定（修复现有缺陷，先合入）
 
-- `dataagent-frontend/packages/agent-conversation/src/core/toolPresentation.js`：`describeToolAction` 改为按内置工具名（大小写不敏感）精确映射 `bash`/`read`/`write`/`edit`/`ls`/`grep`/`find`/`glob`/`skill`；其余工具一律为通用工具（显示名称与扳手图标），删除名称子串与参数形状推断。保留 `mcp__<server>__<tool>` 的显示名格式化，以及“名称为空或 `Tool` 且带技能名 → 技能”的历史记录回退。
-- `ui/ToolOutput.vue`：图标随新分类；删除“名称含 image → 生成图片”的推断；结构化结果（SQL、图表、Python）不变。
-- 测试：更新 `src/views/intelligence/__tests__/toolPresentation.spec.js`（CI 执行的现有用例，含 `Tool` 技能回退），新增 `packages/agent-conversation/src/__tests__/toolPresentation.spec.js`；`historyRender.spec.js` 中“输出更新不重新分类”的断言保持通过。用本地会话记录里的真实名称断言——`odw_search_tables`、`search_ontology`、`get_ontology`、`odw_query_readonly`、`AskUserQuestion` 为通用工具；`find`、`grep` 为搜索；`bash` 为执行命令；`smoke_read_large` 不再被当作读取文件。
-- 验证：`nvm use`；`npx vitest run --cache=false <touched specs>`；`npm run build`；本地打开一个含 MCP 调用的历史会话目视确认图标。
+- `dataagent-frontend/packages/agent-conversation/src/core/toolPresentation.js`：`describeToolAction` 返回的 `kind`（文字）只对内置工具名精确匹配（含 `AskUserQuestion`、`ExitPlanMode` 与 `Tool` 技能回退），其余为通用工具、文字为工具名；新增 `iconKind`：内置工具同 `kind`，其余按名称拆词后匹配动作词（见设计）。删除名称子串与参数形状推断对文字的影响。
+- `ui/ToolOutput.vue`：图标改用 `iconKind`；新增下载、问号、清单三个图标路径；删除“名称含 image → 生成图片”的文字推断；结构化结果不变。
+- 测试：更新 `src/views/intelligence/__tests__/toolPresentation.spec.js`（含 `Tool` 技能回退），新增 `packages/agent-conversation/src/__tests__/toolPresentation.spec.js`，用本地会话记录里的真实名称断言文字与图标：`odw_search_tables`/`search_ontology` → 文字为工具名、放大镜；`odw_query_readonly` → 数据库；`get_ontology`/`odw_get_table_ddl` → 文档；`odw_export_metadata` → 导出；`odw_resolve_datasource` → 扳手；`AskUserQuestion` → 向用户提问；`ExitPlanMode` → 提交计划；`find` → 搜索文件；`bash` → 执行命令。`historyRender.spec.js` 中“输出更新不重新分类”的断言保持通过。
+- 验证：`nvm use`；`npx vitest run --cache=false <touched specs>`；`npm run test:sdk -- --cache=false`；`npm run build`；本地打开一个含 MCP 调用的历史会话目视确认图标。
 - 回退：撤销该 PR。
 
 ## PR 2：只保留知识
