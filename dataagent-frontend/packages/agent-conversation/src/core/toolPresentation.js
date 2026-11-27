@@ -40,21 +40,6 @@ const buildSearchDetail = ({ pattern, directory, path, description }) => {
 // Must stay in sync with backend core.experience.INJECTION_ROOT.
 export const KNOWLEDGE_ROOT = '/opt/skills/_knowledge_memory'
 
-const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-const KNOWLEDGE_FILE_PATH_RE = new RegExp(`${escapeRegex(KNOWLEDGE_ROOT)}/+[A-Za-z0-9._-]+\\.md`, 'g')
-const KNOWLEDGE_DIR_PATH_RE = new RegExp(`${escapeRegex(KNOWLEDGE_ROOT)}/*(?![A-Za-z0-9_-])`, 'g')
-
-export const redactKnowledgePaths = (text) => {
-  const value = String(text ?? '')
-  if (!value || !value.includes(KNOWLEDGE_ROOT)) return value
-  const seen = new Map()
-  const withoutFiles = value.replace(KNOWLEDGE_FILE_PATH_RE, (match) => {
-    if (!seen.has(match)) seen.set(match, `知识文档 ${seen.size + 1}`)
-    return seen.get(match)
-  })
-  return withoutFiles.replace(KNOWLEDGE_DIR_PATH_RE, '知识目录')
-}
-
 const isKnowledgePath = (rawPath) => {
   const value = String(rawPath || '').trim()
   if (!value) return false

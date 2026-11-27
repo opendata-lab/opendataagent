@@ -240,28 +240,6 @@ def test_pending_editable_and_stale_patch_cannot_demote_approved_entry(monkeypat
     assert state["rolled_back"] == 1
 
 
-def test_long_single_line_body_is_hard_wrapped_while_headers_stay_intact():
-    # 6000 Chinese chars in a single line (~18 KiB UTF-8, exceeding Pi's 16 KiB cap)
-    continuous = "口" * 6000
-    text = experience.entry_text(entry("long1", body=continuous, when_text="统计口径"))
-    lines = text.splitlines()
-    assert lines[0] == "# long1"
-    assert lines[1] == "适用场景：统计口径"
-    assert lines[2] == ""
-    body_lines = lines[3:]
-    assert len(body_lines) == 3
-    assert all(len(line) <= experience.MAX_FILE_LINE_CHARS for line in body_lines)
-    assert all(len(line.encode("utf-8")) < 16384 for line in body_lines)
-    assert "".join(body_lines) == continuous
-
-    # With punctuation, wrapping breaks cleanly after punctuation while preserving all text.
-    punctuated = ("销售额不含退款订单，需要按财务确认日统计。" * 300)  # 6000 chars
-    wrapped_lines = experience.entry_text(entry("long2", body=punctuated, when_text="财务统计")).splitlines()[3:]
-    assert all(len(line) <= experience.MAX_FILE_LINE_CHARS for line in wrapped_lines)
-    assert all(line.endswith("。") or line.endswith("，") for line in wrapped_lines[:-1])
-    assert "".join(wrapped_lines) == punctuated
-
-
 def test_digest_target_agent_uses_only_structured_topic_metadata(monkeypatch):
     def fail_messages(*args, **kwargs):
         raise AssertionError("must not read topic messages to resolve digest target agent")

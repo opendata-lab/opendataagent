@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { KNOWLEDGE_ROOT, describeToolAction, iconKindFromName, redactKnowledgePaths } from '../core/toolPresentation.js'
+import { KNOWLEDGE_ROOT, describeToolAction, iconKindFromName } from '../core/toolPresentation.js'
 import ToolOutput from '../ui/ToolOutput.vue'
 
 const act = (name, input = {}) => describeToolAction({ name, input })
@@ -156,20 +156,14 @@ describe('ToolOutput knowledge presentation', () => {
     expect(doneRead.text()).not.toContain('deadbeef1234')
     doneRead.unmount()
 
-    // Completed knowledge_search with realistic rg output: redacts hashed paths in expanded trace
-    const hashA = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'
-    const hashB = 'ffeeddccbbaa99887766554433221100'
+    // Completed knowledge_search: shows search keyword in summary and status 已搜索
     const doneSearch = mount(ToolOutput, {
       props: {
         tool: {
           id: 't3',
           name: 'grep',
           input: { path: `${KNOWLEDGE_ROOT}/`, pattern: '退款' },
-          output: [
-            `${KNOWLEDGE_ROOT}/${hashA}.md:4:销售额不含已退款订单。`,
-            `${KNOWLEDGE_ROOT}/${hashA}.md:8:退款按财务确认日统计。`,
-            `${KNOWLEDGE_ROOT}/${hashB}.md:2:适用场景：退货与退款分析`
-          ].join('\n'),
+          output: 'match line',
           status: 'success',
           _callComplete: true,
           _runtimeStarted: true
@@ -178,58 +172,8 @@ describe('ToolOutput knowledge presentation', () => {
     })
     expect(doneSearch.find('.shell-trace-summary-text').text()).toBe('搜索知识：退款')
     expect(doneSearch.find('.shell-trace-summary-status').text()).toBe('已搜索')
-    await doneSearch.find('button.shell-trace-summary').trigger('click')
-    expect(doneSearch.text()).toContain('知识文档 1:4:销售额不含已退款订单。')
-    expect(doneSearch.text()).toContain('知识文档 1:8:退款按财务确认日统计。')
-    expect(doneSearch.text()).toContain('知识文档 2:2:适用场景：退货与退款分析')
-    expect(doneSearch.text()).not.toContain(hashA)
-    expect(doneSearch.text()).not.toContain(hashB)
     expect(doneSearch.text()).not.toContain('_knowledge_memory')
     doneSearch.unmount()
-
-    // Completed find with realistic fd output and truncated read with Pi's Source message
-    const doneFind = mount(ToolOutput, {
-      props: {
-        tool: {
-          id: 't4',
-          name: 'find',
-          input: { path: KNOWLEDGE_ROOT, pattern: '*.md' },
-          output: `${KNOWLEDGE_ROOT}/${hashA}.md\n${KNOWLEDGE_ROOT}/${hashB}.md`,
-          status: 'success',
-          _callComplete: true,
-          _runtimeStarted: true
-        }
-      }
-    })
-    await doneFind.find('button.shell-trace-summary').trigger('click')
-    expect(doneFind.text()).toContain('知识文档 1')
-    expect(doneFind.text()).toContain('知识文档 2')
-    expect(doneFind.text()).not.toContain(hashA)
-    expect(doneFind.text()).not.toContain('_knowledge_memory')
-    doneFind.unmount()
-
-    const truncatedRead = mount(ToolOutput, {
-      props: {
-        tool: {
-          id: 't5',
-          name: 'read',
-          input: { path: `${KNOWLEDGE_ROOT}/${hashA}.md` },
-          output: `# 销售额口径\n正文内容\nRead preview truncated. Source: ${KNOWLEDGE_ROOT}/${hashA}.md. Use offset/limit for fewer lines, or bash/Python to process a long single-line file.`,
-          status: 'success',
-          _callComplete: true,
-          _runtimeStarted: true
-        }
-      }
-    })
-    await truncatedRead.find('button.shell-trace-summary').trigger('click')
-    expect(truncatedRead.text()).toContain('Source: 知识文档 1.')
-    expect(truncatedRead.text()).not.toContain(hashA)
-    expect(truncatedRead.text()).not.toContain('_knowledge_memory')
-    truncatedRead.unmount()
-
-    // Non-knowledge paths are left untouched by redactKnowledgePaths
-    expect(redactKnowledgePaths('/workspace/report.md:1:hello')).toBe('/workspace/report.md:1:hello')
-    expect(redactKnowledgePaths(`${KNOWLEDGE_ROOT}_other/a.md`)).toBe(`${KNOWLEDGE_ROOT}_other/a.md`)
   })
 })
 

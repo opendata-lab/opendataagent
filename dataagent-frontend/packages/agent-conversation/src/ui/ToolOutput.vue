@@ -155,7 +155,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import LimitedText from './LimitedText.vue'
 import { extractChartSpec, extractTextParts, parseMaybeJson } from '../core/chartSpec.js'
-import { describeToolAction, formatSkillBootstrapLabel, redactKnowledgePaths } from '../core/toolPresentation.js'
+import { describeToolAction, formatSkillBootstrapLabel } from '../core/toolPresentation.js'
 import { useCopyFeedback } from '../utils/useCopyFeedback.js'
 import ChartSpecView from './ChartSpecView.vue'
 import ResultDataTable from './components/ResultDataTable.vue'
@@ -342,11 +342,8 @@ const chartVisible = computed(() => kind.value === 'chart_spec')
 
 const traceOutputText = computed(() => {
   const directText = extractTextParts(props.tool?.output).trim()
-  const raw = directText ? normalizeDisplayText(directText).trim() : normalizedRawText.value
-  if (traceKind.value === 'knowledge_read' || traceKind.value === 'knowledge_search') {
-    return redactKnowledgePaths(raw)
-  }
-  return raw
+  if (directText) return normalizeDisplayText(directText).trim()
+  return normalizedRawText.value
 })
 const traceMarkdownSource = computed(() => String(traceOutputText.value || '').trim())
 const showTraceMarkdown = computed(() => {

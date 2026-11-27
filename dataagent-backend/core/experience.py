@@ -32,8 +32,6 @@ MAX_CANDIDATES = 5
 MAX_CONTENT_CHARS = 20000
 MAX_DIGEST_CONTENT_CHARS = 500
 MAX_INDEX_LINES = 100
-MAX_FILE_LINE_CHARS = 2000
-_WRAP_BREAK_CHARS = frozenset(" \t，。；！？、：）】》.,;!?)")
 INJECTION_FOLDER = "_knowledge_memory"
 INJECTION_ROOT = f"/opt/skills/{INJECTION_FOLDER}"
 MAX_TASK_CHARS = 4000
@@ -397,42 +395,10 @@ def experience_file_path(experience_id: str) -> str:
     return f"{INJECTION_ROOT}/{experience_filename(experience_id)}"
 
 
-def _wrap_line(line: str, limit: int = MAX_FILE_LINE_CHARS) -> list[str]:
-    if len(line) <= limit:
-        return [line]
-    chunks: list[str] = []
-    start = 0
-    total = len(line)
-    while start < total:
-        end = start + limit
-        if end >= total:
-            chunks.append(line[start:])
-            break
-        # Prefer breaking after whitespace or punctuation in the second half of the window.
-        floor = start + limit // 2
-        split_at = -1
-        for idx in range(end - 1, floor - 1, -1):
-            if line[idx] in _WRAP_BREAK_CHARS:
-                split_at = idx + 1
-                break
-        if split_at <= start:
-            split_at = end
-        chunks.append(line[start:split_at])
-        start = split_at
-    return chunks
-
-
-def _wrap_body_lines(body: str, limit: int = MAX_FILE_LINE_CHARS) -> str:
-    wrapped: list[str] = []
-    for line in str(body or "").splitlines():
-        wrapped.extend(_wrap_line(line, limit))
-    return "\n".join(wrapped)
-
-
 def entry_text(item: dict[str, Any]) -> str:
     when_text = str(item.get("when_text") or "").strip()
     header = f"# {item['title']}\n适用场景：{when_text}\n" if when_text else f"# {item['title']}\n"
-    return f"{header}\n{_wrap_body_lines(item['body'])}\n"
+    return f"{header}\n{item['body']}\n"
 
 
 def injection_eligibility(agent_id: str, *, injection_enabled: bool | None = None) -> tuple[bool, str]:
