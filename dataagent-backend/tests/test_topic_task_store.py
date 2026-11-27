@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import inspect
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -111,9 +111,9 @@ def test_normalize_message_row_only_attaches_history_to_assistant():
             "feedback": "like",
             "error_json": None,
             "show_in_ui": 1,
-            "created_at": datetime(2026, 11, 27, 9, 0),
-            "finished_at": datetime(2026, 11, 27, 9, 5),
-            "updated_at": datetime(2026, 11, 27, 9, 15),
+            "created_at": datetime(2026, 11, 27, 9, 0, tzinfo=UTC),
+            "finished_at": datetime(2026, 11, 27, 9, 5, tzinfo=UTC),
+            "updated_at": datetime(2026, 11, 27, 9, 15, tzinfo=UTC),
         },
         history={"blocks": [{"block_id": "main_1", "type": "main_text", "text": "最终结果", "status": "success"}], "resume_after_seq": 12},
     )
@@ -136,7 +136,7 @@ def test_normalize_message_row_only_attaches_history_to_assistant():
             "usage_json": None,
             "error_json": None,
             "show_in_ui": 1,
-            "created_at": datetime(2026, 11, 27, 9, 0),
+            "created_at": datetime(2026, 11, 27, 9, 0, tzinfo=UTC),
             "updated_at": None,
         },
         history={"blocks": [{"block_id": "ignored", "type": "thinking", "text": "忽略", "status": "success"}], "resume_after_seq": 9},
@@ -145,13 +145,13 @@ def test_normalize_message_row_only_attaches_history_to_assistant():
     assert assistant["blocks"][0]["type"] == "main_text"
     assert assistant["resume_after_seq"] == 12
     assert assistant["feedback"] == "like"
-    assert assistant["created_at"] == "2026-11-27T09:00:00"
-    assert assistant["finished_at"] == "2026-11-27T09:05:00"
-    assert assistant["updated_at"] == "2026-11-27T09:15:00"
+    assert assistant["created_at"] == "2026-11-27T09:00:00Z"
+    assert assistant["finished_at"] == "2026-11-27T09:05:00Z"
+    assert assistant["updated_at"] == "2026-11-27T09:15:00Z"
     assert "blocks" not in user
     assert "resume_after_seq" not in user
     assert user["feedback"] == ""
-    assert user["created_at"] == "2026-11-27T09:00:00"
+    assert user["created_at"] == "2026-11-27T09:00:00Z"
     assert "finished_at" not in user
 
 

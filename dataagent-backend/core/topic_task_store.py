@@ -3401,7 +3401,7 @@ class TopicTaskStore(SessionCheckpointStore):
             # meanwhile so the switch can be reverted without a data change.
             normalized["records"] = list(history.get("records") or []) if history else []
             normalized["resume_after_seq"] = int(history.get("resume_after_seq") or 0) if history else 0
-            normalized["finished_at"] = _to_iso(row.get("finished_at")) or None
+            normalized["finished_at"] = to_rfc3339(row.get("finished_at")) or None
         return normalized
 
     def _normalize_task_row(self, row: dict[str, Any]) -> dict[str, Any]:
