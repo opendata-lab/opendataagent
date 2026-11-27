@@ -95,37 +95,42 @@ describe('Knowledge management page', () => {
     const drawer = wrapper.findComponent(ExperienceDrawer)
     const textarea = drawer.find('textarea')
     expect(textarea.exists()).toBe(true)
-    expect(Number(textarea.attributes('maxlength'))).toBe(20000)
+    expect(textarea.attributes('maxlength')).toBeUndefined()
     expect(textarea.attributes('placeholder')).not.toContain('不要写业务口径定义')
+    expect(drawer.find('.body-word-count').text()).toBe('0 / 20000')
 
-    const longBody = '口'.repeat(3000)
-    drawer.vm.form = { title: '长口径文档', when_text: '查销售额时', body: longBody, target: 'global' }
+    // 11,000 supplementary Unicode code points (22,000 UTF-16 code units) fit the 20,000 code-point limit.
+    const emojiBody = '😀'.repeat(11000)
+    drawer.vm.form = { title: '长口径文档', when_text: '查销售额时', body: emojiBody, target: 'global' }
     await flushPromises()
+    expect(drawer.find('.body-word-count').text()).toBe('11000 / 20000')
     await drawer.vm.save()
     expect(api.createExperience).toHaveBeenCalledWith({
       title: '长口径文档',
       when_text: '查销售额时',
-      body: longBody,
+      body: emojiBody,
       scope: 'global',
       agent_id: null
     })
   })
 
-  it('rejects manual body over 20000 chars and digest body over 500 chars', async () => {
+  it('rejects manual body over 20000 code points and digest body over 500 code points', async () => {
     const wrapper = await mountPage()
     wrapper.vm.openDrawer(null, true)
     await flushPromises()
     const drawer = wrapper.findComponent(ExperienceDrawer)
-    drawer.vm.form = { title: '超长', when_text: '场景', body: '长'.repeat(20001), target: 'global' }
+    drawer.vm.form = { title: '超长', when_text: '场景', body: '😀'.repeat(20001), target: 'global' }
     await flushPromises()
+    expect(drawer.find('.body-word-count').text()).toBe('20001 / 20000')
     await drawer.vm.save()
     expect(api.createExperience).not.toHaveBeenCalled()
     await flushPromises()
     await vi.waitFor(() => expect(drawer.text()).toContain('最多 20000 字'))
 
     const pendingWrapper = await mountPage({ status: 'pending' })
-    pendingWrapper.vm.reviewForm.body = '长'.repeat(501)
+    pendingWrapper.vm.reviewForm.body = '😀'.repeat(501)
     await flushPromises()
+    expect(pendingWrapper.find('.body-word-count').text()).toBe('501 / 500')
     await pendingWrapper.vm.approve()
     expect(api.updateExperience).not.toHaveBeenCalled()
     await flushPromises()

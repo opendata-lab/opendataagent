@@ -154,6 +154,21 @@ DataAgent 统一账号体系始终启用登录认证，`deploy/docker/dataagent/
 
 该迁移不支持降级。需要回退时运行 `scripts/restore-db.sh deploy/backups/dataagent-<时间>.sql.gz`（会先清空库内全部表再导入），把 `deploy/.env` 的 `ODA_*_IMAGE` 改回旧版本，必要时从 `config-<时间>.tar.gz` 解压回旧配置，再执行 `scripts/start.sh`。
 
+### 升级到「只保留知识」版本（迁移 `20261127_000047`）
+
+迁移 `20261127_000047` 会删除 `da_agent_experience` 的 `kind` 与 `inject_mode` 列（原有 `memory` 行原样保留为知识），并将全部知识改为按需读取（系统提示词仅列最多 100 条目录，模型按需 `grep`/`read`）。原有「始终注入（`inject_mode='always'`）」的条目升级后不再无条件写入系统提示词，可能因超出目录上限或模型跳过读取而不生效。
+
+**升级前**（先执行 `scripts/backup-db.sh` 备份，该迁移同样不支持 `alembic downgrade`），先查出所有生效中的始终注入条目，把其中必须无条件遵守的硬性规则迁入对应助手的**角色设定**（系统提示词）；全局硬性规则按需加入相关助手的角色设定：
+
+```sql
+SELECT experience_id, scope, agent_id, title, when_text, content
+FROM da_agent_experience
+WHERE status = 'active' AND inject_mode = 'always'
+ORDER BY scope, agent_id, updated_at DESC;
+```
+
+其余条目无需手动处理，升级后自动转为按需读取的知识。
+
 缺合法 `SECRET_KEY`、显式置 `AUTH_ENABLED = False`、文件不可读或语法错误时服务启动失败（fail-closed）。
 
 宿主系统内嵌 Widget 不再使用访问密钥，也不接受匿名访客或同源复用平台登录：在后台「设置 → Widget 接入」登记 `Website ID` 与浏览器允许来源（`allowed_origins`）。当站点已登记，且请求不带 `Origin` 头（例如 OntoFoundry BFF 服务端调用）或 `Origin` 命中该站点的允许来源列表（例如 OpenDataWorks 门户浏览器直连）时，DataAgent 信任请求头 `X-DataAgent-User-Id` 中的纯用户名并对应同名平台账号（含 `admin`）；缺少用户名返回 `401 WIDGET_LOGIN_REQUIRED`，未登记站点或未放行来源返回 `403`。Widget 凭据限于运行及助手目录，平台账号、管理、评测和令牌接口需要平台登录。每个会话只属于发起它的用户，不支持多人共享会话。**风险提示**：无密钥模式下任何能访问 DataAgent API 的调用方都可为已登记站点宣称任意用户名，仅适用于可信内网部署，务必保证 8900 端口不对外暴露。

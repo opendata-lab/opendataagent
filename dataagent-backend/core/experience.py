@@ -32,6 +32,8 @@ MAX_CANDIDATES = 5
 MAX_CONTENT_CHARS = 20000
 MAX_DIGEST_CONTENT_CHARS = 500
 MAX_INDEX_LINES = 100
+MAX_FILE_LINE_CHARS = 2000
+_WRAP_BREAK_CHARS = frozenset(" \t，。；！？、：）】》.,;!?)")
 INJECTION_FOLDER = "_knowledge_memory"
 INJECTION_ROOT = f"/opt/skills/{INJECTION_FOLDER}"
 MAX_TASK_CHARS = 4000
@@ -289,46 +291,70 @@ def update_experience(
     updated_by: str = "",
     **changes: Any,
 ) -> dict[str, Any] | None:
-    current = get_experience(experience_id)
-    if not current:
-        return None
-    next_item = {**current, **changes}
-    _check_status(next_item["status"], current=current["status"])
-    scope, agent_id = _check_scope(next_item["scope"], next_item["agent_id"])
-    title = _clean_text(next_item["title"], "title", 40)
-    # Legacy migrated entries have no condition. Require one when edited/approved,
-    # but still allow them to be disabled or restored without changing their text.
-    when_text = _clean_text(
-        next_item["when_text"],
-        "when_text",
-        120,
-        required="when_text" in changes or current["status"] == "pending" and next_item["status"] == "active",
-    )
-    # Status-only PATCHes do not re-validate body length or emptiness.
-    body = _clean_text(changes["body"], "body", MAX_CONTENT_CHARS) if "body" in changes else current["body"]
+    allowed_fields = {"status", "scope", "agent_id", "title", "when_text", "body"}
+    unknown = set(changes) - allowed_fields
+    if unknown:
+        raise ValueError(f"unsupported fields: {', '.join(sorted(unknown))}")
+
     conn = _connect()
     try:
         with conn.cursor() as cur:
+            # Lock the row before reading so a stale PATCH cannot overwrite a concurrent approval back to pending.
             cur.execute(
-                """
-                UPDATE da_agent_experience
-                SET status = %s, scope = %s, agent_id = %s, content = %s, title = %s,
-                    when_text = %s, user_id = %s, updated_by = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE experience_id = %s
-                """,
-                (
-                    next_item["status"],
-                    scope,
-                    agent_id,
-                    body,
-                    title,
-                    when_text,
-                    int(user_id) if user_id is not None else None,
-                    updated_by,
-                    experience_id,
-                ),
+                "SELECT * FROM da_agent_experience WHERE experience_id = %s FOR UPDATE",
+                (experience_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            current = _row_to_item(row)
+            next_status = changes["status"] if "status" in changes else current["status"]
+            _check_status(next_status, current=current["status"])
+
+            updates: list[str] = []
+            params: list[Any] = []
+
+            if "status" in changes:
+                updates.append("status = %s")
+                params.append(next_status)
+
+            if "scope" in changes or "agent_id" in changes:
+                next_scope = changes["scope"] if "scope" in changes else current["scope"]
+                next_agent_id = changes["agent_id"] if "agent_id" in changes else current["agent_id"]
+                scope, agent_id = _check_scope(next_scope, next_agent_id)
+                updates.extend(["scope = %s", "agent_id = %s"])
+                params.extend([scope, agent_id])
+
+            if "title" in changes:
+                updates.append("title = %s")
+                params.append(_clean_text(changes["title"], "title", 40))
+
+            # Legacy migrated entries have no condition. Require one when edited/approved,
+            # but still allow them to be disabled or restored without changing their text.
+            approving = current["status"] == "pending" and next_status == "active"
+            if "when_text" in changes or approving:
+                raw_when = changes["when_text"] if "when_text" in changes else current["when_text"]
+                cleaned_when = _clean_text(raw_when, "when_text", 120, required=True)
+                if "when_text" in changes:
+                    updates.append("when_text = %s")
+                    params.append(cleaned_when)
+
+            # Status-only PATCHes do not re-validate body length or emptiness.
+            if "body" in changes:
+                updates.append("content = %s")
+                params.append(_clean_text(changes["body"], "body", MAX_CONTENT_CHARS))
+
+            updates.extend(["user_id = %s", "updated_by = %s", "updated_at = CURRENT_TIMESTAMP"])
+            params.extend([int(user_id) if user_id is not None else None, updated_by, experience_id])
+            cur.execute(
+                f"UPDATE da_agent_experience SET {', '.join(updates)} WHERE experience_id = %s",
+                params,
             )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
     return get_experience(experience_id)
@@ -371,10 +397,42 @@ def experience_file_path(experience_id: str) -> str:
     return f"{INJECTION_ROOT}/{experience_filename(experience_id)}"
 
 
+def _wrap_line(line: str, limit: int = MAX_FILE_LINE_CHARS) -> list[str]:
+    if len(line) <= limit:
+        return [line]
+    chunks: list[str] = []
+    start = 0
+    total = len(line)
+    while start < total:
+        end = start + limit
+        if end >= total:
+            chunks.append(line[start:])
+            break
+        # Prefer breaking after whitespace or punctuation in the second half of the window.
+        floor = start + limit // 2
+        split_at = -1
+        for idx in range(end - 1, floor - 1, -1):
+            if line[idx] in _WRAP_BREAK_CHARS:
+                split_at = idx + 1
+                break
+        if split_at <= start:
+            split_at = end
+        chunks.append(line[start:split_at])
+        start = split_at
+    return chunks
+
+
+def _wrap_body_lines(body: str, limit: int = MAX_FILE_LINE_CHARS) -> str:
+    wrapped: list[str] = []
+    for line in str(body or "").splitlines():
+        wrapped.extend(_wrap_line(line, limit))
+    return "\n".join(wrapped)
+
+
 def entry_text(item: dict[str, Any]) -> str:
     when_text = str(item.get("when_text") or "").strip()
     header = f"# {item['title']}\n适用场景：{when_text}\n" if when_text else f"# {item['title']}\n"
-    return f"{header}\n{item['body']}\n"
+    return f"{header}\n{_wrap_body_lines(item['body'])}\n"
 
 
 def injection_eligibility(agent_id: str, *, injection_enabled: bool | None = None) -> tuple[bool, str]:
@@ -627,8 +685,12 @@ async def _start_digest(store, digest_agent: dict[str, Any], agent_id: str, day:
     records, count = build_session_records(agent_id, day)
     if not count:
         return None
-    topic = store.create_topic(title=title, agent_snapshot=digest_agent,
-                               context={"source": "web", "user_id": None, "system_digest": True})
+    topic = store.create_topic(
+        title=title,
+        agent_snapshot=digest_agent,
+        context={"source": "web", "user_id": None, "system_digest": True},
+        digest_target_agent_id=agent_id,
+    )
     filename = f"sessions-{day.isoformat()}.md"
     save_upload(topic["topic_id"], filename, records.encode("utf-8"))
     await submit_message_task(
@@ -673,6 +735,9 @@ def collect_candidates(topic_id: str, task_id: str) -> int:
         return 0
     items = payload.get("candidates") if isinstance(payload, dict) else payload
     target = _digest_target_agent(topic)
+    if not target:
+        logger.warning("experience.digest.missing_target_agent topic_id=%s task_id=%s", topic_id, task_id)
+        return 0
     seen = _contents_from_digest(topic_id)
     stored = 0
     for item in (items if isinstance(items, list) else [])[:MAX_CANDIDATES]:
@@ -714,10 +779,5 @@ def _contents_from_digest(topic_id: str) -> set[str]:
 
 
 def _digest_target_agent(topic: dict[str, Any]) -> str | None:
-    """The assistant a digest conversation summarizes, from the first message."""
-    store = get_topic_task_store()
-    for message in store.list_topic_messages(str(topic.get("topic_id") or ""))[:3]:
-        match = re.search(r"agent_id: ([A-Za-z0-9_\-]+)", str(message.get("content") or ""))
-        if match:
-            return match.group(1)
-    return None
+    """The assistant a digest conversation summarizes, from structured topic metadata."""
+    return str(topic.get("digest_target_agent_id") or "").strip() or None

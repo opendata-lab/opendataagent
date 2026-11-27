@@ -139,6 +139,16 @@ def test_upgrade_converts_memory_rows_widens_content_and_is_idempotent():
                 assert cols["content"]["CHARACTER_SET_NAME"] == "utf8mb4"
                 assert cols["content"]["IS_NULLABLE"] == "NO"
 
+                cur.execute(
+                    """
+                    SELECT COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'da_agent_topic' AND COLUMN_NAME = 'digest_target_agent_id'
+                    """,
+                    (schema,),
+                )
+                assert cur.fetchone() is not None
+
                 cur.execute("SHOW INDEX FROM da_agent_experience")
                 indexes = {}
                 for row in cur.fetchall():
@@ -193,3 +203,91 @@ def test_upgrade_converts_memory_rows_widens_content_and_is_idempotent():
         )
         assert down.returncode != 0
         assert "restore-db.sh" in (down.stderr + down.stdout)
+
+
+def test_upgrade_recovers_from_partial_state_after_kind_dropped():
+    """Simulate a mid-migration failure after dropping kind while revision 46 is still stamped."""
+    schema = "knowledge_test_migration_partial"
+    with _throwaway_schema(schema) as env:
+        conn = pymysql.connect(
+            host="127.0.0.1",
+            port=3326,
+            user="root",
+            password="root123",
+            database=schema,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=True,
+            init_command="SET time_zone = '+00:00'",
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO da_agent_experience
+                        (experience_id, kind, title, when_text, inject_mode, scope, agent_id, content,
+                         source_task_ids_json, digest_topic_id, status, updated_by)
+                    VALUES
+                        ('exp_partial_1', 'memory', '待审部分迁移', '退货时', 'on_demand', 'agent', 'agent_sales',
+                         '部分迁移保留内容', '["task_p1"]', 'topic_partial_1', 'pending', '')
+                    """
+                )
+                # Partial DDL state: kind index and kind column dropped, inject_mode and TEXT content remain,
+                # digest_target_agent_id not yet added, alembic_version still stamped at 20261127_000046.
+                cur.execute("DROP INDEX idx_da_agent_experience_kind ON da_agent_experience")
+                cur.execute("ALTER TABLE da_agent_experience DROP COLUMN kind")
+        finally:
+            conn.close()
+
+        subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "20261127_000047"],
+            cwd=str(BACKEND_ROOT),
+            env=env,
+            check=True,
+        )
+
+        conn = pymysql.connect(
+            host="127.0.0.1",
+            port=3326,
+            user="root",
+            password="root123",
+            database=schema,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=True,
+            init_command="SET time_zone = '+00:00'",
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_SET_NAME, IS_NULLABLE
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'da_agent_experience'
+                    """,
+                    (schema,),
+                )
+                cols = {row["COLUMN_NAME"]: row for row in cur.fetchall()}
+                assert "kind" not in cols
+                assert "inject_mode" not in cols
+                assert cols["content"]["DATA_TYPE"].lower() == "mediumtext"
+                assert cols["content"]["CHARACTER_SET_NAME"] == "utf8mb4"
+                assert cols["content"]["IS_NULLABLE"] == "NO"
+
+                cur.execute(
+                    """
+                    SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'da_agent_topic' AND COLUMN_NAME = 'digest_target_agent_id'
+                    """,
+                    (schema,),
+                )
+                assert cur.fetchone() is not None
+
+                cur.execute("SELECT * FROM da_agent_experience WHERE experience_id = 'exp_partial_1'")
+                row = cur.fetchone()
+                assert row is not None
+                assert row["status"] == "pending"
+                assert row["digest_topic_id"] == "topic_partial_1"
+                assert row["content"] == "部分迁移保留内容"
+        finally:
+            conn.close()

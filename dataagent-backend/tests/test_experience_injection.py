@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -136,78 +137,139 @@ def test_validation_before_database_access(changes, monkeypatch):
         )
 
 
-def test_status_only_patch_skips_body_length_validation(monkeypatch):
+def _fake_db_conn(row_by_id):
+    executed = []
+    state = {"committed": 0, "rolled_back": 0}
+
+    class _FakeCursor:
+        def __init__(self):
+            self._row = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, params=()):
+            executed.append((sql, params))
+            if "SELECT * FROM da_agent_experience" in sql:
+                self._row = row_by_id.get(params[0])
+
+        def fetchone(self):
+            return self._row
+
+    class _FakeConn:
+        def cursor(self):
+            return _FakeCursor()
+
+        def commit(self):
+            state["committed"] += 1
+
+        def rollback(self):
+            state["rolled_back"] += 1
+
+        def close(self):
+            pass
+
+    return _FakeConn, executed, state
+
+
+def _db_row(item):
+    return {
+        "experience_id": item["experience_id"],
+        "title": item["title"],
+        "when_text": item["when_text"],
+        "scope": item["scope"],
+        "agent_id": item["agent_id"],
+        "content": item["body"],
+        "source_task_ids_json": "[]",
+        "digest_topic_id": item.get("digest_topic_id"),
+        "status": item["status"],
+        "user_id": None,
+        "updated_by": "",
+        "created_at": datetime(2026, 11, 19, tzinfo=UTC),
+        "updated_at": datetime(2026, 11, 19, tzinfo=UTC),
+    }
+
+
+def test_status_only_patch_locks_row_and_skips_body_validation(monkeypatch):
     existing = {
         **entry("exp1", body="超" * 20005),
         "status": "active",
     }
-    executed = []
+    conn_cls, executed, state = _fake_db_conn({"exp1": _db_row(existing)})
+    monkeypatch.setattr(experience, "_connect", conn_cls)
+    monkeypatch.setattr(experience, "get_experience", lambda eid: {**existing, "status": "disabled"})
 
-    class _FakeCursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def execute(self, sql, params):
-            executed.append((sql, params))
-
-    class _FakeConn:
-        def cursor(self):
-            return _FakeCursor()
-
-        def commit(self):
-            pass
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr(experience, "get_experience", lambda eid: existing)
-    monkeypatch.setattr(experience, "_connect", lambda: _FakeConn())
-
-    # Status-only update succeeds without re-validating body length.
+    # Status-only update locks the row FOR UPDATE and updates only status + audit columns.
     experience.update_experience("exp1", status="disabled", updated_by="admin")
-    assert len(executed) == 1
+    assert "FOR UPDATE" in executed[0][0]
+    update_sql = executed[1][0]
+    assert "status = %s" in update_sql
+    assert "content = %s" not in update_sql
+    assert state["committed"] == 1
 
-    # Explicitly editing body still enforces the 20000-character limit.
+    # Explicitly editing body still enforces the 20000-character limit and rolls back.
     with pytest.raises(ValueError, match="20000"):
         experience.update_experience("exp1", body="超" * 20001, updated_by="admin")
+    assert state["rolled_back"] == 1
 
 
-def test_pending_editable_and_reviewed_cannot_return_to_pending(monkeypatch):
+def test_pending_editable_and_stale_patch_cannot_demote_approved_entry(monkeypatch):
     pending = {**entry("exp_p"), "status": "pending", "digest_topic_id": "topic_d"}
     active = {**entry("exp_a"), "status": "active"}
+    conn_cls, executed, state = _fake_db_conn({"exp_p": _db_row(pending), "exp_a": _db_row(active)})
 
-    class _FakeCursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def execute(self, sql, params):
-            pass
-
-    class _FakeConn:
-        def cursor(self):
-            return _FakeCursor()
-
-        def commit(self):
-            pass
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr(experience, "_connect", lambda: _FakeConn())
+    monkeypatch.setattr(experience, "_connect", conn_cls)
     monkeypatch.setattr(experience, "get_experience", lambda eid: pending if eid == "exp_p" else active)
 
     # Editing a pending item while keeping it pending is allowed.
     assert experience.update_experience("exp_p", title="修订标题", status="pending") is not None
+    assert "FOR UPDATE" in executed[0][0]
 
-    # Returning a reviewed item to pending is rejected.
+    # Editing fields on an already-approved item without supplying status never touches status.
+    executed.clear()
+    assert experience.update_experience("exp_a", title="修订已生效标题") is not None
+    assert "status = %s" not in executed[1][0]
+    assert "title = %s" in executed[1][0]
+
+    # Returning a reviewed item to pending is rejected and rolled back.
     with pytest.raises(ValueError, match="pending"):
         experience.update_experience("exp_a", status="pending")
+    assert state["rolled_back"] == 1
+
+
+def test_long_single_line_body_is_hard_wrapped_while_headers_stay_intact():
+    # 6000 Chinese chars in a single line (~18 KiB UTF-8, exceeding Pi's 16 KiB cap)
+    continuous = "口" * 6000
+    text = experience.entry_text(entry("long1", body=continuous, when_text="统计口径"))
+    lines = text.splitlines()
+    assert lines[0] == "# long1"
+    assert lines[1] == "适用场景：统计口径"
+    assert lines[2] == ""
+    body_lines = lines[3:]
+    assert len(body_lines) == 3
+    assert all(len(line) <= experience.MAX_FILE_LINE_CHARS for line in body_lines)
+    assert all(len(line.encode("utf-8")) < 16384 for line in body_lines)
+    assert "".join(body_lines) == continuous
+
+    # With punctuation, wrapping breaks cleanly after punctuation while preserving all text.
+    punctuated = ("销售额不含退款订单，需要按财务确认日统计。" * 300)  # 6000 chars
+    wrapped_lines = experience.entry_text(entry("long2", body=punctuated, when_text="财务统计")).splitlines()[3:]
+    assert all(len(line) <= experience.MAX_FILE_LINE_CHARS for line in wrapped_lines)
+    assert all(line.endswith("。") or line.endswith("，") for line in wrapped_lines[:-1])
+    assert "".join(wrapped_lines) == punctuated
+
+
+def test_digest_target_agent_uses_only_structured_topic_metadata(monkeypatch):
+    def fail_messages(*args, **kwargs):
+        raise AssertionError("must not read topic messages to resolve digest target agent")
+
+    monkeypatch.setattr(experience, "get_topic_task_store", lambda: SimpleNamespace(list_topic_messages=fail_messages))
+    assert experience._digest_target_agent({"topic_id": "t1", "digest_target_agent_id": "agent_sales"}) == "agent_sales"
+    assert experience._digest_target_agent({"topic_id": "t1", "digest_target_agent_id": ""}) is None
+    assert experience._digest_target_agent({"topic_id": "t1"}) is None
 
 
 def test_preview_and_runtime_eligibility_match(monkeypatch):

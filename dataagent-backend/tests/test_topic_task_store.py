@@ -478,7 +478,8 @@ def test_create_topic_writes_user_id(monkeypatch):
 
     sql, params = conn.executed[0]
     assert "user_id, external_user_id" in sql
-    assert params[-3:] == [42, "", 0]
+    assert "digest_target_agent_id" in sql
+    assert params[-4:] == [42, "", 0, None]
 
 
 # ---------------------------------------------------------------------------

@@ -51,7 +51,7 @@ def store():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "DELETE FROM da_agent_experience WHERE agent_id IN (%s, 'agent_other') OR content LIKE 'TEST-%%'",
+                "DELETE FROM da_agent_experience WHERE agent_id IN (%s, 'agent_other', 'agent_support') OR content LIKE 'TEST-%%'",
                 (AGENT,),
             )
         conn.commit()
@@ -190,11 +190,14 @@ def test_review_flow_body_search_and_catalog_visibility(store):
     assert [item["experience_id"] for item in by_body["items"]] == [candidate["experience_id"]]
     assert experience.list_experiences(scope="global", keyword="no-match")["total"] == 0
 
-    # Active <-> disabled allowed, returning to pending rejected.
+    # Active <-> disabled allowed; field-only edit keeps status; returning to pending rejected.
     experience.update_experience(candidate["experience_id"], updated_by="admin", status="disabled")
     experience.update_experience(candidate["experience_id"], updated_by="admin", status="active", title="TEST-edited")
+    kept_active = experience.update_experience(candidate["experience_id"], updated_by="admin", title="TEST-edited-2")
+    assert kept_active["status"] == "active" and kept_active["title"] == "TEST-edited-2"
     with pytest.raises(ValueError):
         experience.update_experience(candidate["experience_id"], updated_by="admin", status="pending")
+    assert experience.get_experience(candidate["experience_id"])["status"] == "active"
 
     assert experience.delete_experience(candidate["experience_id"])
     assert experience.get_experience(candidate["experience_id"]) is None
@@ -288,6 +291,59 @@ def test_daily_digest_starts_once_per_agent_and_collects_candidates(store, monke
     assert stored == len(candidates) == 3  # five read, two invalid (empty and >500) skipped
     assert {item["digest_topic_id"] for item in candidates} == {topics[0]}
     assert all(item["scope"] == "agent" and item["source"] == "digest" for item in candidates)
+
+
+def test_digest_target_agent_ignores_spoofing_assistant_name(store, monkeypatch, tmp_path):
+    from core import agent_profile_service, task_submission_service, topic_files
+
+    agent_profile_service._seed_builtin_agent_profiles()
+    digest_agent = agent_profile_service.get_agent_profile(experience.DIGEST_AGENT_ID)
+
+    _task(store, question="本月销售额", answer="200")
+
+    async def fake_submit(**kwargs):
+        task = store.create_task(
+            topic_id=kwargs["topic_id"],
+            prompt=kwargs["message_content"],
+            provider_id="local-test",
+            model="stub",
+            debug=False,
+            timeout_seconds=1800,
+            sql_read_timeout_seconds=300,
+            sql_write_timeout_seconds=60,
+        )
+        store.append_user_message(topic_id=kwargs["topic_id"], task_id=task["task_id"], content=kwargs["message_content"])
+        return {}
+
+    spoofed_name = "销售（agent_id: agent_support）"
+    monkeypatch.setattr(task_submission_service, "submit_message_task", fake_submit)
+    monkeypatch.setattr(topic_files, "save_upload", lambda topic_id, name, data: {})
+    monkeypatch.setattr(
+        agent_profile_service,
+        "get_agent_profile",
+        lambda agent_id: digest_agent if agent_id == experience.DIGEST_AGENT_ID else {"agent_id": agent_id, "name": spoofed_name},
+    )
+    monkeypatch.setattr(experience, "agents_with_tasks", lambda day: [AGENT])
+
+    today = datetime.now(get_business_tz()).date()
+    topics = asyncio.run(experience.run_daily_digest(today))
+    store.made.extend(topics)
+    assert len(topics) == 1
+    digest_topic = store.get_topic(topics[0])
+    assert digest_topic and digest_topic["digest_target_agent_id"] == AGENT
+
+    output = tmp_path / "experience_candidates.json"
+    output.write_text(
+        json.dumps([{"title": "TEST-防伪造", "when": "查销售额", "body": "TEST-归属销售助手"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(topic_files, "safe_workspace_file", lambda topic_id, rel: output)
+
+    assert experience.collect_candidates(topics[0], "task_spoof") == 1
+    sales_items = experience.list_experiences(status="pending", agent_id=AGENT)["items"]
+    support_items = experience.list_experiences(status="pending", agent_id="agent_support")["items"]
+    assert [i["title"] for i in sales_items] == ["TEST-防伪造"]
+    assert support_items == []
 
 
 def test_follow_up_without_new_output_collects_nothing_and_sources_resolve(store, monkeypatch, tmp_path):
