@@ -56,7 +56,15 @@
 - **身份**：定时消息以所属会话的所有者（`da_agent_topic.user_id`）身份执行，和手动发消息走同一条路径。2026-11-10 起 OpenDataWorks MCP 只按服务账号 Token 授权，用户标识只记审计，不再有"人 EXPLAIN"检查（[服务令牌模式设计](https://github.com/opendata-lab/opendataworks/blob/main/docs/design/2026-11-09-mcp-service-token-mode-design.md)）。
 - **要做**：决定是否正式提供定时任务。若提供，需要单独的定时任务菜单（列表、创建/编辑 cron、启停、执行记录），并按中大型变更先写设计和计划；若不提供，删除后端接口、定时循环、两张表和前端封装。
 
+### 知识运行前检索与钩子注入（知识修订的后续）
+
+- **现状**（2026-11-26）：知识修订第一期只有“系统提示词中的知识目录 + 模型自行扩展关键词 grep/read”，没有运行前检索。Pi 以空扩展列表运行（`dataagent-runtime-pi/src/kernel/sdk-session.ts`）。
+- **要做**：知识多到目录放不下、或实测模型常漏读时，加运行前检索（MySQL 内置 ngram 全文索引，本地 8.0.46 已确认可用；需确认生产版本 ≥5.7.6），结果经 Pi 官方 `before_agent_start` 钩子作为会话消息注入（用公开的 `DefaultResourceLoader` 加载内联扩展）。检索文本带最近 1–2 条用户消息；卡片恢复不重复注入；不设固定分数阈值；ngram 的两字片段语义（`dwd_order`/`dwd_customer`、单字、停用词）要测。钩子应做成通用“上下文提供者”，与下方插件机制一起设计，供本体查询复用。
+- **来源**：用户 2026-11-26 讨论；Neon 与 Codex 两轮评审（`~/.agents/handoffs/2026-11-26-{neon,codex}-knowledge-retrieval-review/`）。[设计](design/2026-11-19-experience-library-design.md)
+
 ### 插件管理与导入（暂缓，后续专门实施）
+
+- **补充**（2026-11-26 用户讨论）：参考 Claude Code / ZCode 的 plugin（一个包内含 skills、子智能体、hooks、MCP，从市场安装）。插件机制设计时一并考虑 hooks（服务端以 HTTP 处理程序为主，沙箱无网络）与子智能体；运行前钩子与上方“知识运行前检索”共用通用接口。OntoFoundry 本体查询是第一个用例。
 
 - **新需求：整包安装插件**（2026-11-05 用户提出）：DataAgent 能直接导入一个插件 ZIP，不再靠管理员手工拼装。第一个真实用例是 OntoFoundry v0.2.7 的 `ontofoundry-dataagent-plugin.zip`。
   - **现状**：它的 `plugin.json` 写明 `installation: manual-admin`、限制“DataAgent 暂不支持整包原生加载”。管理员现在要手工完成五步：运行 `install.sh` 把三个技能复制到 `SKILLS_ROOT_DIR`；按 `plugin.json` 的 `mcp_services` 登记 OntoFoundry MCP 并录入凭据；把 `agents/*.md` 的提示词同步到两个已有 Agent，按清单挂载技能、设 `max_turns`；停用旧技能目录；重启 DataAgent。
