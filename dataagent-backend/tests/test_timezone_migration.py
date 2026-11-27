@@ -230,6 +230,7 @@ def test_migration_shifts_path_a_only_on_plus8_db_and_downgrade_refuses(monkeypa
             with Operations.context(ctx):
                 with ctx.begin_transaction():
                     mig.upgrade()
+            conn.commit()  # Alembic commits the migration together with its version stamp.
         engine.dispose()
 
         snap = _snapshot(schema)
@@ -317,6 +318,7 @@ def test_migration_is_noop_on_utc_db(monkeypatch):
             with Operations.context(ctx):
                 with ctx.begin_transaction():
                     mig.upgrade()
+            conn.commit()  # Alembic commits the migration together with its version stamp.
         engine.dispose()
 
         assert _snapshot(schema) == before
@@ -337,3 +339,49 @@ def test_detect_legacy_offset_restores_session_utc():
             tz_after = conn.exec_driver_sql("SELECT @@session.time_zone").scalar()
             assert tz_after == "+00:00"
         engine.dispose()
+
+
+def test_failed_upgrade_rolls_back_so_rerun_shifts_once():
+    """A failure midway must leave no shifted rows; the re-run shifts exactly once."""
+    schema = "tz_test_mig_rerun"
+    with _throwaway_schema(schema) as env:
+        _seed_sample_rows(schema)
+        before = _snapshot(schema)
+        root = pymysql.connect(
+            host="127.0.0.1", port=3326, user="root", password="root123", database=schema, autocommit=True
+        )
+        try:
+            with root.cursor() as cur:
+                # Fail on sdk_record after other tables were already shifted.
+                cur.execute(
+                    "CREATE TRIGGER tz_test_fail BEFORE UPDATE ON da_agent_sdk_record FOR EACH ROW "
+                    "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'tz_test_fail'"
+                )
+                cur.execute("SET SESSION time_zone = @@global.time_zone")
+                cur.execute("SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())")
+                offset = int(cur.fetchone()[0] or 0)
+            if offset != 28800:
+                pytest.skip("needs a MySQL whose global time zone is +08:00")
+
+            def upgrade():
+                return subprocess.run(
+                    [sys.executable, "-m", "alembic", "upgrade", "20261126_000043"],
+                    cwd=str(BACKEND_ROOT), env=env, capture_output=True, text=True,
+                )
+
+            failed = upgrade()
+            assert failed.returncode != 0 and "tz_test_fail" in failed.stderr
+            assert _snapshot(schema) == before
+            with root.cursor() as cur:
+                cur.execute("SELECT version_num FROM alembic_version")
+                assert cur.fetchone()[0] == "20261123_000042"
+                cur.execute("DROP TRIGGER tz_test_fail")
+
+            rerun = upgrade()
+            assert rerun.returncode == 0, rerun.stderr[-800:]
+            after = _snapshot(schema)
+            assert after["topic"] == {"created_at": "2026-11-26 10:00:00", "updated_at": "2026-11-26 10:10:00"}
+            assert after["user"]["created_at"] == "2026-11-26 10:00:00"
+            assert after["sdk_record"]["created_at"].startswith("2026-11-26 10:01:00")
+        finally:
+            root.close()

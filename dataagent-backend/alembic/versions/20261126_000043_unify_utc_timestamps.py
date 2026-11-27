@@ -11,6 +11,10 @@ was already running in UTC (offset == 0), no rows are modified. Otherwise,
 subtracts the offset from every Path-A DATETIME column (columns previously
 written by MySQL CURRENT_TIMESTAMP / NOW()). Path-B (already UTC), Path-C
 (TIMESTAMP), and Path-D (container/mixed) columns are never modified.
+
+All updates run in Alembic's migration transaction together with the version
+stamp: a failure rolls everything back, so re-running never shifts twice.
+Do not commit inside upgrade().
 """
 from __future__ import annotations
 
@@ -26,8 +30,6 @@ depends_on = None
 
 logger = logging.getLogger("alembic.runtime.migration")
 
-_SDK_RECORD_BATCH_SIZE = 5_000
-
 # Class-A tables and their Path-A DATETIME columns (design §5.2).
 # Every table below that defines `updated_at ... ON UPDATE CURRENT_TIMESTAMP`
 # explicitly assigns `updated_at` in the same UPDATE so MySQL does not stamp
@@ -42,6 +44,7 @@ _PATH_A_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("da_agent_message_schedule", ("created_at", "updated_at")),
     ("da_agent_message_schedule_log", ("finished_at", "created_at")),
     ("da_agent_profile", ("created_at", "updated_at")),
+    ("da_agent_sdk_record", ("created_at",)),
     ("da_agent_settings", ("created_at", "updated_at")),
     (
         "da_agent_task",
@@ -100,28 +103,6 @@ def upgrade() -> None:
             assignments.append("`updated_at` = `updated_at`")
         sql = f"UPDATE `{table}` SET {', '.join(assignments)}"
         bind.exec_driver_sql(sql, tuple([offset_seconds] * len(target_cols)))
-    bind.commit()
-
-    if inspector.has_table("da_agent_sdk_record"):
-        bounds = bind.exec_driver_sql(
-            "SELECT MIN(id), MAX(id) FROM `da_agent_sdk_record`"
-        ).fetchone()
-        min_id = bounds[0] if bounds else None
-        max_id = bounds[1] if bounds else None
-        if min_id is not None and max_id is not None:
-            min_id = int(min_id)
-            max_id = int(max_id)
-            batch_start = min_id
-            while batch_start <= max_id:
-                batch_end = batch_start + _SDK_RECORD_BATCH_SIZE - 1
-                bind.exec_driver_sql(
-                    "UPDATE `da_agent_sdk_record` "
-                    "SET `created_at` = IF(`created_at` IS NULL, NULL, DATE_SUB(`created_at`, INTERVAL %s SECOND)) "
-                    "WHERE `id` BETWEEN %s AND %s",
-                    (offset_seconds, batch_start, batch_end),
-                )
-                bind.commit()
-                batch_start = batch_end + 1
 
 
 def downgrade() -> None:
