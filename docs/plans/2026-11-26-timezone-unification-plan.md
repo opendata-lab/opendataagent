@@ -49,7 +49,7 @@
 - 新增 `dataagent-backend/alembic/versions/20261127_000045_unify_utc_timestamps.py`（`down_revision = "20261126_000044"`，接在写操作审批迁移之后）：
   - 临时 `SET SESSION time_zone = @@global.time_zone` 读取 `TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())`，随后切回 `+00:00`；不提供覆盖开关。
   - `offset == 0`：记日志并返回。
-  - `offset != 0`：只更新设计 §5.2 的 A 类列（带 `ON UPDATE CURRENT_TIMESTAMP` 的表显式赋值 `updated_at`）；`da_agent_sdk_record` 按主键分批；不触碰 B、C、D 类列（含评测两列）。
+  - `offset != 0`：只更新设计 §5.2 的 A 类列（带 `ON UPDATE CURRENT_TIMESTAMP` 的表显式赋值 `updated_at`）；全部更新与版本号同一事务提交；不触碰 B、C、D 类列（含评测两列）。
   - `downgrade()` 直接抛错，提示恢复升级前备份（同 `20261027_000030`）。
 
 ### Step 4：前端统一格式化
@@ -110,4 +110,4 @@
 ### 回退方案
 
 - 回退只走备份恢复：停新版本，用上线前 `scripts/backup-db.sh` 的备份恢复数据库，切回旧版 backend 与 frontend 镜像。`alembic downgrade` 会直接报错，不要使用。
-- 迁移中途失败（`da_agent_sdk_record` 分批已部分提交）：同样先恢复备份再重试，避免重复减偏移。
+- 迁移中途失败：整体回滚、版本号不变，修复原因后直接重跑即可，不会重复减偏移。

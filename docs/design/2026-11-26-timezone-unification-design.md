@@ -193,8 +193,8 @@ D 类列的处理规则（简单明确；评测两列不做启发式修正）：
 ### 5.3 安全细节、幂等性与回退
 
 - **防 `ON UPDATE CURRENT_TIMESTAMP` 误覆盖**：所有含 `updated_at ... ON UPDATE CURRENT_TIMESTAMP` 的表，在 `UPDATE` 中**必须显式赋值 `updated_at`**（要么一起减 `offset`，要么写 `updated_at = updated_at`），防止 MySQL 自动将 `updated_at` 覆写为迁移时刻的 `NOW()`。
-- **大表分批更新**：`da_agent_sdk_record` 按自增主键 `id` 每批 5,000 行在 `autocommit_block()` 中分批提交（沿用 `20261113_000034` 模式），避免大事务与长锁。
-- **重跑与回退**：`da_agent_sdk_record` 分批提交，若迁移中途失败，已提交的批次已减过偏移，直接重跑会重复减。因此失败后必须先恢复备份再重跑。回退同样只走备份恢复：`downgrade()` 直接报错提示“恢复升级前备份并使用对应版本应用”（沿用 `20261027_000030` 的做法），不写反向 SQL。**生产发布前必须执行 `scripts/backup-db.sh` 全量备份。**
+- **单事务**：全部更新（含 `da_agent_sdk_record`）与 Alembic 版本号在同一事务中提交（MySQL 的 DML 可回滚），迁移内不自行提交。
+- **重跑与回退**：迁移中途失败时整体回滚、版本号不变，修复原因后可直接重跑，不会重复减偏移（`test_failed_upgrade_rolls_back_so_rerun_shifts_once` 用真实 `alembic upgrade` 验证）。回退只走备份恢复：`downgrade()` 直接报错，提示用 `scripts/restore-db.sh` 恢复升级前备份。上线前必须先备份。
 
 ## 6. 已接受的取舍
 
