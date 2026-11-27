@@ -108,7 +108,7 @@ def submit(scenario,mode='default'):
         existing=ROOT/topic['topic_id']/'workspace/output/pre-existing.txt'
         existing.parent.mkdir(parents=True,exist_ok=True)
         existing.write_text('from an earlier task')
-    accepted=request('POST',API+'/tasks',json={'topic_id':topic['topic_id'],'message_type':'text','message_content':'SMOKE:'+scenario,
+    accepted=request('POST',API+'/tasks/deliver-message',json={'topic_id':topic['topic_id'],'content':'SMOKE:'+scenario,
         'provider_id':PROVIDER,'model':'smoke','agent_id':agent_id})
     assert accepted['accepted'] and accepted['task_id']
     return topic['topic_id'],accepted['task_id']
