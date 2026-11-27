@@ -69,7 +69,6 @@ class AgentDraftStore:
         live = get_agent_profile(draft["agent_id"]) if int(row["published_version"]) else None
         on = bool(live and live.get("remote_mcp_enabled"))
         return {**configuration(draft), "remote_mcp_enabled": on,
-                "remote_mcp_available": True,
                 "remote_mcp_path": f"{PREFIX}/{draft['agent_id']}/mcp" if on else "",
                 "revision": int(row["revision"]),
                 "published_version": int(row["published_version"]),

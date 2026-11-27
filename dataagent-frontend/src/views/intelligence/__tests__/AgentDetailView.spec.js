@@ -150,7 +150,7 @@ describe('agent draft workbench', () => {
   })
   it('enables MCP without publishing and opens the shared configuration dialog from the same menu', async () => {
     const path = '/api/v1/remote-agents/agent_1/mcp'
-    const live = { ...profile, published_version: 1, remote_mcp_available: true }
+    const live = { ...profile, published_version: 1 }
     dataagentApi.getAgentDraft.mockResolvedValueOnce({ ...live, remote_mcp_enabled: false, remote_mcp_path: '' })
     let finishToggle
     dataagentApi.setAgentRemoteMcp.mockImplementationOnce(() => new Promise(resolve => { finishToggle = resolve }))

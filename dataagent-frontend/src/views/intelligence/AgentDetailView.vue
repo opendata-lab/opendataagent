@@ -58,9 +58,9 @@
                   class="mcp-access-switch"
                   aria-label="MCP 访问"
                   :aria-checked="draft.remote_mcp_enabled"
-                  :disabled="busy || !draft.published_version || (!draft.remote_mcp_available && !draft.remote_mcp_enabled)"
+                  :disabled="busy || !draft.published_version"
                   :aria-disabled="switchingMcp || undefined"
-                  :title="!draft.published_version ? '发布后可开启' : draft.remote_mcp_available ? '开关立即生效' : '需要管理员开启平台登录'"
+                  :title="draft.published_version ? '开关立即生效' : '发布后可开启'"
                   @click="toggleRemoteMcp"
                 />
               </div>
@@ -662,7 +662,6 @@ const draft = reactive({
   has_changes: false,
   can_publish: false,
   preview_status: null,
-  remote_mcp_available: false,
   remote_mcp_enabled: false,
   remote_mcp_path: "",
 });
@@ -831,7 +830,6 @@ function applyAgent(agent) {
     "preview_task_id",
     "preview_topic_id",
     "preview_status",
-    "remote_mcp_available",
     "remote_mcp_enabled",
     "remote_mcp_path",
   ])
@@ -847,7 +845,6 @@ function syncDraft(agent) {
     "has_changes",
     "can_publish",
     "preview_status",
-    "remote_mcp_available",
     "remote_mcp_enabled",
     "remote_mcp_path",
   ])
