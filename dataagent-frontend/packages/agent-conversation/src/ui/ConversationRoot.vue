@@ -168,12 +168,15 @@ const conversation = useConversation({
 // showing `plan` and send the next message as another plan.
 const POST_PLAN_MODE = 'acceptEdits'
 
-const onDecide = async ({ taskId, requestId, decision, note, plan }) => {
+const onDecide = async ({ taskId, requestId, decision, note, remember, plan }) => {
+  const payload = { decision }
+  if (note) payload.note = note
+  if (remember) payload.remember = remember
   const accepted = await conversation.submitInteraction({
     taskId: taskId || conversation.run.value?.taskId,
     kind: 'permission',
     requestId,
-    payload: note ? { decision, note } : { decision },
+    payload,
   })
   if (accepted && plan && decision === 'allow') composerRef.value?.adoptPermissionMode(POST_PLAN_MODE)
 }

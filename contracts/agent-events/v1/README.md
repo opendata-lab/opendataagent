@@ -89,6 +89,13 @@ The event writer stores it in the record's JSON payload, and history
 projection carries it into the tool block. Tool calls and icon selection
 continue to use `tool_name`.
 
+## `tool.completed`
+
+`payload.awaiting_approval` is an optional boolean set to `true` (with
+`is_error: false`) when a write tool call is intercepted to wait for user
+confirmation. Resuming the approved call reuses the same `tool_call_id` so
+readers update the existing row in place instead of appending a second one.
+
 ## Failure messages
 
 `run.failed.payload.message` is written for end users and never carries an

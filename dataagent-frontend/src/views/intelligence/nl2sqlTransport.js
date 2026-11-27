@@ -113,9 +113,9 @@ export function createNl2SqlTransport(api, topicId, context = {}) {
 
     async submitInteraction({ taskId, kind, requestId, payload }) {
       if (kind === 'permission') {
-        await api.taskApi.submitPermissionDecision(
-          taskId, requestId, payload?.decision, payload?.note || '',
-        )
+        const args = [taskId, requestId, payload?.decision, payload?.note || '']
+        if (payload?.remember) args.push(payload.remember)
+        await api.taskApi.submitPermissionDecision(...args)
         return
       }
       await api.taskApi.submitQuestionAnswer(taskId, requestId, payload?.answers || [])

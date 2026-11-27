@@ -149,8 +149,15 @@ export function buildV2StateFromStoredRecords(item) {
   if (v2state.status === 'streaming') {
     v2state.status = 'done'
   }
+  const terminalMessage = ['suspended', 'cancelled', 'failed', 'error', 'done', 'success', 'finished'].includes(
+    String(item?.status || ''),
+  )
   for (const block of v2state.blocks) {
     if (block.status === 'streaming') block.status = 'done'
+    if (terminalMessage && block.type === 'tool_use' && block.awaiting_approval) {
+      delete block.awaiting_approval
+      block.approval_status = 'not_executed'
+    }
   }
   for (const turn of v2state.turns) {
     if (turn.status === 'streaming') turn.status = 'done'
@@ -194,7 +201,12 @@ export function buildV2StateFromStoredBlocks(item) {
       case 'main_text':
         if (text) push({ ...b, ...base, blockIndex: blockIdx++, type: 'text', content: text }, b)
         break
-      case 'tool_use':
+      case 'tool_use': {
+        const terminalMessage = ['suspended', 'cancelled', 'failed', 'error', 'done', 'success', 'finished'].includes(
+          String(item?.status || ''),
+        )
+        const stillWaiting = Boolean(b.awaiting_approval) && !terminalMessage
+        const approvalStatus = b.approval_status || (b.awaiting_approval && terminalMessage ? 'not_executed' : '')
         push({
           ...b, ...base, blockIndex: blockIdx++, type: 'tool_use',
           id: b.tool_id || null,
@@ -202,20 +214,27 @@ export function buildV2StateFromStoredBlocks(item) {
           input: b.input ?? null,
           output: b.output ?? null,
           is_error: Boolean(b.is_error),
+          ...(stillWaiting ? { awaiting_approval: true } : { awaiting_approval: false }),
+          ...(approvalStatus ? { approval_status: approvalStatus } : {}),
         }, b)
         break
+      }
       case 'permission_request':
         push({
           ...b, ...base, blockIndex: blockIdx++, type: 'permission_request',
           requestId: b.request_id || '',
+          ...(b.tool_call_id ? { tool_call_id: b.tool_call_id } : {}),
           tool_name: b.tool_name || '',
+          ...(Object.prototype.hasOwnProperty.call(b, 'destructive') ? { destructive: Boolean(b.destructive) } : {}),
           risk_level: b.risk_level || 'high',
           title: b.title || '',
           summary: b.summary || '',
           payload_preview: b.payload_preview ?? null,
           decision: b.decision || 'pending',
           note: b.note || '',
+          ...(b.remember ? { remember: b.remember } : {}),
           decided_at: b.decided_at || '',
+          source: b.source || '',
         }, b)
         break
       case 'question_request':

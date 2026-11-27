@@ -141,6 +141,10 @@ export function useConversation({ transport, generation, emit, settings }) {
     }
     for (const block of assistant._v2state.blocks) {
       if (block.status === 'streaming') block.status = 'done'
+      if (block.type === 'tool_use' && block.awaiting_approval) {
+        delete block.awaiting_approval
+        block.approval_status = 'not_executed'
+      }
     }
     assistant.renderVersion = (assistant.renderVersion || 0) + 1
     triggerRef(messages)

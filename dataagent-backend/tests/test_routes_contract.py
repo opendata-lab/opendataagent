@@ -189,7 +189,28 @@ class _FakeStore:
     def get_current_permission_interaction(self, *, task_id: str, request_id: str):
         return self._get_interaction(task_id=task_id, request_id=request_id, kind="permission")
 
-    def append_permission_decision_if_waiting(self, *, task_id: str, request_id: str, decision: str, note: str = "", decided_at: str = ""):
+    def get_topic_approved_tools(self, topic_id: str) -> list[str]:
+        return list(self.topics.get(topic_id, {}).get("approved_tools") or [])
+
+    def add_topic_approved_tool(self, topic_id: str, tool_key: str) -> list[str]:
+        topic = self.topics.get(topic_id)
+        if not topic:
+            return []
+        approved = topic.setdefault("approved_tools", [])
+        if tool_key and tool_key not in approved:
+            approved.append(tool_key)
+        return list(approved)
+
+    def append_permission_decision_if_waiting(
+        self,
+        *,
+        task_id: str,
+        request_id: str,
+        decision: str,
+        note: str = "",
+        decided_at: str = "",
+        remember: str | None = None,
+    ):
         task = self.tasks.get(task_id)
         if not task:
             return "not_found"
@@ -200,18 +221,21 @@ class _FakeStore:
             return "not_found"
         if interaction.get("status") == "resolved":
             return "already_resolved"
+        record_data = {
+            "request_id": request_id,
+            "decision": decision,
+            "note": note,
+            "decided_at": decided_at or _now(),
+        }
+        if remember:
+            record_data["remember"] = remember
         self.append_sdk_record(
             task_id=task_id,
             topic_id=interaction.get("topic_id") or "",
             turn_index=int(interaction.get("turn_index") or 0),
             record_type="permission_decision",
             event_type=None,
-            data={
-                "request_id": request_id,
-                "decision": decision,
-                "note": note,
-                "decided_at": decided_at or _now(),
-            },
+            data=record_data,
         )
         return "appended"
 
@@ -263,6 +287,16 @@ class _FakeStore:
                     "turn_index": int(rec.get("turn_index") or 0),
                     "status": "pending",
                 }
+                if kind == "permission":
+                    request.update(
+                        {
+                            "tool_name": str(data.get("tool_name") or ""),
+                            "risk_level": str(data.get("risk_level") or ""),
+                            "payload_preview": data.get("payload_preview"),
+                            "destructive": bool(data.get("destructive")),
+                            "tool_call_id": str(data.get("tool_call_id") or ""),
+                        }
+                    )
             elif rec.get("record_type") == resolved_type:
                 resolved = {
                     "request_id": request_id,
@@ -1056,6 +1090,107 @@ def test_permission_decision_endpoint(monkeypatch):
             "/api/v1/nl2sql/tasks/task_missing/permission-decision",
             json={"request_id": "req-1", "decision": "allow"},
         ).status_code == 404
+
+
+def test_permission_decision_remember_session_and_destructive_guard(monkeypatch):
+    client, store, coordinator, _submit_calls = _build_client(monkeypatch)
+    with client:
+        topic_id = client.post("/api/v1/nl2sql/topics", json={"title": "会话授权"}).json()["topic_id"]
+        delivered = client.post(
+            "/api/v1/nl2sql/tasks/deliver-message",
+            json={"topic_id": topic_id, "content": "建表并删临时表"},
+        ).json()
+        task_id = delivered["task_id"]
+        base = f"/api/v1/nl2sql/tasks/{task_id}/permission-decision"
+        store.tasks[task_id]["task_status"] = "waiting_permission"
+
+        # 1. Invalid remember value -> 422.
+        assert client.post(base, json={"request_id": "req-1", "decision": "allow", "remember": "always"}).status_code == 422
+
+        # 2. Non-destructive tool + allow + remember="session" -> stored on topic.
+        store.append_sdk_record(
+            task_id=task_id,
+            topic_id=topic_id,
+            turn_index=1,
+            record_type="permission_request",
+            event_type=None,
+            data={
+                "request_id": "req-create",
+                "tool_call_id": "call-1",
+                "tool_name": "create_table",
+                "risk_level": "high",
+                "destructive": False,
+                "payload_preview": {
+                    "tool_name": "create_table",
+                    "server_identity": "srvhash-abc",
+                    "annotations": {"readOnlyHint": False},
+                },
+            },
+        )
+        res = client.post(base, json={"request_id": "req-create", "decision": "allow", "remember": "session"})
+        assert res.status_code == 200
+        assert res.json()["decision"] == "allow"
+        assert store.get_topic_approved_tools(topic_id) == ["srvhash-abc:create_table"]
+        decisions = [r for r in store.sdk_records[task_id] if r["record_type"] == "permission_decision"]
+        assert decisions[-1]["data"]["remember"] == "session"
+
+        # 3. Destructive tool + allow + remember="session" -> ignores remember, still allows once.
+        store.append_sdk_record(
+            task_id=task_id,
+            topic_id=topic_id,
+            turn_index=2,
+            record_type="permission_request",
+            event_type=None,
+            data={
+                "request_id": "req-drop",
+                "tool_call_id": "call-2",
+                "tool_name": "drop_table",
+                "risk_level": "high",
+                "destructive": True,
+                "payload_preview": {
+                    "tool_name": "drop_table",
+                    "server_identity": "srvhash-abc",
+                    "annotations": {"readOnlyHint": False, "destructiveHint": True},
+                },
+            },
+        )
+        res_dest = client.post(base, json={"request_id": "req-drop", "decision": "allow", "remember": "session"})
+        assert res_dest.status_code == 200
+        assert res_dest.json()["decision"] == "allow"
+        assert store.get_topic_approved_tools(topic_id) == ["srvhash-abc:create_table"]
+        decisions = [r for r in store.sdk_records[task_id] if r["record_type"] == "permission_decision"]
+        assert "remember" not in decisions[-1]["data"]
+
+        # 4. Deny + note + remember="session" -> records note, does not add to approved tools.
+        store.append_sdk_record(
+            task_id=task_id,
+            topic_id=topic_id,
+            turn_index=3,
+            record_type="permission_request",
+            event_type=None,
+            data={
+                "request_id": "req-deny",
+                "tool_call_id": "call-3",
+                "tool_name": "publish_workflow",
+                "risk_level": "high",
+                "destructive": False,
+                "payload_preview": {
+                    "tool_name": "publish_workflow",
+                    "server_identity": "srvhash-abc",
+                    "annotations": {"readOnlyHint": False},
+                },
+            },
+        )
+        res_deny = client.post(
+            base,
+            json={"request_id": "req-deny", "decision": "deny", "note": "先不要发布", "remember": "session"},
+        )
+        assert res_deny.status_code == 200
+        assert res_deny.json()["decision"] == "deny"
+        assert store.get_topic_approved_tools(topic_id) == ["srvhash-abc:create_table"]
+        decisions = [r for r in store.sdk_records[task_id] if r["record_type"] == "permission_decision"]
+        assert decisions[-1]["data"]["note"] == "先不要发布"
+        assert "remember" not in decisions[-1]["data"]
 
 
 def test_question_answer_endpoint(monkeypatch):

@@ -47,6 +47,18 @@
           }
         }
       }
+    },
+    {
+      "if": { "properties": { "type": { "const": "tool.completed" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "awaiting_approval": { "type": "boolean" }
+            }
+          }
+        }
+      }
     }
   ]
 }

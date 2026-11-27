@@ -84,3 +84,16 @@ def test_an_sdk_string_tool_output_validates():
     Draft202012Validator(_schema("tool-output.schema.json")).validate(
         {"tool_call_id": "t1", "tool_name": "Bash", "output": "1", "is_error": False}
     )
+
+
+def test_awaiting_approval_tool_output_validates():
+    Draft202012Validator(_schema("tool-output.schema.json")).validate(
+        {
+            "turn_id": "turn-1",
+            "tool_call_id": "call-1",
+            "tool_name": "create_table",
+            "output": None,
+            "is_error": False,
+            "awaiting_approval": True,
+        }
+    )

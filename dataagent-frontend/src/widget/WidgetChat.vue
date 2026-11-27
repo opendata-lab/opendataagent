@@ -726,7 +726,9 @@ const handlePermissionDecision = async (msg, payload) => {
   const decision = payload?.decision
   if (!taskId || !requestId || (decision !== 'allow' && decision !== 'deny')) return
   try {
-    await api.taskApi.submitPermissionDecision(taskId, requestId, decision, String(payload?.note || ""))
+    const args = [taskId, requestId, decision, String(payload?.note || '')]
+    if (payload?.remember) args.push(payload.remember)
+    await api.taskApi.submitPermissionDecision(...args)
   } catch (_err) {
     const block = (msg?._v2state?.blocks || []).find(
       (b) => b.type === 'permission_request' && b.requestId === requestId,

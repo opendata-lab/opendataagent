@@ -57,6 +57,7 @@ const apiMocks = vi.hoisted(() => ({
     streamSdkEvents: vi.fn(),
     getTask: vi.fn(),
     cancelTask: vi.fn(),
+    submitPermissionDecision: vi.fn(),
     submitQuestionAnswer: vi.fn()
   }
 }))
@@ -1248,5 +1249,57 @@ describe('WidgetChat history conversations', () => {
     expect(mainText.text()).toContain('结论：发布次数上升。')
     expect(mainText.text()).toContain('以上为结论。')
     expect(mainText.text()).not.toContain('chart_type')
+  })
+
+  it('forwards remember and note on permission decisions from PermissionCard', async () => {
+    apiMocks.taskApi.submitPermissionDecision.mockResolvedValue({})
+    let resolveStream
+    apiMocks.taskApi.streamSdkEvents.mockImplementation(async (_taskId, options) => {
+      options.onRecord({ record_type: 'agent_event', event_type: 'run.started', data: {} })
+      options.onRecord({ record_type: 'agent_event', event_type: 'turn.started', data: { turn_id: 'turn-1' } })
+      options.onRecord({
+        record_type: 'agent_event',
+        event_type: 'tool.started',
+        data: { turn_id: 'turn-1', tool_call_id: 'c-1', tool_name: 'create_table', tool_title: '创建表', input: { name: 't1' } }
+      })
+      options.onRecord({
+        record_type: 'agent_event',
+        event_type: 'tool.completed',
+        data: { turn_id: 'turn-1', tool_call_id: 'c-1', tool_name: 'create_table', output: null, is_error: false, awaiting_approval: true }
+      })
+      options.onRecord({
+        record_type: 'permission_request',
+        data: {
+          request_id: 'req-w1',
+          tool_call_id: 'c-1',
+          tool_name: 'create_table',
+          tool_title: '创建表',
+          risk_level: 'high',
+          title: '创建表 需要你确认',
+          summary: '创建表',
+          destructive: false
+        }
+      })
+      await new Promise((r) => { resolveStream = r })
+    })
+
+    const { wrapper } = mountChat({ config: { displayMode: 'inline' } })
+    await flushPromises()
+    await wrapper.get('textarea').setValue('建表')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('.shell-trace-summary-status').text()).toBe('等待确认')
+    await wrapper.get('.v2-perm-btn.allow-session').trigger('click')
+    await flushPromises()
+
+    expect(apiMocks.taskApi.submitPermissionDecision).toHaveBeenCalledWith(
+      'task-1',
+      'req-w1',
+      'allow',
+      '',
+      'session'
+    )
+    resolveStream?.()
   })
 })

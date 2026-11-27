@@ -83,8 +83,10 @@ function _handlePermissionRequest(state, data) {
     content: '',
     status: 'done',
     requestId: data.request_id || '',
+    ...(data.tool_call_id ? { tool_call_id: String(data.tool_call_id) } : {}),
     tool_name: data.tool_name || '',
     ...(typeof data.tool_title === 'string' && data.tool_title ? { tool_title: data.tool_title } : {}),
+    ...(Object.prototype.hasOwnProperty.call(data, 'destructive') ? { destructive: Boolean(data.destructive) } : {}),
     risk_level: data.risk_level || 'high',
     title: data.title || '',
     summary: data.summary || '',
@@ -107,6 +109,26 @@ function _handlePermissionDecision(state, data) {
   block.note = data.note || ''
   block.decided_at = data.decided_at || ''
   block.source = data.source || 'user'
+  if (data.remember) block.remember = String(data.remember)
+  if (block.tool_call_id) {
+    let toolBlock = null
+    for (let i = state.blocks.length - 1; i >= 0; i -= 1) {
+      const candidate = state.blocks[i]
+      if (candidate.type === 'tool_use' && candidate.id === block.tool_call_id) {
+        toolBlock = candidate
+        break
+      }
+    }
+    if (toolBlock && toolBlock.awaiting_approval) {
+      if (block.decision === 'deny') {
+        delete toolBlock.awaiting_approval
+        toolBlock.approval_status = 'denied'
+      } else if (block.decision === 'timeout') {
+        delete toolBlock.awaiting_approval
+        toolBlock.approval_status = 'not_executed'
+      }
+    }
+  }
 }
 
 function _handleQuestionRequest(state, data) {
@@ -270,12 +292,26 @@ function _findBlock(turn, index) {
  */
 export function blockToToolProp(block) {
   const hasOutput = block.output != null
+  let status
+  if (block.awaiting_approval) {
+    status = 'awaiting_approval'
+  } else if (block.approval_status === 'denied') {
+    status = 'denied'
+  } else if (block.approval_status === 'not_executed') {
+    status = 'not_executed'
+  } else if (hasOutput) {
+    status = block.is_error ? 'failed' : 'success'
+  } else if (block.status === 'done') {
+    status = 'pending'
+  } else {
+    status = 'streaming'
+  }
   return {
     name: block.name,
     tool_title: block.tool_title,
     input: block.input,
     output: block.output,
-    status: hasOutput ? (block.is_error ? 'failed' : 'success') : (block.status === 'done' ? 'pending' : 'streaming'),
+    status,
     id: block.id,
     _callComplete: block.status === 'done',
     _runtimeStarted: hasOutput,

@@ -420,6 +420,8 @@ const traceStatusTone = computed(() => {
   const status = String(props.tool?.status || 'success')
   const callComplete = Boolean(props.tool?._callComplete)
   const runtimeStarted = Boolean(props.tool?._runtimeStarted)
+  if (status === 'awaiting_approval') return 'awaiting'
+  if (status === 'denied' || status === 'not_executed') return 'muted'
   if (status === 'failed') return 'failed'
   if (!callComplete) return 'running'
   if (callComplete && !runtimeStarted) return 'success'
@@ -437,6 +439,10 @@ const statusLabel = computed(() => {
   const status = String(props.tool?.status || 'success')
   const callComplete = Boolean(props.tool?._callComplete)
   const runtimeStarted = Boolean(props.tool?._runtimeStarted)
+
+  if (status === 'awaiting_approval') return '等待确认'
+  if (status === 'denied') return '已拒绝'
+  if (status === 'not_executed') return '未执行'
 
   if (kind.value === 'chart_spec') {
     if (!callComplete) return '正在发起生成图表'
@@ -495,9 +501,7 @@ const statusLabel = computed(() => {
   }
 
   if (traceKind.value === 'tool') {
-    if (!callComplete) return '正在发起调用'
-    if (callComplete && !runtimeStarted) return '已发起调用'
-    if (status === 'pending' || status === 'streaming') return '正在执行'
+    if (!callComplete || status === 'pending' || status === 'streaming') return '正在执行'
     if (status === 'failed') return '执行失败'
     return '已执行'
   }
@@ -729,6 +733,14 @@ onBeforeUnmount(() => {
 
 .shell-trace-summary-status.is-success {
   color: #6b7280;
+}
+
+.shell-trace-summary-status.is-awaiting {
+  color: #d97706;
+}
+
+.shell-trace-summary-status.is-muted {
+  color: #8a8a8a;
 }
 
 .shell-trace-summary-status.is-failed {

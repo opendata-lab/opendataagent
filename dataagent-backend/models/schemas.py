@@ -73,6 +73,7 @@ class PermissionDecisionRequest(BaseModel):
     request_id: str
     decision: str  # "allow" | "deny"
     note: Optional[str] = None
+    remember: Optional[Literal["session"]] = None
 
 
 class PermissionDecisionResponse(BaseModel):

@@ -22,12 +22,16 @@ function toCanonical(blocks) {
         input: block.input ?? null,
         output: block.output ?? null,
         is_error: Boolean(block.is_error),
+        ...(block.awaiting_approval ? { awaiting_approval: true } : {}),
+        ...(block.approval_status ? { approval_status: block.approval_status } : {}),
       })
     } else if (block.type === 'permission_request') {
       canonical.push({
         kind: 'permission_request',
         tool_name: block.tool_name ?? null,
         ...('tool_title' in block ? { tool_title: block.tool_title } : {}),
+        ...(block.tool_call_id ? { tool_call_id: block.tool_call_id } : {}),
+        ...('destructive' in block ? { destructive: Boolean(block.destructive) } : {}),
         risk_level: block.risk_level ?? null,
         title: block.title ?? null,
         summary: block.summary ?? null,

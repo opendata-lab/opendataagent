@@ -224,6 +224,20 @@ describe('interactions', () => {
     expect(api.taskApi.submitQuestionAnswer).not.toHaveBeenCalled()
   })
 
+  it('forwards remember and note on a permission reply', async () => {
+    const api = makeApi()
+
+    await createNl2SqlTransport(api, TOPIC).submitInteraction({
+      taskId: 't-1', kind: 'permission', requestId: 'r-1', payload: { decision: 'allow', remember: 'session' }
+    })
+    expect(api.taskApi.submitPermissionDecision).toHaveBeenCalledWith('t-1', 'r-1', 'allow', '', 'session')
+
+    await createNl2SqlTransport(api, TOPIC).submitInteraction({
+      taskId: 't-1', kind: 'permission', requestId: 'r-2', payload: { decision: 'deny', note: '不要改表' }
+    })
+    expect(api.taskApi.submitPermissionDecision).toHaveBeenCalledWith('t-1', 'r-2', 'deny', '不要改表')
+  })
+
   it('routes a question reply to the question endpoint', async () => {
     const api = makeApi()
 

@@ -83,6 +83,7 @@ class PiRunContext:
     allow_questions: bool = True
     interactive: bool = True
     resume_operation: dict[str, Any] | None = None
+    approved_tools: list[str] = field(default_factory=list)
 
     def to_init_payload(self) -> dict[str, Any]:
         """Serialize for the ``cell.init`` frame.
@@ -134,6 +135,7 @@ class PiRunContext:
             },
             "governance_settings": dict(self.governance_settings),
             "permission_mode": self.permission_mode,
+            "approved_tools": list(self.approved_tools),
         }
 
 
