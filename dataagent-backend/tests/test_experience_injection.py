@@ -283,6 +283,23 @@ def test_frontend_knowledge_root_matches_backend_injection_root():
     assert match.group(1) == experience.INJECTION_ROOT
 
 
+def test_group_tasks_by_topic_orders_interleaved_conversations():
+    # Two interleaved topics arriving newest-first (as returned by SQL ORDER BY finished_at DESC LIMIT 30):
+    # topic_b has turns at 10:02 (seq 1) and 10:06 (seq 3)
+    # topic_a has turns at 10:00 (seq 1) and 10:05 (seq 3)
+    tasks_newest_first = [
+        {"task_id": "b2", "topic_id": "topic_b", "finished_at": datetime(2026, 11, 26, 10, 6, tzinfo=UTC), "question_seq": 3},
+        {"task_id": "a2", "topic_id": "topic_a", "finished_at": datetime(2026, 11, 26, 10, 5, tzinfo=UTC), "question_seq": 3},
+        {"task_id": "b1", "topic_id": "topic_b", "finished_at": datetime(2026, 11, 26, 10, 2, tzinfo=UTC), "question_seq": 1},
+        {"task_id": "a1", "topic_id": "topic_a", "finished_at": datetime(2026, 11, 26, 10, 0, tzinfo=UTC), "question_seq": 1},
+    ]
+    grouped = experience._group_tasks_by_topic(tasks_newest_first)
+    assert [(tid, [t["task_id"] for t in ts]) for tid, ts in grouped] == [
+        ("topic_a", ["a1", "a2"]),
+        ("topic_b", ["b1", "b2"]),
+    ]
+
+
 def test_digest_skill_updated_for_knowledge_and_grounded_business_metrics():
     text = DIGEST_SKILL_MD.read_text(encoding="utf-8")
     assert "知识" in text
@@ -290,6 +307,9 @@ def test_digest_skill_updated_for_knowledge_and_grounded_business_metrics():
     assert "不要写：业务口径" not in text
     assert "用户原话" in text
     assert "source_task_ids" in text
+    assert "点踩" not in text and "点赞" not in text and "评价" not in text
+    assert "纠正与确认" in text
+    assert "## 会话 <topic_id>" in text
     assert "记忆页面" not in experience.digest_agent_payload()["description"]
     assert "知识页面" in experience.digest_agent_payload()["description"]
 

@@ -68,6 +68,12 @@
 - **要做**：知识多到目录放不下、或实测模型常漏读时，加运行前检索（MySQL 内置 ngram 全文索引，本地 8.0.46 已确认可用；需确认生产版本 ≥5.7.6），结果经 Pi 官方 `before_agent_start` 钩子作为会话消息注入（用公开的 `DefaultResourceLoader` 加载内联扩展）。检索文本带最近 1–2 条用户消息；卡片恢复不重复注入；不设固定分数阈值；ngram 的两字片段语义（`dwd_order`/`dwd_customer`、单字、停用词）要测。钩子应做成通用“上下文提供者”，与下方插件机制一起设计，供本体查询复用。
 - **来源**：用户 2026-11-26 讨论；Neon 与 Codex 两轮评审（`~/.agents/handoffs/2026-11-26-{neon,codex}-knowledge-retrieval-review/`）。[设计](design/2026-11-19-experience-library-design.md)
 
+### 知识去重 / 总结时提示相似知识
+
+- **现状**（2026-11-27）：每日总结只新增待审核条目，不读取或对比已有知识；重复与矛盾完全由管理员在审核时人工处理（见[设计](design/2026-11-19-experience-library-design.md)「取舍」与「后续」）。
+- **要做**：在每日总结时把该助手已有知识的标题与适用场景提供给总结智能体，仅跳过明显重复的候选；有冲突或差异的仍输出候选交由管理员审核。
+- **来源**：用户 2026-11-27 讨论与 Codex 评审意见（`~/.agents/handoffs/2026-11-27-codex-digest-opinion/result.md`）；[设计](design/2026-11-19-experience-library-design.md)。
+
 ### 插件管理与导入（暂缓，后续专门实施）
 
 - **补充**（2026-11-26 用户讨论）：参考 Claude Code / ZCode 的 plugin（一个包内含 skills、子智能体、hooks、MCP，从市场安装）。插件机制设计时一并考虑 hooks（服务端以 HTTP 处理程序为主，沙箱无网络）与子智能体；运行前钩子与上方“知识运行前检索”共用通用接口。OntoFoundry 本体查询是第一个用例。

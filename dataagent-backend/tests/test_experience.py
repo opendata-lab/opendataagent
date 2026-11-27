@@ -59,16 +59,31 @@ def store():
         conn.close()
 
 
-def _task(store, *, question, answer, status="finished", feedback="", agent=AGENT, preview=False, context=None, steps=()):
-    topic = store.create_topic(
-        title=question,
-        agent_snapshot={"agent_id": agent, "name": agent},
-        is_agent_preview=preview,
-        context=context,
-    )
-    store.made.append(topic["topic_id"])
+def _task(
+    store,
+    *,
+    question,
+    answer,
+    status="finished",
+    feedback="",
+    agent=AGENT,
+    preview=False,
+    context=None,
+    steps=(),
+    topic_id=None,
+    finished_at=None,
+):
+    if topic_id is None:
+        topic = store.create_topic(
+            title=question,
+            agent_snapshot={"agent_id": agent, "name": agent},
+            is_agent_preview=preview,
+            context=context,
+        )
+        topic_id = topic["topic_id"]
+        store.made.append(topic_id)
     task = store.create_task(
-        topic_id=topic["topic_id"],
+        topic_id=topic_id,
         prompt=question,
         provider_id="local-test",
         model="stub",
@@ -77,22 +92,33 @@ def _task(store, *, question, answer, status="finished", feedback="", agent=AGEN
         sql_read_timeout_seconds=300,
         sql_write_timeout_seconds=60,
     )
-    store.append_user_message(topic_id=topic["topic_id"], task_id=task["task_id"], content=question)
-    message = store.ensure_assistant_message(topic_id=topic["topic_id"], task_id=task["task_id"], status=status)
-    store.update_assistant_message(topic_id=topic["topic_id"], task_id=task["task_id"], status=status, content=answer)
+    store.append_user_message(topic_id=topic_id, task_id=task["task_id"], content=question)
+    message = store.ensure_assistant_message(topic_id=topic_id, task_id=task["task_id"], status=status)
+    store.update_assistant_message(topic_id=topic_id, task_id=task["task_id"], status=status, content=answer)
     for event_type, data in steps:
         store.append_sdk_record(
             task_id=task["task_id"],
-            topic_id=topic["topic_id"],
+            topic_id=topic_id,
             turn_index=1,
             record_type="agent_event",
             event_type=event_type,
             data=data,
         )
     if feedback:
-        store.update_message_feedback(topic_id=topic["topic_id"], message_id=message["message_id"], feedback=feedback)
+        store.update_message_feedback(topic_id=topic_id, message_id=message["message_id"], feedback=feedback)
     store.finish_task(task_id=task["task_id"], task_status=status)
-    return topic["topic_id"], task["task_id"]
+    if finished_at is not None:
+        conn = experience._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE da_agent_task SET finished_at = %s WHERE task_id = %s",
+                    (finished_at, task["task_id"]),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    return topic_id, task["task_id"]
 
 
 def test_review_flow_body_search_and_catalog_visibility(store):
@@ -204,30 +230,94 @@ def test_review_flow_body_search_and_catalog_visibility(store):
     assert not experience.delete_experience(candidate["experience_id"])
 
 
-def test_session_records_include_topic_id_steps_dislikes_first_and_drop_tables(store):
+def test_session_records_group_interleaved_topics_drop_errors_ratings_and_cap_newest_30(store):
+    from datetime import timedelta
+    from core.time_utils import business_day_bounds
+
     today = datetime.now(get_business_tz()).date()
-    topic1, _ = _task(store, question="普通问题", answer="好的")
-    topic2, _ = _task(
+    day_start, _ = business_day_bounds(today)
+
+    # Interleaved turns across two topics:
+    # topic_a: turn 1 at +10m, turn 2 at +30m
+    # topic_b: turn 1 at +20m, turn 2 at +40m
+    topic_a, _ = _task(
         store,
-        question="退款率是多少",
+        question="A第一轮：查退款率",
         feedback="dislike",
         answer="结果如下\n| 渠道 | 退款率 |\n| --- | --- |\n| 甲 | 3.2% |\n```sql\nselect 1\n```\n结论：偏高",
         steps=[
             ("tool.started", {"tool_call_id": "c1", "tool_name": "bash", "input": {"command": "run_sql.py --sql 'select'"}}),
             ("tool.completed", {"tool_call_id": "c1", "tool_name": "bash", "is_error": True, "output": "SQL error: unknown column"}),
         ],
+        finished_at=day_start + timedelta(minutes=10),
     )
-    _task(store, question="调试预览", answer="x", preview=True)
-    _task(store, question="经验总结自己的会话", answer="x", agent=experience.DIGEST_AGENT_ID)
+    topic_b, _ = _task(
+        store,
+        question="B第一轮：普通问题",
+        feedback="like",
+        answer="好的",
+        finished_at=day_start + timedelta(minutes=20),
+    )
+    _task(
+        store,
+        topic_id=topic_a,
+        question="A第二轮：销售额应排除退款",
+        answer="已按排除退款重新统计",
+        finished_at=day_start + timedelta(minutes=30),
+    )
+    _task(
+        store,
+        topic_id=topic_b,
+        question="B第二轮：按自然月统计",
+        answer="已按自然月统计",
+        finished_at=day_start + timedelta(minutes=40),
+    )
+
+    # Error task, preview topic, and digest agent's own topic are all excluded.
+    _task(store, question="失败任务不应入选", answer="err", status="error", finished_at=day_start + timedelta(minutes=50))
+    _task(store, question="调试预览", answer="x", preview=True, finished_at=day_start + timedelta(minutes=51))
+    _task(store, question="经验总结自己的会话", answer="x", agent=experience.DIGEST_AGENT_ID, finished_at=day_start + timedelta(minutes=52))
 
     records, count = experience.build_session_records(AGENT, today)
-    assert count == 2
-    assert records.index("退款率是多少") < records.index("普通问题")
-    assert f"topic_id: {topic1}" in records and f"topic_id: {topic2}" in records
+    assert count == 4
+    # Grouped by topic, topics in order of earliest selected turn, turns in question order.
+    heading_a = f"## 会话 {topic_a}"
+    heading_b = f"## 会话 {topic_b}"
+    assert heading_a in records and heading_b in records
+    assert (
+        records.index(heading_a)
+        < records.index("A第一轮：查退款率")
+        < records.index("A第二轮：销售额应排除退款")
+        < records.index(heading_b)
+        < records.index("B第一轮：普通问题")
+        < records.index("B第二轮：按自然月统计")
+    )
+    # No rating text; steps preserved; tables/code blocks stripped; excluded tasks absent.
+    assert "评价：" not in records and "点踩" not in records and "点赞" not in records
     assert "bash（失败）" in records and "unknown column" in records and "run_sql.py" in records
     assert "| 甲 |" not in records and "select 1" not in records and "结论：偏高" in records
+    assert "失败任务不应入选" not in records
     assert "调试预览" not in records and "经验总结自己的会话" not in records
     assert AGENT in experience.agents_with_tasks(today)
+
+    # Cap at the newest 30 finished tasks: add 28 more later tasks (total 32 finished) -> oldest 2 dropped.
+    for i in range(28):
+        _task(
+            store,
+            question=f"后续任务-{i:02d}",
+            answer="ok",
+            finished_at=day_start + timedelta(hours=2, minutes=i),
+        )
+    capped_records, capped_count = experience.build_session_records(AGENT, today)
+    assert capped_count == 30
+    assert "A第一轮：查退款率" not in capped_records  # oldest (+10m) dropped
+    assert "B第一轮：普通问题" not in capped_records  # 2nd oldest (+20m) dropped
+    assert "A第二轮：销售额应排除退款" in capped_records  # 3rd oldest (+30m) kept
+    assert "后续任务-27" in capped_records  # newest kept
+
+    # An agent with only error tasks on `today` is not returned by agents_with_tasks.
+    _task(store, question="仅失败", answer="err", status="error", agent="agent_only_err", finished_at=day_start + timedelta(hours=3))
+    assert "agent_only_err" not in experience.agents_with_tasks(today)
 
 
 def test_daily_digest_starts_once_per_agent_and_collects_candidates(store, monkeypatch, tmp_path):

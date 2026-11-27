@@ -536,8 +536,34 @@ def _steps(records: list[dict[str, Any]]) -> list[str]:
     return steps
 
 
+def _turn_sort_key(task: dict[str, Any]) -> tuple[bool, Any, bool, int, str]:
+    finished = task.get("finished_at")
+    seq = task.get("question_seq")
+    return (
+        finished is None,
+        finished or "",
+        seq is None,
+        int(seq) if seq is not None else 0,
+        str(task.get("task_id") or ""),
+    )
+
+
+def _group_tasks_by_topic(tasks: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Group selected tasks by topic_id, ordering topics by earliest selected turn
+    and turns inside each topic in question order (finished_at / seq asc)."""
+    by_topic: dict[str, list[dict[str, Any]]] = {}
+    for task in tasks:
+        topic_id = str(task.get("topic_id") or "")
+        by_topic.setdefault(topic_id, []).append(task)
+    grouped: list[tuple[str, list[dict[str, Any]]]] = []
+    for topic_id, topic_tasks in by_topic.items():
+        grouped.append((topic_id, sorted(topic_tasks, key=_turn_sort_key)))
+    grouped.sort(key=lambda pair: (_turn_sort_key(pair[1][0]), pair[0]))
+    return grouped
+
+
 def build_session_records(agent_id: str, day: date) -> tuple[str, int]:
-    """Markdown of one assistant's finished and failed tasks on `day`, worst first."""
+    """Markdown of one assistant's newest finished tasks on `day`, grouped by conversation."""
     store = get_topic_task_store()
     start, end = business_day_bounds(day)
     conn = _connect()
@@ -545,20 +571,21 @@ def build_session_records(agent_id: str, day: date) -> tuple[str, int]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT k.task_id, k.task_status, t.topic_id,
+                SELECT k.task_id, k.task_status, t.topic_id, k.finished_at,
+                       (SELECT u.seq_id FROM da_agent_message u WHERE u.task_id = k.task_id AND u.sender_type = 'user'
+                         ORDER BY u.seq_id ASC, u.created_at ASC LIMIT 1) AS question_seq,
                        (SELECT u.content FROM da_agent_message u WHERE u.task_id = k.task_id AND u.sender_type = 'user'
                          ORDER BY u.seq_id ASC, u.created_at ASC LIMIT 1) AS question,
-                       a.content AS answer, COALESCE(a.feedback, '') AS feedback
+                       (SELECT a.content FROM da_agent_message a WHERE a.task_id = k.task_id AND a.sender_type = 'assistant'
+                         ORDER BY a.seq_id DESC, a.created_at DESC LIMIT 1) AS answer
                 FROM da_agent_task k
                 JOIN da_agent_topic t ON t.topic_id = k.topic_id
-                LEFT JOIN da_agent_message a ON a.task_id = k.task_id AND a.sender_type = 'assistant'
                 WHERE COALESCE(NULLIF(k.agent_id, ''), t.agent_id) = %s
-                  AND k.task_status IN ('finished', 'error')
+                  AND k.task_status = 'finished'
                   AND k.finished_at >= %s AND k.finished_at < %s
                   AND t.is_agent_preview = 0
                   AND t.agent_id <> %s
-                ORDER BY (COALESCE(a.feedback, '') = 'dislike') DESC, (k.task_status = 'error') DESC,
-                         (COALESCE(a.feedback, '') = 'like') DESC, k.finished_at DESC
+                ORDER BY k.finished_at DESC, k.task_id DESC
                 LIMIT %s
                 """,
                 (agent_id, start, end, DIGEST_AGENT_ID, MAX_TASKS_PER_DIGEST),
@@ -566,20 +593,29 @@ def build_session_records(agent_id: str, day: date) -> tuple[str, int]:
             tasks = cur.fetchall() or []
     finally:
         conn.close()
-    rating = {"like": "点赞", "dislike": "点踩"}
-    sections = [f"# 会话记录 · {agent_id} · {day.isoformat()}", f"共 {len(tasks)} 个任务，点踩和失败的排在前面。", ""]
-    for index, task in enumerate(tasks, 1):
-        records = store.list_sdk_records(task_id=str(task["task_id"]), limit=500)
-        body = "\n".join([
-            f"## 任务 {index}（task_id: {task['task_id']}，topic_id: {task['topic_id']}）",
-            f"- 结果：{'失败' if task['task_status'] == 'error' else '完成'}；评价：{rating.get(task['feedback'], '无')}",
-            f"- 用户问题：{_clip(task.get('question') or '', 600)}",
-            "- 中间过程：",
-            *(_steps(records) or ["- （无工具调用）"]),
-            f"- 最终回答：{_answer_summary(str(task.get('answer') or ''))}",
-            "",
-        ])
-        sections.append(_clip(body, MAX_TASK_CHARS))
+    grouped = _group_tasks_by_topic(tasks)
+    sections = [
+        f"# 会话记录 · {agent_id} · {day.isoformat()}",
+        f"共 {len(tasks)} 个已完成任务，按会话分组并按对话顺序排列。",
+        "",
+    ]
+    index = 0
+    for topic_id, topic_tasks in grouped:
+        sections.append(f"## 会话 {topic_id}")
+        sections.append("")
+        for task in topic_tasks:
+            index += 1
+            records = store.list_sdk_records(task_id=str(task["task_id"]), limit=500)
+            body = "\n".join([
+                f"### 任务 {index}（task_id: {task['task_id']}，topic_id: {task['topic_id']}）",
+                "- 结果：完成",
+                f"- 用户问题：{_clip(task.get('question') or '', 600)}",
+                "- 中间过程：",
+                *(_steps(records) or ["- （无工具调用）"]),
+                f"- 最终回答：{_answer_summary(str(task.get('answer') or ''))}",
+                "",
+            ])
+            sections.append(_clip(body, MAX_TASK_CHARS))
     return "\n".join(sections), len(tasks)
 
 
@@ -594,7 +630,7 @@ def agents_with_tasks(day: date) -> list[str]:
                 """
                 SELECT DISTINCT COALESCE(NULLIF(k.agent_id, ''), t.agent_id) AS agent_id
                 FROM da_agent_task k JOIN da_agent_topic t ON t.topic_id = k.topic_id
-                WHERE k.task_status IN ('finished', 'error') AND k.finished_at >= %s AND k.finished_at < %s
+                WHERE k.task_status = 'finished' AND k.finished_at >= %s AND k.finished_at < %s
                   AND t.is_agent_preview = 0 AND t.agent_id <> %s
                 """,
                 (start, end, DIGEST_AGENT_ID),
