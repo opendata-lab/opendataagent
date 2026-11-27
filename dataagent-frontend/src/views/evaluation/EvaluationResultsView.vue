@@ -99,7 +99,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import dayjs from 'dayjs'
 import * as echarts from 'echarts/core'
 import { use } from 'echarts/core'
 import { LineChart } from 'echarts/charts'
@@ -112,6 +111,7 @@ import {
 import { CanvasRenderer } from 'echarts/renderers'
 import { dataagentApi } from '@/api/dataagent'
 import { withAgentContext } from '@/router/agentContext'
+import { formatDateTime, formatShortDateTime } from '@/utils/time'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent])
 
@@ -196,7 +196,7 @@ const chartContainers = new Map()
 const chartInstances = new Map()
 let resizeObserver = null
 
-const formatTime = (val) => val ? dayjs(val).format('YYYY-MM-DD HH:mm:ss') : '-'
+const formatTime = (val) => formatDateTime(val, '-')
 const formatScore = (val) => typeof val === 'number' ? val.toFixed(2) : '-'
 
 const notifyError = (error, fallback) => {
@@ -269,7 +269,7 @@ const setChartContainer = (key, el) => {
 
 const buildChartOption = (def) => {
   const xLabels = trendData.value.map((p) => {
-    if (p.started_at) return dayjs(p.started_at).format('MM-DD HH:mm')
+    if (p.started_at) return formatShortDateTime(p.started_at, '')
     return p.run_label || p.run_id?.slice(0, 8) || ''
   })
   const series = seriesValues(def)

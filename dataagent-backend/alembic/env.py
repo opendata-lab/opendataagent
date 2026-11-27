@@ -43,7 +43,11 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = create_engine(_database_url(), poolclass=pool.NullPool)
+    connectable = create_engine(
+        _database_url(),
+        poolclass=pool.NullPool,
+        connect_args={"init_command": "SET time_zone = '+00:00'"},
+    )
 
     with connectable.connect() as connection:
         context.configure(

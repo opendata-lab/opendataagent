@@ -14,11 +14,12 @@ import hashlib
 import json
 import logging
 import re
-from datetime import date, datetime, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any
 
-from core.topic_task_store import _new_id, _safe_json_load, _to_iso, get_topic_task_store
+from core.time_utils import business_day_bounds, to_rfc3339
+from core.topic_task_store import _new_id, _safe_json_load, get_topic_task_store
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +87,8 @@ def _row_to_item(row: dict[str, Any]) -> dict[str, Any]:
         "status": str(row.get("status") or "pending"),
         "user_id": user_id,
         "updated_by": resolved_updater,
-        "created_at": _to_iso(row.get("created_at")),
-        "updated_at": _to_iso(row.get("updated_at")),
+        "created_at": to_rfc3339(row.get("created_at")),
+        "updated_at": to_rfc3339(row.get("updated_at")),
     }
 
 
@@ -424,8 +425,7 @@ def _steps(records: list[dict[str, Any]]) -> list[str]:
 def build_session_records(agent_id: str, day: date) -> tuple[str, int]:
     """Markdown of one assistant's finished and failed tasks on `day`, worst first."""
     store = get_topic_task_store()
-    start = datetime.combine(day, datetime.min.time())
-    end = start + timedelta(days=1)
+    start, end = business_day_bounds(day)
     conn = _connect()
     try:
         with conn.cursor() as cur:
@@ -471,21 +471,8 @@ def build_session_records(agent_id: str, day: date) -> tuple[str, int]:
 
 # ---- daily run -----------------------------------------------------------
 
-def db_now() -> datetime:
-    """The database's clock. Task timestamps are written with CURRENT_TIMESTAMP
-    in the database's time zone, so days are counted on that clock, not the
-    backend's (they differ when the containers' time zones differ)."""
-    conn = _connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT NOW() AS now")
-            return (cur.fetchone() or {})["now"]
-    finally:
-        conn.close()
-
-
 def agents_with_tasks(day: date) -> list[str]:
-    start = datetime.combine(day, datetime.min.time())
+    start, end = business_day_bounds(day)
     conn = _connect()
     try:
         with conn.cursor() as cur:
@@ -496,7 +483,7 @@ def agents_with_tasks(day: date) -> list[str]:
                 WHERE k.task_status IN ('finished', 'error') AND k.finished_at >= %s AND k.finished_at < %s
                   AND t.is_agent_preview = 0 AND t.agent_id <> %s
                 """,
-                (start, start + timedelta(days=1), DIGEST_AGENT_ID),
+                (start, end, DIGEST_AGENT_ID),
             )
             return [str(row["agent_id"]) for row in cur.fetchall() or [] if row.get("agent_id") and row["agent_id"] != DIGEST_AGENT_ID]
     finally:

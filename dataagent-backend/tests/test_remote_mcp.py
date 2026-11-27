@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager, contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import secrets
@@ -54,7 +54,7 @@ def token_row(cursor, values):
 @pytest.fixture
 def token_db(tmp_path, monkeypatch):
     database = tmp_path / "mcp-tokens.db"
-    clock = SimpleNamespace(now=datetime(2026, 11, 22, 12))
+    clock = SimpleNamespace(now=datetime(2026, 11, 22, 12, tzinfo=timezone.utc))
     statements = []
 
     @contextmanager
@@ -80,7 +80,7 @@ def token_db(tmp_path, monkeypatch):
         )
         connection.commit()
     monkeypatch.setattr(remote_mcp_tokens, "_connect", connect)
-    monkeypatch.setattr(remote_mcp_tokens, "_now", lambda: clock.now)
+    monkeypatch.setattr(remote_mcp_tokens, "utc_now", lambda: clock.now)
     return SimpleNamespace(connect=connect, clock=clock, statements=statements)
 
 

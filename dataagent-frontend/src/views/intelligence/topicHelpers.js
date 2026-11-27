@@ -38,5 +38,7 @@ export const TOPIC_SOURCE_LABELS = Object.freeze({ web: '平台', widget: 'Widge
 
 // Descending by recency: updated_at, falling back to created_at.
 export function compareTopicsByRecency(a, b) {
-  return String(b?.updated_at || b?.created_at || '').localeCompare(String(a?.updated_at || a?.created_at || ''))
+  const ta = Date.parse(a?.updated_at || a?.created_at || '') || 0
+  const tb = Date.parse(b?.updated_at || b?.created_at || '') || 0
+  return tb - ta
 }

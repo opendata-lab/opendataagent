@@ -322,6 +322,9 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
             assert [r["role_key"] for r in cur.fetchall()] == ["admin", "user"]
             cur.execute("SELECT COUNT(*) AS n FROM da_mcp_access_token")
             assert cur.fetchone()["n"] == 0
+            cur.execute("SELECT updated_at FROM da_agent_topic UNION SELECT updated_at FROM da_agent_draft")
+            pre_script_updated = [str(r["updated_at"]) for r in cur.fetchall()]
+            assert len(pre_script_updated) == 1 and pre_script_updated[0].startswith("2026-01-0")
 
         # 3. The admin may be created before or after the script; here before.
         from config import update_settings
@@ -390,7 +393,7 @@ def test_real_mysql_cutover_script_and_concurrent_register(tmp_path, monkeypatch
                               "t_wangwu": wangwu_uid, "t_w_wangwu": wangwu_uid, "t_w_zhaoliu": zhaoliu_uid,
                               "t_w_zhaoliu2": zhaoliu_uid, "t_w_anon": None}
             cur.execute("SELECT updated_at FROM da_agent_topic UNION SELECT updated_at FROM da_agent_draft")
-            assert [str(r["updated_at"]) for r in cur.fetchall()] == ["2026-01-02 03:04:05"]
+            assert [str(r["updated_at"]) for r in cur.fetchall()] == pre_script_updated
 
             cur.execute("SELECT principal_id FROM da_agent_grant WHERE agent_id = 'agent_default' ORDER BY principal_id")
             assert [int(r["principal_id"]) for r in cur.fetchall()] == sorted([zhang_uid, lisi_uid])

@@ -409,6 +409,7 @@ import { createNl2SqlTransport } from '@/views/intelligence/nl2sqlTransport'
 import { useChatMessageActions } from '@/views/intelligence/useChatMessageActions'
 import SlashCommandMenu from '@/views/intelligence/SlashCommandMenu.vue'
 import { useSlashCommands, buildCommands } from '@/views/intelligence/useSlashCommands'
+import { formatClockTime, formatRelativeTime } from '@/utils/time'
 import { isWidgetLoginRequired, normalizePermissionMode } from './config'
 
 const props = defineProps({
@@ -574,38 +575,7 @@ const truncate = (value, max) => {
   return text.length > max ? `${text.slice(0, max)}...` : text
 }
 
-const formatTime = (value) => {
-  const date = value ? new Date(value) : null
-  if (!date || Number.isNaN(date.getTime())) return ''
-
-  const fmtDate = (d, options) => d.toLocaleString('zh-CN', { hour12: false, ...options })
-  const now = new Date()
-  const dateKey = fmtDate(date, { year: 'numeric', month: '2-digit', day: '2-digit' })
-  const nowKey = fmtDate(now, { year: 'numeric', month: '2-digit', day: '2-digit' })
-
-  if (dateKey === nowKey) {
-    const diffMs = now.getTime() - date.getTime()
-    const diffSeconds = Math.floor(diffMs / 1000)
-    const diffMinutes = Math.floor(diffSeconds / 60)
-    if (diffSeconds < 60) return '刚刚'
-    if (diffMinutes < 60) return `${diffMinutes}分钟前`
-    return fmtDate(date, { hour: '2-digit', minute: '2-digit' })
-  }
-
-  const [y, m, d] = dateKey.split('/').map(Number)
-  const [ny, nm, nd] = nowKey.split('/').map(Number)
-  const diffDays = Math.floor((new Date(ny, nm - 1, nd) - new Date(y, m - 1, d)) / 86400000)
-
-  if (diffDays === 1) return '1天前'
-  if (diffDays <= 7) return `${diffDays}天前`
-
-  const dateYear = fmtDate(date, { year: 'numeric' })
-  const nowYear = fmtDate(now, { year: 'numeric' })
-  if (dateYear === nowYear) {
-    return fmtDate(date, { month: '2-digit', day: '2-digit' })
-  }
-  return fmtDate(date, { year: 'numeric', month: '2-digit', day: '2-digit' })
-}
+const formatTime = (value) => formatRelativeTime(value)
 
 const currentTopic = computed(() => topics.value.find((topic) => topic.topic_id === topicId.value) || null)
 watch(currentTopic, (topic) => {
@@ -629,11 +599,7 @@ const changePermissionMode = async (mode) => {
   }
 }
 
-const formatMessageTime = (value) => {
-  const date = value ? new Date(value) : null
-  if (!date || Number.isNaN(date.getTime())) return ''
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-}
+const formatMessageTime = (value) => formatClockTime(value)
 
 const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 

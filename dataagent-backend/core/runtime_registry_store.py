@@ -5,15 +5,27 @@ import threading
 from datetime import datetime
 from typing import Any
 
-import pymysql
+from core.db import connect_mysql
+from core.time_utils import to_rfc3339
 
-from config import get_settings
 
-
-def _to_iso(value: Any) -> str:
+def _parse_validated_at(value: Any) -> datetime | None:
+    if value is None:
+        return None
     if isinstance(value, datetime):
-        return value.isoformat(timespec="seconds")
-    return str(value) if value is not None else ""
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise TypeError(f"Naive datetime is not allowed for validated_at: {value!r}")
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
 
 
 def _json_load(raw: Any, fallback: Any) -> Any:
@@ -35,17 +47,7 @@ class RuntimeRegistryStore:
         self._ready_lock = threading.Lock()
 
     def _connect(self):
-        cfg = get_settings()
-        return pymysql.connect(
-            host=cfg.mysql_host,
-            port=cfg.mysql_port,
-            user=cfg.mysql_user,
-            password=cfg.mysql_password,
-            database=cfg.session_mysql_database,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            autocommit=False,
-        )
+        return connect_mysql()
 
     def init_schema(self) -> None:
         if self._ready:
@@ -249,7 +251,8 @@ class RuntimeRegistryStore:
                         _json_dump(payload.get("models") or []),
                         _json_dump(payload.get("model_detections") or {}),
                         payload.get("validation_status", "unverified"),
-                        payload.get("validation_message", ""), payload.get("validated_at") or None,
+                        payload.get("validation_message", ""),
+                        _parse_validated_at(payload.get("validated_at")),
                     ),
                 )
             conn.commit()
@@ -291,8 +294,8 @@ class RuntimeRegistryStore:
             "oauth_required": bool(row.get("oauth_required")),
             "tool_count": int(row.get("tool_count") or 0),
             "description": str(row.get("description") or ""),
-            "created_at": _to_iso(row.get("created_at")),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
 
     @staticmethod
@@ -314,9 +317,9 @@ class RuntimeRegistryStore:
             "model_detections": dict(_json_load(row.get("model_detections_json"), {}) or {}),
             "validation_status": str(row.get("validation_status") or "unverified"),
             "validation_message": str(row.get("validation_message") or ""),
-            "validated_at": _to_iso(row.get("validated_at")),
-            "created_at": _to_iso(row.get("created_at")),
-            "updated_at": _to_iso(row.get("updated_at")),
+            "validated_at": to_rfc3339(row.get("validated_at")),
+            "created_at": to_rfc3339(row.get("created_at")),
+            "updated_at": to_rfc3339(row.get("updated_at")),
         }
 
 

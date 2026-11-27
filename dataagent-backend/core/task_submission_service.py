@@ -10,13 +10,10 @@ from croniter import croniter
 
 from config import get_settings
 from core.skill_admin_service import resolve_runtime_provider_selection
+from core.time_utils import utc_now
 from core.topic_task_store import TopicTaskStore, get_topic_task_store
 
 logger = logging.getLogger(__name__)
-
-
-def current_utc_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def resolve_task_timeouts() -> dict[str, int]:
@@ -46,13 +43,15 @@ def normalize_message_prompt(message_type: str, message_content: Any) -> str:
 
 
 def compute_next_run_at(cron_expr: str, timezone_name: str, *, base_utc: datetime | None = None) -> datetime:
-    base = base_utc or current_utc_naive()
+    base = base_utc or utc_now()
+    if base.tzinfo is None or base.utcoffset() is None:
+        raise TypeError(f"base_utc must be timezone-aware: {base!r}")
     local_tz = ZoneInfo(timezone_name or "Asia/Shanghai")
-    localized = base.replace(tzinfo=timezone.utc).astimezone(local_tz)
+    localized = base.astimezone(local_tz)
     next_local = croniter(cron_expr, localized).get_next(datetime)
     if next_local.tzinfo is None:
         next_local = next_local.replace(tzinfo=local_tz)
-    return next_local.astimezone(timezone.utc).replace(tzinfo=None)
+    return next_local.astimezone(timezone.utc)
 
 
 async def submit_message_task(

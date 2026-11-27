@@ -77,6 +77,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { dataagentApi } from '@/api/dataagent'
 import { conversationLocation } from '@/router/agentContext'
+import { formatDateTime, localDayRange } from '@/utils/time'
 
 const router = useRouter()
 const pageSize = 20
@@ -90,7 +91,7 @@ const counts = reactive({ likes: 0, dislikes: 0 })
 const filters = reactive({ agentId: '', feedback: '', range: null })
 
 const agentName = (agentId) => agents.value.find((agent) => agent.agent_id === agentId)?.name || agentId || '—'
-const formatTime = (value) => (value ? String(value).replace('T', ' ').slice(0, 19) : '—')
+const formatTime = (value) => formatDateTime(value)
 
 async function loadAgents() {
   try {
@@ -114,8 +115,11 @@ async function load() {
     if (filters.agentId) params.agent_id = filters.agentId
     if (filters.feedback) params.feedback = filters.feedback
     if (Array.isArray(filters.range) && filters.range.length === 2) {
-      params.start = `${filters.range[0]} 00:00:00`
-      params.end = `${filters.range[1]} 23:59:59`
+      const range = localDayRange(filters.range[0], filters.range[1])
+      if (range) {
+        params.start = range.start
+        params.end = range.end
+      }
     }
     const data = await dataagentApi.listFeedback(params)
     if (seq !== loadSeq) return

@@ -218,11 +218,11 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { dataagentApi } from '@/api/dataagent'
 import { useAuthStore } from '@/stores/auth'
 import { withAgentContext } from '@/router/agentContext'
+import { formatDateTime } from '@/utils/time'
 import TextCodeEditor from '@/components/TextCodeEditor.vue'
 import SkillFileTreeNode from './components/SkillFileTreeNode.vue'
 import {
@@ -291,10 +291,7 @@ const currentVersionLabel = computed(() => {
   return current ? `V${current.version_no}` : '-'
 })
 
-const formatTime = (value) => {
-  if (!value) return '-'
-  return dayjs(value).format('YYYY-MM-DD HH:mm:ss')
-}
+const formatTime = (value) => formatDateTime(value, '-')
 
 const notifyError = (error, fallbackMessage) => {
   if (!error?.__odwNotified) {

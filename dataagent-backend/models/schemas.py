@@ -131,7 +131,7 @@ class MessageScheduleUpsertRequest(BaseModel):
     message_content: Any
     cron_expr: str
     enabled: bool = True
-    timezone: str = "Asia/Shanghai"
+    timezone: Optional[str] = None
 
 
 class MessageScheduleLogsQueryRequest(BaseModel):

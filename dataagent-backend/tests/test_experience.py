@@ -98,7 +98,10 @@ def test_review_flow_and_prompt_section(store):
 
 
 def test_session_records_include_steps_put_dislikes_first_and_drop_tables(store):
-    today = experience.db_now().date()
+    from datetime import datetime
+    from core.time_utils import get_business_tz
+
+    today = datetime.now(get_business_tz()).date()
     _task(store, question="普通问题", answer="好的")
     _task(store, question="退款率是多少", feedback="dislike",
           answer="结果如下\n| 渠道 | 退款率 |\n| --- | --- |\n| 甲 | 3.2% |\n```sql\nselect 1\n```\n结论：偏高",
@@ -140,11 +143,15 @@ def test_daily_digest_starts_once_per_agent_and_collects_candidates(store, monke
                         lambda agent_id: digest_agent if agent_id == experience.DIGEST_AGENT_ID else {"agent_id": agent_id, "name": "测试助手"})
     monkeypatch.setattr(experience, "agents_with_tasks", lambda day: [AGENT])
 
-    topics = asyncio.run(experience.run_daily_digest(experience.db_now().date()))
+    from datetime import datetime
+    from core.time_utils import get_business_tz
+
+    today = datetime.now(get_business_tz()).date()
+    topics = asyncio.run(experience.run_daily_digest(today))
     store.made.extend(topics)
     assert len(topics) == 1 and submitted[0]["agent_id"] == experience.DIGEST_AGENT_ID
     assert "上月销售额" in uploads[0][2].decode()
-    assert asyncio.run(experience.run_daily_digest(experience.db_now().date())) == []  # same day, same agent: skipped
+    assert asyncio.run(experience.run_daily_digest(today)) == []  # same day, same agent: skipped
 
     output = tmp_path / "experience_candidates.json"
     output.write_text(json.dumps([
@@ -213,4 +220,7 @@ def test_one_assistant_failing_does_not_stop_the_others(monkeypatch):
     monkeypatch.setattr(agent_profile_service, "get_agent_profile", lambda agent_id: {"agent_id": agent_id})
     monkeypatch.setattr(experience, "agents_with_tasks", lambda day: ["agent_broken", "agent_ok"])
     monkeypatch.setattr(experience, "_start_digest", fake_start)
-    assert asyncio.run(experience.run_daily_digest(experience.db_now().date())) == ["topic_agent_ok"]
+    from datetime import datetime
+    from core.time_utils import get_business_tz
+
+    assert asyncio.run(experience.run_daily_digest(datetime.now(get_business_tz()).date())) == ["topic_agent_ok"]

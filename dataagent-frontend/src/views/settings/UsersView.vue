@@ -167,6 +167,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { dataagentApi } from '@/api/dataagent'
+import { formatDateTime } from '@/utils/time'
 
 const pageSize = 20
 const users = ref([])
@@ -185,7 +186,7 @@ const editVisible = ref(false)
 const editForm = reactive({ id: null, username: '', display_name: '', role_ids: [] })
 
 
-const formatTime = (value) => (value ? String(value).replace('T', ' ').slice(0, 19) : '—')
+const formatTime = (value) => formatDateTime(value)
 
 async function loadRoles() {
   try {

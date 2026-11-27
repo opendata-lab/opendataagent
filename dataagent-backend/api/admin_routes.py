@@ -5,6 +5,7 @@ from typing import Any
 import anyio
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
+from pydantic import AwareDatetime
 
 from api.topic_file_response import topic_file_response
 from config import get_settings
@@ -307,8 +308,8 @@ def import_mcp_servers_endpoint(payload: dict[str, Any] = Body(...)):
 def admin_list_feedback(
     agent_id: str | None = Query(default=None),
     feedback: str = Query(default="", pattern="^(|like|dislike)$"),
-    start: str | None = Query(default=None),
-    end: str | None = Query(default=None),
+    start: AwareDatetime | None = Query(default=None),
+    end: AwareDatetime | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
@@ -428,8 +429,8 @@ def admin_list_all_topics(
     user_id: int | None = Query(default=None),
     agent_id: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
-    start: str | None = Query(default=None),
-    end: str | None = Query(default=None),
+    start: AwareDatetime | None = Query(default=None),
+    end: AwareDatetime | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     user: User = Depends(require_admin),

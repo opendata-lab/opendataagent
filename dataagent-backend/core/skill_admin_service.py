@@ -97,7 +97,9 @@ def _runtime_settings_payload() -> dict[str, Any]:
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    from core.time_utils import to_rfc3339, utc_now
+
+    return to_rfc3339(utc_now())
 
 
 def _normalize_provider_id(provider_id: str | None, *, allow_empty: bool = False) -> str:

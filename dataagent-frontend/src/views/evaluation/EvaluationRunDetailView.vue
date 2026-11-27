@@ -318,9 +318,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import dayjs from 'dayjs'
 import { dataagentApi } from '@/api/dataagent'
 import { withAgentContext } from '@/router/agentContext'
+import { formatDateTime } from '@/utils/time'
 import TextCodeEditor from '@/components/TextCodeEditor.vue'
 
 const route = useRoute()
@@ -335,7 +335,7 @@ const caseSearch = ref('')
 const caseDialogVisible = ref(false)
 const caseDetail = ref(null)
 
-const formatTime = (val) => val ? dayjs(val).format('YYYY-MM-DD HH:mm:ss') : '-'
+const formatTime = (val) => formatDateTime(val, '-')
 const formatScore = (val) => typeof val === 'number' ? val.toFixed(2) : '-'
 
 const formatJson = (val) => {

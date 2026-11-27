@@ -375,6 +375,7 @@ import { dataagentApi } from '@/api/dataagent'
 import { useAuthStore } from '@/stores/auth'
 import { conversationLocation } from '@/router/agentContext'
 import { copyText } from '@/utils/clipboard'
+import { formatRelativeTime } from '@/utils/time'
 import { topicStatusKind } from './topicStatus'
 import { normalizeTopic } from './chatMessage'
 import { TOPIC_SOURCE_LABELS } from './topicHelpers.js'
@@ -534,14 +535,7 @@ const topicBadgeKind = (topic) => topicStatusKind(topic?.current_task_status)
 
 // ── Time formatting ────────────────────────────────────────────────────────
 function formatTime(dateStr) {
-  if (!dateStr) return ''
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return ''
-  const now = new Date()
-  if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  }
-  return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+  return formatRelativeTime(dateStr)
 }
 
 // ── Slash commands ─────────────────────────────────────────────────────────
