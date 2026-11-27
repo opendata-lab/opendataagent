@@ -34,7 +34,7 @@ npm --prefix dataagent-frontend run build && npm --prefix dataagent-frontend run
 
 ## 发版
 
-维护者打 `v<版本>` tag 后，CI 构建并推送 `oda-*` 镜像，生成离线部署包并创建 GitHub Release；main 分支的每次推送会刷新 `latest` 版本。SDK 用 `sdk-v<版本>` tag 单独发布到 npm。
+维护者打 `v<版本>` tag 后，CI 构建并推送 `oda-*` 镜像，生成离线部署包并创建 GitHub Release；main 分支的每次推送会刷新 `latest` 版本。SDK 用 `sdk-v<版本>` tag 单独发布到 npm：CI 通过 Trusted Publishing 执行 `npm stage publish` 放入待审批区，维护者在 npmjs.com 上用两步验证批准（或 `npm stage approve <stage-id>`）后才公开。
 
 ## 许可证
 

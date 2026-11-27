@@ -72,6 +72,9 @@ jobs:
       - name: Upgrade npm for Trusted Publishing
         run: npm install -g npm@11
 
-      - name: Publish
+      # Staged publishing: CI only stages the version; a maintainer approves it
+      # with 2FA on npmjs.com (or `npm stage approve <stage-id>`) before it
+      # becomes public. The trusted publisher allows stage publish only.
+      - name: Stage for publishing
         working-directory: dataagent-frontend/packages/agent-conversation
-        run: npm publish --access public --provenance
+        run: npm stage publish --access public --provenance
