@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest'
 import { nextTick } from 'vue'
 import { defineAgentConversation, DEFAULT_TAG } from '../element.js'
+import { parseMarkdown } from '../core/message.js'
 
 beforeAll(() => {
   defineAgentConversation()
@@ -119,5 +120,49 @@ describe('answer text', () => {
     expect(el.shadowRoot.querySelector('.dac-activity').textContent).toContain('正在推断本体')
     release?.()
     el.remove()
+  })
+})
+
+const parseToDom = (markdown) => {
+  const html = parseMarkdown(markdown)
+  const container = document.createElement('div')
+  container.innerHTML = html
+  return { html, container }
+}
+
+describe('markdown code escaping', () => {
+  it('renders SQL comparison operators and & in fenced and inline code once', async () => {
+    const sql = 'SELECT * FROM orders WHERE amount > 100 AND qty < 50 AND total >= 10 AND status <> 0 AND flags & 1'
+    const markdown = `\`\`\`sql\n${sql}\n\`\`\`\n\nCheck \`a < b\`, \`c >= d\`, and \`x & y\`.`
+
+    const { html, container } = parseToDom(markdown)
+    expect(html).not.toContain('&amp;gt;')
+    expect(html).not.toContain('&amp;lt;')
+    expect(html).not.toContain('&amp;amp;')
+
+    const codeBlock = container.querySelector('pre code')
+    expect(codeBlock).toBeTruthy()
+    expect(codeBlock.textContent.trim()).toBe(sql)
+
+    const inlineCodes = [...container.querySelectorAll('p code')].map((el) => el.textContent)
+    expect(inlineCodes).toEqual(['a < b', 'c >= d', 'x & y'])
+
+    const el = await mount(makeTransport([
+      { id: 'a-sql', role: 'assistant', content: markdown }
+    ]))
+    expect(el.shadowRoot.querySelector('.dac-bubble pre code').textContent.trim()).toBe(sql)
+    expect(el.shadowRoot.querySelector('.dac-bubble p code').textContent).toBe('a < b')
+    el.remove()
+  })
+
+  it('keeps plain text and raw <script> text unchanged', () => {
+    const plain = parseToDom('a > b and &lt;missing&gt;')
+    expect(plain.html).toContain('a &gt; b')
+    expect(plain.container.textContent.trim()).toBe('a > b and &lt;missing&gt;')
+
+    const script = parseToDom('<script>alert(1)</script>')
+    expect(script.html).not.toContain('<script')
+    expect(script.container.querySelector('script')).toBeNull()
+    expect(script.container.textContent.trim()).toBe('<script>alert(1)</script>')
   })
 })
