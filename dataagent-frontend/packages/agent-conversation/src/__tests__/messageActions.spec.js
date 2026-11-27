@@ -74,19 +74,24 @@ describe('message actions', () => {
     el.remove()
   })
 
-  it('shows the time for user messages when available', async () => {
+  it('renders the question creation time and the answer finish time from history', async () => {
     const el = await mount(makeTransport({
       loadConversation: async () => ({
         messages: [
-          { id: 'u-1', role: 'user', content: 'hello', created_at: '2026-09-22T09:00:00.000Z' },
-          { id: 'a-1', role: 'assistant', content: 'world', created_at: '2026-09-22T09:05:00.000Z' }
+          { id: 'u-1', role: 'user', content: 'hello', created_at: '2026-11-27T09:00:00' },
+          {
+            id: 'a-1', role: 'assistant', content: 'world', created_at: '2026-11-27T09:00:00',
+            finished_at: '2026-11-27T09:05:00', updated_at: '2026-11-27T09:15:00',
+          }
         ],
         run: null
       })
     }))
 
-    const times = el.shadowRoot.querySelectorAll('.dac-time')
-    expect(times).toHaveLength(2)
+    expect(el.shadowRoot.querySelector('.dac-message-user .dac-time').textContent).toBe('09:00')
+    const answerTime = el.shadowRoot.querySelector('.dac-message-assistant .dac-time')
+    expect(answerTime.textContent).toBe('09:05')
+    expect(answerTime.getAttribute('datetime')).toBe('2026-11-27T09:05:00')
     el.remove()
   })
 

@@ -1018,12 +1018,14 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT message_id, topic_id, task_id, sender_type, type, status, content, event,
-                           steps_json, tool_json, seq_id, correlation_id, parent_correlation_id,
-                           content_type, usage_json, feedback, error_json, attachments_json, show_in_ui, created_at, updated_at
-                    FROM da_agent_message
-                    WHERE topic_id = %s AND show_in_ui = 1
-                    ORDER BY seq_id ASC, created_at ASC
+                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content, m.event,
+                           m.steps_json, m.tool_json, m.seq_id, m.correlation_id, m.parent_correlation_id,
+                           m.content_type, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
+                           m.created_at, m.updated_at, task.finished_at
+                    FROM da_agent_message m
+                    LEFT JOIN da_agent_task task ON task.task_id = m.task_id AND m.sender_type = 'assistant'
+                    WHERE m.topic_id = %s AND m.show_in_ui = 1
+                    ORDER BY m.seq_id ASC, m.created_at ASC
                     """,
                     (topic_id,),
                 )
@@ -1070,12 +1072,14 @@ class TopicTaskStore(SessionCheckpointStore):
                 total_row = cur.fetchone() or {}
                 cur.execute(
                     f"""
-                    SELECT message_id, topic_id, task_id, sender_type, type, status, content, event,
-                           steps_json, tool_json, seq_id, correlation_id, parent_correlation_id,
-                           content_type, usage_json, feedback, error_json, attachments_json, show_in_ui, created_at, updated_at
-                    FROM da_agent_message
-                    WHERE topic_id = %s AND show_in_ui = 1
-                    ORDER BY seq_id {sort_direction}, created_at {sort_direction}
+                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content, m.event,
+                           m.steps_json, m.tool_json, m.seq_id, m.correlation_id, m.parent_correlation_id,
+                           m.content_type, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
+                           m.created_at, m.updated_at, task.finished_at
+                    FROM da_agent_message m
+                    LEFT JOIN da_agent_task task ON task.task_id = m.task_id AND m.sender_type = 'assistant'
+                    WHERE m.topic_id = %s AND m.show_in_ui = 1
+                    ORDER BY m.seq_id {sort_direction}, m.created_at {sort_direction}
                     LIMIT %s OFFSET %s
                     """,
                     (topic_id, safe_page_size, offset),
@@ -1244,12 +1248,14 @@ class TopicTaskStore(SessionCheckpointStore):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT message_id, topic_id, task_id, sender_type, type, status, content, event,
-                           steps_json, tool_json, seq_id, correlation_id, parent_correlation_id,
-                           content_type, usage_json, feedback, error_json, attachments_json, show_in_ui, created_at, updated_at
-                    FROM da_agent_message
-                    WHERE task_id = %s AND sender_type = 'assistant' AND show_in_ui = 1
-                    ORDER BY seq_id ASC
+                    SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content, m.event,
+                           m.steps_json, m.tool_json, m.seq_id, m.correlation_id, m.parent_correlation_id,
+                           m.content_type, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
+                           m.created_at, m.updated_at, task.finished_at
+                    FROM da_agent_message m
+                    LEFT JOIN da_agent_task task ON task.task_id = m.task_id
+                    WHERE m.task_id = %s AND m.sender_type = 'assistant' AND m.show_in_ui = 1
+                    ORDER BY m.seq_id ASC
                     LIMIT 1
                     """,
                     (task_id,),
@@ -1376,9 +1382,11 @@ class TopicTaskStore(SessionCheckpointStore):
                     f"""
                     SELECT m.message_id, m.topic_id, m.task_id, m.sender_type, m.type, m.status, m.content, m.event,
                            m.steps_json, m.tool_json, m.seq_id, m.correlation_id, m.parent_correlation_id,
-                           m.content_type, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui, m.created_at, m.updated_at
+                           m.content_type, m.usage_json, m.feedback, m.error_json, m.attachments_json, m.show_in_ui,
+                           m.created_at, m.updated_at, task.finished_at
                     FROM da_agent_message m
                     JOIN da_agent_topic t ON t.topic_id = m.topic_id
+                    LEFT JOIN da_agent_task task ON task.task_id = m.task_id AND m.sender_type = 'assistant'
                     WHERE m.message_id = %s
                       AND {context_sql}
                     LIMIT 1
@@ -3393,6 +3401,7 @@ class TopicTaskStore(SessionCheckpointStore):
             # meanwhile so the switch can be reverted without a data change.
             normalized["records"] = list(history.get("records") or []) if history else []
             normalized["resume_after_seq"] = int(history.get("resume_after_seq") or 0) if history else 0
+            normalized["finished_at"] = _to_iso(row.get("finished_at")) or None
         return normalized
 
     def _normalize_task_row(self, row: dict[str, Any]) -> dict[str, Any]:

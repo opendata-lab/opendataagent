@@ -40,6 +40,8 @@ export interface RunRef {
   taskId: string
   status: RunStatus
   detail: string
+  /** ISO 8601 time recorded when the run reached its terminal status. */
+  finishedAt?: string
   /**
    * Opaque metadata supplied by the host when the run was started. Hosts that
    * need it to survive a page reload must restore it from their own storage in
@@ -157,6 +159,8 @@ export interface ConversationMessage {
   attachments?: ConversationAttachment[]
   taskId?: string
   createdAt?: string
+  /** ISO 8601 finish time used for assistant message display. */
+  finishedAt?: string
   status?: string
   error?: unknown
   feedback?: string

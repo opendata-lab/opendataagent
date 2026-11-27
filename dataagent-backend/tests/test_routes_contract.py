@@ -493,6 +493,7 @@ class _FakeStore:
             return None
         task["cancel_requested_at"] = _now()
         task["task_status"] = "suspended"
+        task["finished_at"] = task["cancel_requested_at"]
         self.topics[task["topic_id"]]["current_task_status"] = "suspended"
         if task.get("source_queue_id"):
             queue = self.queues.get(task["source_queue_id"])
@@ -786,6 +787,7 @@ def test_topics_tasks_and_v2_routes(monkeypatch):
         assert history.json()["items"][1]["sender_type"] == "assistant"
         assert history.json()["items"][1]["blocks"] == []
         assert history.json()["items"][1]["resume_after_seq"] == 0
+        assert history.json()["items"][1]["finished_at"] is None
         assistant_message_id = history.json()["items"][1]["message_id"]
 
         feedback = client.put(
@@ -874,6 +876,7 @@ def test_topics_tasks_and_v2_routes(monkeypatch):
         cancelled = client.post(f"/api/v1/nl2sql/tasks/{task_id}/cancel")
         assert cancelled.status_code == 200
         assert cancelled.json()["task_status"] == "suspended"
+        assert cancelled.json()["finished_at"] == cancelled.json()["cancel_requested_at"]
         assert coordinator.cancelled == [task_id]
 
         assert client.get("/api/v1/nl2sql/settings").status_code == 404
@@ -927,6 +930,32 @@ def test_topic_permission_mode_lifecycle(monkeypatch):
         # PUT with neither field is a 400.
         empty = client.put(f"/api/v1/nl2sql/topics/{topic_id}", json={})
         assert empty.status_code == 400
+
+
+def test_assistant_finish_time_is_exposed_in_history_and_task_message(monkeypatch):
+    client, store, _coordinator, _submit_calls = _build_client(monkeypatch)
+    with client:
+        topic_id = client.post("/api/v1/nl2sql/topics", json={"title": "Answer time"}).json()["topic_id"]
+        delivered = client.post(
+            "/api/v1/nl2sql/tasks/deliver-message",
+            json={"topic_id": topic_id, "content": "你好"},
+        ).json()
+        task_id = delivered["task_id"]
+        assistant = store.get_assistant_message(task_id)
+        started_at = "2026-11-27T09:00:00"
+        finished_at = "2026-11-27T09:05:00"
+        assistant.update(status="finished", created_at=started_at, finished_at=finished_at)
+        store.tasks[task_id].update(task_status="finished", finished_at=finished_at)
+
+        history = client.get(f"/api/v1/nl2sql/topics/{topic_id}/messages")
+        user, answer = history.json()["items"]
+        assert user["finished_at"] is None
+        assert answer["created_at"] == started_at
+        assert answer["finished_at"] == finished_at
+
+        task = client.get(f"/api/v1/nl2sql/tasks/{task_id}")
+        task_message = client.get(f"/api/v1/nl2sql/tasks/{task_id}/message")
+        assert task.json()["finished_at"] == task_message.json()["finished_at"] == finished_at
 
 
 def test_sdk_events_stream_reads_persisted_records_in_seq_order(monkeypatch):

@@ -42,6 +42,8 @@ GET /health
 | `PUT` | `/topics/{topic_id}/messages/{message_id}/feedback` | 消息反馈 |
 | `POST` | `/topics/{topic_id}/messages/{message_id}/followup-suggestions` | 生成追问建议 |
 
+消息的 `created_at` 表示消息行创建时间。助手消息的 `finished_at` 来自对应任务的完成时间。用户消息或暂未记录完成时间的助手消息返回 `null`。
+
 ## 发送消息
 
 ```
@@ -86,6 +88,8 @@ POST /tasks/deliver-message
 | `POST` | `/tasks/{task_id}/question-answer` | 回答运行时向用户提出的问题 |
 
 `suspended` 表示任务在等待审批或回答，处理后自动继续。
+
+任务状态和取消响应的 `finished_at` 为已记录的任务完成时间。`/tasks/{task_id}/message` 返回的助手消息使用同一时间。
 
 ## 单助手 MCP
 

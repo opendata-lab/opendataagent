@@ -1,6 +1,6 @@
 <template>
   <div class="dac-actions" part="message-actions">
-    <time v-if="time" class="dac-time" part="message-time" :datetime="message.createdAt">{{ time }}</time>
+    <time v-if="time" class="dac-time" part="message-time" :datetime="timestamp">{{ time }}</time>
 
     <button
       type="button"
@@ -80,10 +80,14 @@ defineEmits(['feedback'])
 const copied = ref(false)
 let resetTimer = null
 
+const timestamp = computed(() => {
+  const message = props.message
+  return (message.role === 'assistant' && message.finishedAt) || message.createdAt
+})
+
 const time = computed(() => {
-  const raw = props.message?.createdAt
-  if (!raw) return ''
-  const at = new Date(raw)
+  if (!timestamp.value) return ''
+  const at = new Date(timestamp.value)
   if (Number.isNaN(at.getTime())) return ''
   return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
 })

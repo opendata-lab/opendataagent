@@ -171,11 +171,12 @@ describe('sending', () => {
 
 describe('streaming', () => {
   it('forwards events and completes on the terminal item', async () => {
+    const finishedAt = '2026-11-27T09:05:00Z'
     const { api, events } = setup(makeTransport({
       streamEvents: async function* () {
         yield { type: 'event', seqId: 1, event: { kind: 'text' } }
         yield { type: 'event', seqId: 2, event: { kind: 'text' } }
-        yield { type: 'terminal', run: runRef({ status: 'finished' }) }
+        yield { type: 'terminal', run: runRef({ status: 'finished', finishedAt }) }
       }
     }))
 
@@ -184,6 +185,7 @@ describe('streaming', () => {
 
     expect(named(events, 'agent-event')).toHaveLength(2)
     expect(named(events, 'complete')).toHaveLength(1)
+    expect(api.messages.value.find((message) => message.role === 'assistant').finishedAt).toBe(finishedAt)
   })
 
   it('reports live permission and question waits from the real record shapes', async () => {

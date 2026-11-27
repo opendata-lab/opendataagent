@@ -16,6 +16,7 @@ const toConversationMessage = (row) => ({
   })),
   taskId: row?.task_id ? String(row.task_id) : undefined,
   createdAt: row?.created_at ? String(row.created_at) : undefined,
+  finishedAt: row?.finished_at ? String(row.finished_at) : undefined,
   status: row?.status ? String(row.status) : undefined,
   error: row?.error ?? undefined,
   feedback: row?.feedback ? String(row.feedback) : '',
@@ -58,6 +59,7 @@ export function createNl2SqlTransport(api, topicId, context = {}) {
       taskId: String(task.task_id || task.taskId || ''),
       status: toRunStatus(task.task_status || task.status),
       detail: String(task.detail || task.error?.message || ''),
+      finishedAt: task.finished_at ? String(task.finished_at) : undefined,
       metadata,
     }
   }
