@@ -209,13 +209,13 @@ describe('PermissionConfirmationCard plan rendering', () => {
 })
 
 describe('PermissionConfirmationCard tool title', () => {
-  it('names the tool by its Chinese title instead of the English name', () => {
+  it('names the tool by its Chinese title and keeps the real name beside it', () => {
     const wrapper = mount(PermissionConfirmationCard, {
       props: { block: writeBlock({ tool_name: 'create_ticket', tool_title: '创建工单', title: '请确认写操作', summary: '创建工单' }) },
     })
-    expect(wrapper.find('.v2-perm-tool').text()).toBe('工具：创建工单')
+    // A third-party server picks its own title; the real name guards against a misleading one.
+    expect(wrapper.find('.v2-perm-tool').text()).toBe('工具：创建工单（create_ticket）')
     expect(wrapper.find('.v2-perm-summary').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('create_ticket')
   })
 
   it('falls back to the tool name when there is no title', () => {

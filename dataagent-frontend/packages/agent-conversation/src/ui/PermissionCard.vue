@@ -7,7 +7,8 @@
       <span class="v2-perm-title">{{ block.title || ('请确认操作：' + toolLabel) }}</span>
     </div>
     <div v-if="block.summary && block.summary !== toolLabel" class="v2-perm-summary">{{ block.summary }}</div>
-    <div class="v2-perm-tool">工具：<template v-if="block.tool_title">{{ block.tool_title }}</template><code v-else>{{ bareTool }}</code></div>
+    <!-- The title comes from the MCP server, so the real name stays visible on the approval gate. -->
+    <div class="v2-perm-tool">工具：<template v-if="block.tool_title">{{ block.tool_title }}（<code>{{ bareTool }}</code>）</template><code v-else>{{ bareTool }}</code></div>
     <details v-if="hasPreview" class="v2-perm-preview">
       <summary>参数详情</summary>
       <pre>{{ prettyPreview }}</pre>
