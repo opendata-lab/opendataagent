@@ -5,7 +5,7 @@ import { normalizeConversationMessage } from './message.js'
 import { ErrorCode, StreamInterrupted } from '../transport/errors.js'
 
 /** What the retry button sends: the agent continues the stopped run. */
-export const RETRY_CONTENT = '继续'
+const RETRY_CONTENT = '继续'
 
 const RETRY_DELAYS_MS = [1000, 2000, 4000]
 const POLL_INTERVAL_MS = 3000

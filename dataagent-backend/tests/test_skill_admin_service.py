@@ -44,9 +44,6 @@ class FakeSkillStore:
             if document.get("file_name") == "SKILL.md"
         }
 
-    def get_document_by_path(self, relative_path):
-        return self.documents.get(str(relative_path or "").replace("\\", "/").strip("/"))
-
     def save_document(
         self,
         *,
@@ -110,7 +107,7 @@ def configure_skill_filesystem(monkeypatch, tmp_path, store=None, *, settings=No
     persisted = {}
 
     # The disk-index fingerprint is module state; each test gets a fresh root.
-    skill_admin_service.reset_disk_index_signature()
+    monkeypatch.setattr(skill_admin_service, "_indexed_signature", None)
 
     monkeypatch.setattr(skill_admin_service, "resolve_skill_discovery_root_dir", lambda: discovery_root)
     monkeypatch.setattr(skill_admin_service, "resolve_skills_root_dir", lambda: discovery_root / BUSINESS_SKILL)
@@ -920,12 +917,7 @@ def test_out_of_band_disk_edits_surface_only_through_an_explicit_reindex(monkeyp
     assert all(item["description"] == "after" for item in refreshed)
 
 
-def test_reindex_does_not_query_each_file_individually(monkeypatch, tmp_path):
-    """Reindex issued one `get_document_by_path` per managed file.
-
-    Each of those is a fresh connection, so a plain GET paid ~84 of them on top
-    of the per-document settings reads.
-    """
+def test_reindex_reads_document_metadata_once(monkeypatch, tmp_path):
     discovery_root, store, _ = configure_skill_filesystem(monkeypatch, tmp_path)
 
     folder = discovery_root / "skill-a"
@@ -937,19 +929,21 @@ def test_reindex_does_not_query_each_file_individually(monkeypatch, tmp_path):
     # Seed the store so the second pass has nothing to write.
     skill_admin_service.reindex_documents_from_disk()
 
-    lookups = {"count": 0}
-    real_lookup = store.get_document_by_path
+    reads = 0
+    list_documents = store.list_documents
 
-    def counting_lookup(relative_path):
-        lookups["count"] += 1
-        return real_lookup(relative_path)
+    def count_reads():
+        nonlocal reads
+        reads += 1
+        return list_documents()
 
-    monkeypatch.setattr(store, "get_document_by_path", counting_lookup)
+    monkeypatch.setattr(store, "list_documents", count_reads)
+    monkeypatch.setattr(skill_admin_service, "_indexed_signature", None)
 
     changed = skill_admin_service.reindex_documents_from_disk()
 
     assert changed == [], "nothing changed on disk, so nothing should be rewritten"
-    assert lookups["count"] == 0, "hash comparison must use one bulk read, not per-file queries"
+    assert reads == 1
 
 
 def test_update_skill_runtime_enables_second_skill_without_changing_primary(monkeypatch):

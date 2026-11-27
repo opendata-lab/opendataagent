@@ -77,15 +77,6 @@ class AuthSettings:
     config_path: str = ""
 
     @property
-    def enabled(self) -> bool:
-        return True
-
-    @property
-    def local_login_enabled(self) -> bool:
-        # Password login against da_user is always available.
-        return True
-
-    @property
     def oauth_login_enabled(self) -> bool:
         return self.oauth.configured
 

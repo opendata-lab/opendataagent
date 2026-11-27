@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createChatState, processV2Record } from '../v2StreamParser'
-import { AgentEventType } from '../agentEvents/reducer.js'
+import { AgentEventType } from '../../../../packages/agent-conversation/src/core/agentEvents/reducer.js'
 
 // Behaviours specific to the Pi data plane that the shared projection fixture
 // does not cover. The fixture pins the SDK/Pi equivalence; this pins the parts

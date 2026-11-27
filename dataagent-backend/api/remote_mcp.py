@@ -349,8 +349,6 @@ def _published(agent_id: str, ctx: AccountContext) -> dict[str, Any]:
 async def _authenticate(
     request: StarletteRequest, agent_id: str, *, allow_web_session: bool = False,
 ) -> dict[str, Any]:
-    if not policy.enabled():
-        raise HTTPException(404)
     origin = _origin(request)
     if request.headers.get("origin", origin) != origin:
         raise HTTPException(403)
@@ -402,14 +400,8 @@ class CreateMcpTokenRequest(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 
 
-def _require_mcp_enabled() -> None:
-    if not policy.enabled():
-        raise HTTPException(404)
-
-
 def _token_user(
     request: Request,
-    _: Annotated[None, Depends(_require_mcp_enabled)],
     user: Annotated[User, Depends(current_user)],
 ) -> User:
     origin = request.headers.get("Origin")

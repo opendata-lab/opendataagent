@@ -10,7 +10,6 @@ reply, so whichever lands first wins and the other is a no-op.
 """
 from __future__ import annotations
 
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -62,20 +61,15 @@ def recommended_answers(questions: list[Any]) -> list[dict[str, Any]]:
 
 
 class InteractionDeadline:
-    """A wait's deadline on the monotonic clock, plus its wall-clock form for the card."""
+    """A card's wait duration and wall-clock deadline."""
 
     def __init__(self, seconds: int) -> None:
         self.seconds = max(0, int(seconds or 0))
-        self._at = time.monotonic() + self.seconds if self.seconds else None
         self.iso = (
             (datetime.now(timezone.utc) + timedelta(seconds=self.seconds)).isoformat(timespec="seconds")
             if self.seconds
             else ""
         )
-
-    @property
-    def expired(self) -> bool:
-        return self._at is not None and time.monotonic() >= self._at
 
 
 def question_deadline(cfg: Any) -> InteractionDeadline:

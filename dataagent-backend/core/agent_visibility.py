@@ -1,4 +1,4 @@
-"""Agent visibility mode normalization and access checks.
+"""Agent visibility mode normalization.
 
 ``da_agent_profile.visibility_json`` stores only ``{"mode": "all|selected"}``.
 Every caller is signed in, so "all" means every signed-in user.
@@ -11,19 +11,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.accounts.models import User
-from core.accounts.service import can_user_access_agent, filter_accessible_agents
-
 VISIBILITY_MODE_ALL = "all"
 VISIBILITY_MODE_SELECTED = "selected"
 VISIBILITY_MODES = (
     VISIBILITY_MODE_ALL,
     VISIBILITY_MODE_SELECTED,
 )
-
-
-def default_agent_visibility() -> dict[str, str]:
-    return {"mode": VISIBILITY_MODE_ALL}
 
 
 def normalize_agent_visibility(value: Any, *, strict: bool = False) -> dict[str, str]:
@@ -45,17 +38,6 @@ def normalize_agent_visibility(value: Any, *, strict: bool = False) -> dict[str,
         mode = VISIBILITY_MODE_ALL
 
     return {"mode": mode}
-
-
-def agent_visible_to(profile: dict[str, Any] | None, user: User | None) -> bool:
-    """Delegate assistant visibility check to core.accounts."""
-    return can_user_access_agent(user, profile)
-
-
-def filter_visible_agent_profiles(
-    profiles: list[dict[str, Any]], user: User | None
-) -> list[dict[str, Any]]:
-    return filter_accessible_agents(user, profiles)
 
 
 def _safe_json_load(value: Any) -> Any:

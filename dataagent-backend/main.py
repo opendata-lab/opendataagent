@@ -82,8 +82,7 @@ async def startup():
     # 绝不静默降级为无认证（见 docs/design/2026-07-01-dataagent-auth-design.md）。
     auth_settings = init_auth()
     logger.info(
-        "Auth %s config_path=%s",
-        "enabled" if auth_settings.enabled else "disabled",
+        "Auth enabled config_path=%s",
         auth_settings.config_path or "<unset>",
     )
     # 外置配置里的 DATAAGENT_SETTINGS 覆盖运行时 Settings（config.py 字段），

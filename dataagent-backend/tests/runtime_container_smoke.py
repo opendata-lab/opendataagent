@@ -1,11 +1,10 @@
-"""Fresh/reused volumes and rollback with the real backend images and Docker socket.
+"""Fresh and reused volumes with the real backend image and Docker socket.
 
-Requires oda-backend:test, oda-backend:rollback-test, oda-sandbox:test and the
+Requires oda-backend:test, oda-sandbox:test and the
 local dataagent-mysql/odw-local-redis containers. Uses a disposable schema and
 volumes, never the user's provider settings.
 """
 from __future__ import annotations
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -51,8 +50,8 @@ def wait_ready():
     raise TimeoutError(docker('logs',NAME,check=False)[-4000:])
 
 
-def start(image=None,legacy=False):
-    image=image or os.environ.get('DATAAGENT_SMOKE_BACKEND_IMAGE','oda-backend:test')
+def start():
+    image=os.environ.get('DATAAGENT_SMOKE_BACKEND_IMAGE','oda-backend:test')
     global backend_started
     args=['run','-d','--name',NAME,'--network',NETWORK,'-p','127.0.0.1:8902:8900',
         '-e','MYSQL_HOST=smoke-mysql','-e','MYSQL_PORT=3306','-e','MYSQL_USER=dataagent','-e','MYSQL_PASSWORD=dataagent123',
@@ -63,7 +62,6 @@ def start(image=None,legacy=False):
         '--mount',f'type=bind,src={WORK},dst=/dataagent_runtime',
         '--mount',f'type=volume,src={SKILLS},dst=/app/.claude/skills',
         '--mount',f'type=bind,src={os.environ.get("DATAAGENT_DOCKER_SOCKET", str(Path.home()/".docker/run/docker.sock") if sys.platform=="darwin" else "/var/run/docker.sock")},dst=/var/run/docker.sock']
-    if legacy: args+=['--user','1000:1000']
     docker(*args,image)
     backend_started=True
     wait_ready()
@@ -135,25 +133,6 @@ def main():
     assert request('GET',API+f'/tasks/{first}/message')['content']=='smoke-ok'
     run_liveness(topic)
     print('PASS reused volumes: migrations repeat, session import, retained messages and output',flush=True)
-    legacy=WORK/topic/'workspace/.dataagent/results'
-    docker('exec','--user','1000:1000',NAME,'python','-c',
-        "from pathlib import Path; p=Path('/dataagent_runtime/"+topic+"/workspace/.dataagent/results');p.mkdir(parents=True);(p/'res_legacy.json').write_text('{\"_format\":\"dataagent_jsonl_v1\",\"total_rows\":1}\\n{\"id\":42}\\n')")
-    docker('exec',NAME,'python','scripts/migrate_runtime_results.py')
-    migrated=WORK/topic/'results/res_legacy.json'
-    assert json.loads(migrated.read_text())['rows']==[{'id':42}]
-    docker('exec',NAME,'python','scripts/migrate_runtime_results.py')
-    assert (legacy/'res_legacy.json').exists()
-
-    docker('exec',NAME,'python','scripts/prepare_runtime_rollback.py')
-    stop();start('oda-backend:rollback-test',legacy=True)
-    assert 'smoke-ok' in request('GET',API+f'/tasks/{first}/message')['content']
-    assert (WORK/topic/'workspace/output/count.txt').read_text()=='20001'
-    run_liveness(topic)
-    print('PASS rollback image: newer tables ignored, messages/output retained, text-history follow-up works',flush=True)
-    stop();start()
-    run_liveness(topic)
-    assert json.loads(migrated.read_text())['rows']==[{'id':42}]
-    print('PASS re-upgrade: retained checkpoint table, fresh SDK state from full text history, result files unchanged',flush=True)
 
 
 if __name__=='__main__':

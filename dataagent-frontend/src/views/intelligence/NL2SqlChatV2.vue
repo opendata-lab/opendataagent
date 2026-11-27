@@ -1987,32 +1987,6 @@ watch(
   cursor: not-allowed;
 }
 
-/* kept for backwards compatibility */
-.v2-suggestion-card {
-  text-align: left;
-  padding: 14px 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #ffffff;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.55;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
-}
-
-.v2-suggestion-card:hover:not(:disabled) {
-  border-color: var(--odw-primary);
-  background: color-mix(in srgb, var(--odw-primary) 4%, #fff);
-  color: #162131;
-}
-
-.v2-suggestion-card:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
 .v2-config-empty {
   display: flex;
   flex-direction: column;

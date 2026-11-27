@@ -20,7 +20,6 @@ from pathlib import Path
 
 from core.topic_workspace import resolve_topic_workspace
 
-RESERVED_DIRNAME = ".claude"
 UPLOADS_DIRNAME = "uploads"
 OUTPUT_DIRNAME = "output"
 # The only workspace subtrees exposed to listing/download. `uploads/` holds

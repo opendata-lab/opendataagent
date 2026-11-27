@@ -9,13 +9,9 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from core.accounts import ROLE_ADMIN, ROLE_USER, reset_auth_for_tests, set_account_store_for_tests
-from core.agent_visibility import (
-    agent_visible_to,
-    default_agent_visibility,
-    filter_visible_agent_profiles,
-    normalize_agent_visibility,
-)
+from core.accounts import reset_auth_for_tests, set_account_store_for_tests
+from core.accounts.service import can_user_access_agent, filter_accessible_agents
+from core.agent_visibility import normalize_agent_visibility
 from tests.account_test_helpers import install_fake_accounts
 
 
@@ -33,7 +29,6 @@ def test_normalize_defaults_and_strips_legacy_lists():
     assert normalize_agent_visibility(None) == expected
     assert normalize_agent_visibility("") == expected
     assert normalize_agent_visibility({}) == expected
-    assert default_agent_visibility() == expected
     assert normalize_agent_visibility(
         {"mode": "selected", "allowed_users": ["local:alice"], "allowed_groups": ["ops"]}
     ) == {"mode": "selected"}
@@ -82,18 +77,18 @@ def test_visibility_matrix_with_user_and_role_grants():
     ]
 
     # Anonymous / None sees nothing.
-    assert filter_visible_agent_profiles(profiles, None) == []
-    assert agent_visible_to(profiles[0], None) is False
+    assert filter_accessible_agents(None, profiles) == []
+    assert can_user_access_agent(None, profiles[0]) is False
 
     # Ordinary user sees all, authenticated, direct user grant, and role grant.
-    visible_alice = filter_visible_agent_profiles(profiles, alice)
+    visible_alice = filter_accessible_agents(alice, profiles)
     assert [p["agent_id"] for p in visible_alice] == ["a_all", "a_auth", "a_user", "a_role"]
 
     # Admin sees every agent regardless of mode or grants.
-    visible_admin = filter_visible_agent_profiles(profiles, admin)
+    visible_admin = filter_accessible_agents(admin, profiles)
     assert len(visible_admin) == 5
 
     # Disabled user sees nothing.
     store.update_user(alice.id, is_active=False)
     disabled_alice = store.get_user(alice.id)
-    assert filter_visible_agent_profiles(profiles, disabled_alice) == []
+    assert filter_accessible_agents(disabled_alice, profiles) == []

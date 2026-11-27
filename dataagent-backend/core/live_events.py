@@ -60,10 +60,6 @@ def close_channel(task_id: str) -> None:
     channel.subscribers.clear()
 
 
-def is_live(task_id: str) -> bool:
-    return task_id in _channels
-
-
 def publish(task_id: str, record: dict[str, Any]) -> None:
     """Deliver one record to every subscriber. A full queue drops that subscriber."""
     channel = _channels.get(task_id)

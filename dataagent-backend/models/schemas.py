@@ -8,45 +8,6 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
-class FieldMeta(BaseModel):
-    field_name: str
-    field_type: str
-    field_comment: Optional[str] = None
-    is_primary: bool = False
-    is_partition: bool = False
-
-
-class TableMeta(BaseModel):
-    table_id: int
-    table_name: str
-    table_comment: Optional[str] = None
-    db_name: Optional[str] = None
-    layer: Optional[str] = None
-    business_domain: Optional[str] = None
-    data_domain: Optional[str] = None
-    fields: List[FieldMeta] = Field(default_factory=list)
-
-
-class SemanticEntry(BaseModel):
-    business_name: str
-    table_name: Optional[str] = None
-    field_name: Optional[str] = None
-    synonyms: List[str] = Field(default_factory=list)
-    description: Optional[str] = None
-
-
-class BusinessRule(BaseModel):
-    term: str
-    synonyms: List[str] = Field(default_factory=list)
-    definition: Optional[str] = None
-
-
-class QAExample(BaseModel):
-    question: str
-    answer: str
-    tags: List[str] = Field(default_factory=list)
-
-
 class CreateTopicRequest(BaseModel):
     title: Optional[str] = None
     agent_id: Optional[str] = None
@@ -290,16 +251,6 @@ class ModelDetectionResponse(BaseModel):
     status: str
     message: str
     checked_at: str
-
-
-class SettingsResponse(BaseModel):
-    default_provider_id: str
-    default_model: str
-    providers: List[ProviderConfig] = Field(default_factory=list)
-    skills_output_dir: str = ""
-    mysql_host: str = ""
-    mysql_port: int = 3306
-    mysql_database: str = ""
 
 
 class RuntimeProviderConfig(BaseModel):
@@ -901,9 +852,6 @@ class WidgetEventBatchRequest(BaseModel):
 
 class WidgetEventIngestResponse(BaseModel):
     accepted: int = 0
-
-
-TableMeta.model_rebuild()
 
 
 # ---- Evaluation ----

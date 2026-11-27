@@ -62,16 +62,14 @@ class AgentDraftStore:
         return row
 
     def _result(self, row: dict) -> dict:
-        from core.remote_mcp_policy import PREFIX, enabled
+        from core.remote_mcp_policy import PREFIX
         draft = json.loads(row["draft_json"])
-        available = enabled()
         # The MCP switch is not part of the draft: it acts on the published
         # assistant at once. A path: the page prefixes the origin it was opened from.
         live = get_agent_profile(draft["agent_id"]) if int(row["published_version"]) else None
         on = bool(live and live.get("remote_mcp_enabled"))
         return {**configuration(draft), "remote_mcp_enabled": on,
-                "remote_mcp_available": available,
-                "remote_mcp_path": f"{PREFIX}/{draft['agent_id']}/mcp" if available and on else "",
+                "remote_mcp_path": f"{PREFIX}/{draft['agent_id']}/mcp" if on else "",
                 "revision": int(row["revision"]),
                 "published_version": int(row["published_version"]),
                 "has_changes": row.get("published_json") != row["draft_json"],

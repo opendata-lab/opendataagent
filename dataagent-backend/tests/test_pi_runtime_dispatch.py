@@ -2,19 +2,12 @@
 from pathlib import Path
 import sys
 import pytest
-from pydantic import ValidationError
 sys.path.insert(0,str(Path(__file__).parents[1]))
-from config import Settings,resolve_runtime_kind
+from config import Settings
 from core import task_executor as executor
 from core.agent_identity import current_headers
 from core.pi_runtime import PiRunOutcome
 from core.task_executor import TaskExecutionInput
-
-
-def test_only_pi_is_accepted():
-    assert resolve_runtime_kind(Settings(_env_file=None))=='pi_agent_core'
-    for value in ('claude_code','typo'):
-        with pytest.raises(ValidationError): Settings(_env_file=None,dataagent_runtime_kind=value)
 
 
 @pytest.fixture

@@ -313,31 +313,3 @@ export function isRenderableStructuredOutput(text: string): boolean {
     return false;
   }
 }
-
-/** Opening line of a rendered digest; also how other passes recognise one. */
-export const PERSISTED_OUTPUT_OPEN = "<persisted-output>";
-
-/**
- * Drop the preview rows from an already-rendered digest, keeping the part that
- * tells the model where the result is and how to read it.
- *
- * Used when a folded result scrolls into history: the samples earned their
- * tokens on the turn they arrived, not several turns later. Lives here so the
- * shape is known in one place — the pruner used to match on the old JSON layout
- * itself, which is what made changing that layout break it silently.
- */
-export function stripRenderedPreview(text: string): string | null {
-  if (!text.startsWith(PERSISTED_OUTPUT_OPEN)) {
-    return null;
-  }
-  const lines = text.split("\n");
-  const firstPreview = lines.findIndex((line) => line.startsWith("Preview ("));
-  if (firstPreview < 0) {
-    return null;
-  }
-  return [
-    ...lines.slice(0, firstPreview),
-    "Preview dropped: this result arrived in an earlier turn. Read it back with read, grep or bash using the saved /mnt/results path.",
-    "</persisted-output>",
-  ].join("\n");
-}

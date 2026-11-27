@@ -41,10 +41,6 @@ export function toRunStatus(taskStatus) {
   return FROM_TASK_STATUS[String(taskStatus || '').trim().toLowerCase()] || 'failed'
 }
 
-export function isActive(status) {
-  return ACTIVE_RUN_STATUSES.has(status)
-}
-
 export function isTerminal(status) {
   return TERMINAL_RUN_STATUSES.has(status)
 }

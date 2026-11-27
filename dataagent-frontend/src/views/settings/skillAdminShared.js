@@ -10,8 +10,6 @@ const SOURCE_LABELS = {
   managed: '本地导入'
 }
 
-export const cloneValue = (value) => JSON.parse(JSON.stringify(value))
-
 export const sourceLabel = (source) => SOURCE_LABELS[source] || '未知来源'
 
 export const sortDocuments = (documents = []) => {

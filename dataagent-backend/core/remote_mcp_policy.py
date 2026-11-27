@@ -18,10 +18,6 @@ class RemoteMcpError(ValueError):
         self.next_step = next_step
 
 
-def enabled() -> bool:
-    return True
-
-
 def endpoint(origin: str, agent_id: str) -> str:
     if not re.fullmatch(_AGENT_ID, agent_id):
         raise RemoteMcpError("not_found", "找不到 MCP 助手")

@@ -11,7 +11,6 @@ from core.skill_discovery import SkillDiscoveryError, resolve_skill_discovery_ro
 logger = logging.getLogger(__name__)
 
 # Legacy log directory retained for inspecting old task logs.
-LOGS_DIRNAME = "logs"
 CONTAINER_RUNTIME_ROOT = Path("/dataagent_runtime")
 
 
@@ -24,10 +23,6 @@ def _safe_topic_id(topic_id: str) -> str:
     if not safe_id:
         raise ValueError("topic_id is required")
     return safe_id
-
-
-def sanitize_topic_id(topic_id: str) -> str:
-    return _safe_topic_id(topic_id)
 
 
 def _resolve_runtime_root(raw: str | None = None) -> Path:

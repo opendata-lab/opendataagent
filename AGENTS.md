@@ -145,7 +145,7 @@ Use Node from `.nvmrc` (`. "$HOME/.nvm/nvm.sh" && nvm use`) before frontend/runt
 
 ### Intelligent Query runtime engine selection
 
-- `DATAAGENT_RUNTIME_KIND` accepts only `pi_agent_core`, the production and local engine. The Claude SDK path and `DATAAGENT_SANDBOX_MODE` were removed.
+- Pi (`pi_agent_core`) is the runtime engine in production and local environments.
 - Point `DATAAGENT_RUNTIME_PI_DIR` at `<repo>/dataagent-runtime-pi` when running outside a container.
 - Build Pi first (`nvm use`, then `npm run build` in `dataagent-runtime-pi`); the backend starts its compiled output as a child process. Rebuild after TypeScript edits.
 - Build the tools-only sandbox before a local smoke that executes tools: `docker build -f dataagent-backend/Dockerfile.sandbox -t oda-sandbox:latest .` from the repo root. Docker must be available for sandbox tool execution. Pi and model/MCP connections stay in the backend; sandbox containers start lazily and have no network or provider credentials.

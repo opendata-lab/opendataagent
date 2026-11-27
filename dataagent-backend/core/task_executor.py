@@ -129,8 +129,6 @@ async def _execute_task_stream(params: TaskExecutionInput, *,
         "DATAAGENT_ENABLED_SKILLS": ",".join(roots),
         "DATAAGENT_ENABLED_SKILL_ROOTS":json.dumps({name:f"/opt/skills/{name}" for name in roots}),
         "DATAAGENT_PLAN_STATE":"approved" if plan_approved or mode != "plan" else "pending",
-        "DATAAGENT_QUERY_LIMIT":str(cfg.query_result_limit),
-        "DATAAGENT_RESULT_PREVIEW_ROWS":str(min(20,cfg.query_result_limit)),
         "DATAAGENT_ORIGINAL_QUESTION":params.question,
         "DATAAGENT_SQL_READ_TIMEOUT_SECONDS":str(min(params.sql_read_timeout_seconds or limits["total_timeout_seconds"],limits["total_timeout_seconds"])),
         "DATAAGENT_SQL_WRITE_TIMEOUT_SECONDS":str(min(params.sql_write_timeout_seconds or 60,limits["total_timeout_seconds"]))}

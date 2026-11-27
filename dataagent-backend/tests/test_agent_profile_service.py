@@ -61,7 +61,7 @@ def test_listing_agents_does_not_reseed_builtins_on_every_read(monkeypatch):
     """
     store = _RecordingProfileStore()
     monkeypatch.setattr(agent_profile_service, "get_agent_profile_store", lambda: store)
-    agent_profile_service.reset_builtin_agent_seed()
+    monkeypatch.setattr(agent_profile_service, "_builtin_agents_seeded", False)
 
     agent_profile_service.list_agent_profiles()
     seeding_calls = [call for call in store.calls if call != "list_profiles"]
@@ -82,25 +82,10 @@ def test_listing_agents_does_not_reseed_builtins_on_every_read(monkeypatch):
     assert store.calls.count(f"get_profile:{agent_profile_service.DEFAULT_AGENT_ID}") == 5
 
 
-def test_reset_builtin_agent_seed_allows_reseeding(monkeypatch):
-    store = _RecordingProfileStore()
-    monkeypatch.setattr(agent_profile_service, "get_agent_profile_store", lambda: store)
-    agent_profile_service.reset_builtin_agent_seed()
-
-    agent_profile_service.list_agent_profiles()
-    assert "backfill_default_bindings" in store.calls
-
-    store.calls.clear()
-    agent_profile_service.reset_builtin_agent_seed()
-    agent_profile_service.list_agent_profiles()
-
-    assert "backfill_default_bindings" in store.calls
-
-
 def test_bootstrap_default_agent_profile_still_returns_default(monkeypatch):
     store = _RecordingProfileStore()
     monkeypatch.setattr(agent_profile_service, "get_agent_profile_store", lambda: store)
-    agent_profile_service.reset_builtin_agent_seed()
+    monkeypatch.setattr(agent_profile_service, "_builtin_agents_seeded", False)
 
     profile = agent_profile_service.bootstrap_default_agent_profile()
 
@@ -129,7 +114,7 @@ def test_redeployment_seed_preserves_edited_builtin_profiles(monkeypatch):
     default = store.profiles[agent_profile_service.DEFAULT_AGENT_ID]
     default.update(name="用户命名", skill_folders=["custom-skill"], system_prompt="用户提示词")
     monkeypatch.setattr(agent_profile_service, "get_agent_profile_store", lambda: store)
-    agent_profile_service.reset_builtin_agent_seed()
+    monkeypatch.setattr(agent_profile_service, "_builtin_agents_seeded", False)
     agent_profile_service.ensure_builtin_agent_profiles()
     assert "save_profile" not in store.calls
     assert store.profiles[agent_profile_service.DEFAULT_AGENT_ID] == default
@@ -140,7 +125,7 @@ def test_a_missing_experience_digest_agent_is_seeded_once(monkeypatch):
     store = _RecordingProfileStore()
     del store.profiles[DIGEST_AGENT_ID]
     monkeypatch.setattr(agent_profile_service, "get_agent_profile_store", lambda: store)
-    agent_profile_service.reset_builtin_agent_seed()
+    monkeypatch.setattr(agent_profile_service, "_builtin_agents_seeded", False)
     agent_profile_service.ensure_builtin_agent_profiles()
     assert store.calls.count("save_profile") == 1
 

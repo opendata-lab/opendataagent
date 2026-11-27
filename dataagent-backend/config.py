@@ -24,7 +24,6 @@ def _warn_legacy_sandbox_network() -> None:
 
 class Settings(BaseSettings):
     # ---- 服务 ----
-    app_name: str = "dataagent-backend"
     host: str = "0.0.0.0"
     port: int = 8900
     debug: bool = False
@@ -36,12 +35,10 @@ class Settings(BaseSettings):
     # ---- LLM Provider / Model ----
     llm_provider: str = ""  # anthropic | openrouter | anyrouter | anthropic_compatible
     claude_model: str = ""
-    claude_max_tokens: int = 4096
     # One budget tier for every task; an agent's positive max_turns overrides
     # only the turn budget. Card waits are not counted (design 3.5).
     agent_max_turns: int = Field(default=40, gt=0)
     agent_max_tool_calls: int = Field(default=200, gt=0)
-    agent_wait_timeout_seconds: int = 20
     agent_timeout_seconds: int = Field(default=1800, gt=0)
     agent_bash_timeout_seconds: int = Field(default=600, gt=0)
     agent_sql_read_timeout_seconds: int = Field(default=300, gt=0)
@@ -72,7 +69,6 @@ class Settings(BaseSettings):
     mysql_port: int = 3306
     mysql_user: str = "dataagent"
     mysql_password: str = "dataagent123"
-    mysql_database: str = "dataagent"
     session_mysql_database: str = Field(default="dataagent", validation_alias=AliasChoices("MYSQL_DATABASE", "SESSION_MYSQL_DATABASE", "DATAAGENT_SESSION_MYSQL_DATABASE"))
 
     # ---- Redis（task 协调）----
@@ -93,11 +89,8 @@ class Settings(BaseSettings):
     # the agent's plan_timeout_action. 0 waits for the user indefinitely.
     dataagent_interaction_timeout_seconds: int = Field(default=600, ge=0)
 
-    # Pi is the sole engine; tools execute in a separate sandbox.
-    dataagent_runtime_kind: Literal["pi_agent_core"] = "pi_agent_core"
-    # Node binary and built Pi Cell entrypoint used when runtime kind is
-    # pi_agent_core. Empty values fall back to `node` on PATH and the in-repo
-    # dataagent-runtime-pi build output.
+    # Node binary and built Pi Cell entrypoint. Empty values fall back to
+    # `node` on PATH and the in-repo dataagent-runtime-pi build output.
     dataagent_node_bin: str = ""
     dataagent_runtime_pi_dir: str = ""
     # Timeout and context governance settings for pi_agent_core runtime.
@@ -149,12 +142,6 @@ class Settings(BaseSettings):
     # reach PyPI set a mirror here. Empty keeps pip's default.
     dataagent_sandbox_pip_index_url: str = ""
     dataagent_sandbox_pip_trusted_host: str = ""
-
-    # ---- 运行策略 ----
-    max_few_shot_examples: int = 5
-    max_schema_tables: int = 10
-    max_business_rules: int = 5
-    query_result_limit: int = 1000
 
     @model_validator(mode="before")
     @classmethod
@@ -254,11 +241,3 @@ def resolve_run_limits(
         "max_tool_calls": int(cfg.agent_max_tool_calls),
         "bash_timeout_seconds": int(cfg.agent_bash_timeout_seconds),
     }
-
-
-SUPPORTED_RUNTIME_KINDS = ("pi_agent_core",)
-DEFAULT_RUNTIME_KIND = "pi_agent_core"
-
-
-def resolve_runtime_kind(cfg: Settings) -> str:
-    return cfg.dataagent_runtime_kind
