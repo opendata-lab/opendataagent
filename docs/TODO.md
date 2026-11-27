@@ -10,6 +10,12 @@
 
 ## DataAgent 运行时与插件
 
+### 撤销本会话的工具授权入口
+
+- **现状**（2026-11-26）：写操作审批已支持“本会话内允许此工具”（存入 `da_agent_topic.approved_tools_json`，仅限非破坏性 MCP 工具，新会话自动重置），但会话菜单尚无手动撤销已授权工具的入口。
+- **要做**：在会话菜单增加“撤销本会话的工具授权”入口与后端清空接口，允许用户不新建会话即重新恢复逐次确认。
+- **来源**：[审批体验设计](design/2026-11-26-approval-ux-design.md) · [计划](plans/2026-11-26-approval-ux-plan.md)，2026-11-26。
+
 ### 独立登录 Widget 的统一账号与续聊
 
 - **现状**（2026-11-24）：DataAgent 仓库侧（计划第 1、2、3、5 步）已在分支 `feat/user-accounts` 完成：新增 `da_user` / `da_user_identity` / `da_role` / `da_user_role` / `da_agent_grant` 及整数 `user_id` 外键迁移 `20261123_000042`（Alembic 只建表并重建 MCP 令牌表；旧数据由手动执行的 `scripts/migrate-accounts.sh` 迁移；迁移只能向前，回退用 `scripts/backup-db.sh` / `scripts/restore-db.sh`），统一 `core/accounts` 模块（移除 `core/auth.py` 与关闭认证/匿名 Widget 旁路），上线用户管理（仅停用不物理删除）、角色管理、个人资料、助手独立授权及服务端受信任代理配置页，并同步更新本地冒烟、评测脚本、部署配置与手册。
@@ -56,7 +62,15 @@
 - **身份**：定时消息以所属会话的所有者（`da_agent_topic.user_id`）身份执行，和手动发消息走同一条路径。2026-11-10 起 OpenDataWorks MCP 只按服务账号 Token 授权，用户标识只记审计，不再有"人 EXPLAIN"检查（[服务令牌模式设计](https://github.com/opendata-lab/opendataworks/blob/main/docs/design/2026-11-09-mcp-service-token-mode-design.md)）。
 - **要做**：决定是否正式提供定时任务。若提供，需要单独的定时任务菜单（列表、创建/编辑 cron、启停、执行记录），并按中大型变更先写设计和计划；若不提供，删除后端接口、定时循环、两张表和前端封装。
 
+### 知识运行前检索与钩子注入（知识修订的后续）
+
+- **现状**（2026-11-26）：知识修订第一期只有“系统提示词中的知识目录 + 模型自行扩展关键词 grep/read”，没有运行前检索。Pi 以空扩展列表运行（`dataagent-runtime-pi/src/kernel/sdk-session.ts`）。
+- **要做**：知识多到目录放不下、或实测模型常漏读时，加运行前检索（MySQL 内置 ngram 全文索引，本地 8.0.46 已确认可用；需确认生产版本 ≥5.7.6），结果经 Pi 官方 `before_agent_start` 钩子作为会话消息注入（用公开的 `DefaultResourceLoader` 加载内联扩展）。检索文本带最近 1–2 条用户消息；卡片恢复不重复注入；不设固定分数阈值；ngram 的两字片段语义（`dwd_order`/`dwd_customer`、单字、停用词）要测。钩子应做成通用“上下文提供者”，与下方插件机制一起设计，供本体查询复用。
+- **来源**：用户 2026-11-26 讨论；Neon 与 Codex 两轮评审（`~/.agents/handoffs/2026-11-26-{neon,codex}-knowledge-retrieval-review/`）。[设计](design/2026-11-19-experience-library-design.md)
+
 ### 插件管理与导入（暂缓，后续专门实施）
+
+- **补充**（2026-11-26 用户讨论）：参考 Claude Code / ZCode 的 plugin（一个包内含 skills、子智能体、hooks、MCP，从市场安装）。插件机制设计时一并考虑 hooks（服务端以 HTTP 处理程序为主，沙箱无网络）与子智能体；运行前钩子与上方“知识运行前检索”共用通用接口。OntoFoundry 本体查询是第一个用例。
 
 - **新需求：整包安装插件**（2026-11-05 用户提出）：DataAgent 能直接导入一个插件 ZIP，不再靠管理员手工拼装。第一个真实用例是 OntoFoundry v0.2.7 的 `ontofoundry-dataagent-plugin.zip`。
   - **现状**：它的 `plugin.json` 写明 `installation: manual-admin`、限制“DataAgent 暂不支持整包原生加载”。管理员现在要手工完成五步：运行 `install.sh` 把三个技能复制到 `SKILLS_ROOT_DIR`；按 `plugin.json` 的 `mcp_services` 登记 OntoFoundry MCP 并录入凭据；把 `agents/*.md` 的提示词同步到两个已有 Agent，按清单挂载技能、设 `max_turns`；停用旧技能目录；重启 DataAgent。
@@ -149,7 +163,7 @@
 ## 评测
 
 - **参考 SQL 无处执行**（2026-10-27 拆分复核，codex 审查发现）：三个评测器（builtin / deepeval / opik）的 `expected_result.reference_query` 仍 POST `/api/v1/nl2sql/query/execute`，该接口随平台直连代理一起删除，带参考 SQL 的用例会以 `reference_sql_failed` 失败。需要决定参考结果的来源：数据集里预先存放期望行，或由评测侧显式配置一个外部只读查询入口；然后同步改三个评测器、`dataset/schema-v2.json`、README、示例与测试。
-- **评测时间历史混合数据与脚本硬编码 +8**（2026-11-26，全栈时区统一缩减项）：`eval_dataset.updated_at` 与 `eval_run.started_at` 历史行存在 UTC 与数据库本地时区混合写入（本次 `20261126_000043` 迁移按设计不做启发式猜测改写）；同时 `tools/dataagent-evals/{builtin,deepeval,opik}/run.py` 的相对日期校验仍硬编码 `+08:00`，且 `deepeval`/`opik` 上报摘要尚未携带带偏移的 `started_at`。要做：将三个评测脚本改为读取 `expected_time.timezone` / `DATAAGENT_TIMEZONE` 并统一上报 RFC 3339 `Z` 的 `started_at`；如需清理存量评测时间，按具体批次人工核对后一次性修正。来源：[设计](design/2026-11-26-timezone-unification-design.md#47-评测) · [计划](plans/2026-11-26-timezone-unification-plan.md)。
+- **评测时间历史混合数据与脚本硬编码 +8**（2026-11-26，全栈时区统一缩减项）：`eval_dataset.updated_at` 与 `eval_run.started_at` 历史行存在 UTC 与数据库本地时区混合写入（本次 `20261127_000045` 迁移按设计不做启发式猜测改写）；同时 `tools/dataagent-evals/{builtin,deepeval,opik}/run.py` 的相对日期校验仍硬编码 `+08:00`，且 `deepeval`/`opik` 上报摘要尚未携带带偏移的 `started_at`。要做：将三个评测脚本改为读取 `expected_time.timezone` / `DATAAGENT_TIMEZONE` 并统一上报 RFC 3339 `Z` 的 `started_at`；如需清理存量评测时间，按具体批次人工核对后一次性修正。来源：[设计](design/2026-11-26-timezone-unification-design.md#47-评测) · [计划](plans/2026-11-26-timezone-unification-plan.md)。
 
 ## Plugin 打包与导入
 

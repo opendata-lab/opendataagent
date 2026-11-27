@@ -1,7 +1,7 @@
 """Unify historical Path-A DATETIME columns to UTC.
 
-Revision ID: 20261126_000043
-Revises: 20261123_000042
+Revision ID: 20261127_000045
+Revises: 20261126_000044
 Create Date: 2026-11-26 12:00:00
 
 Design: docs/design/2026-11-26-timezone-unification-design.md.
@@ -23,8 +23,8 @@ import logging
 from alembic import op
 from sqlalchemy import inspect
 
-revision = "20261126_000043"
-down_revision = "20261123_000042"
+revision = "20261127_000045"
+down_revision = "20261126_000044"
 branch_labels = None
 depends_on = None
 
@@ -80,10 +80,10 @@ def upgrade() -> None:
     bind = op.get_bind()
     offset_seconds = _detect_legacy_offset_seconds(bind)
     if offset_seconds == 0:
-        logger.info("timezone migration 20261126_000043: offset_seconds=0; no rows modified")
+        logger.info("timezone migration 20261127_000045: offset_seconds=0; no rows modified")
         return
 
-    logger.info("timezone migration 20261126_000043: shifting Path-A DATETIME columns by -%s seconds", offset_seconds)
+    logger.info("timezone migration 20261127_000045: shifting Path-A DATETIME columns by -%s seconds", offset_seconds)
     inspector = inspect(bind)
 
     for table, columns in _PATH_A_TABLES:

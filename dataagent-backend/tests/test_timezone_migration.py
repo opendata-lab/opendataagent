@@ -1,4 +1,4 @@
-"""MySQL migration tests for 20261126_000043_unify_utc_timestamps (both +08:00 and UTC cases)."""
+"""MySQL migration tests for 20261127_000045_unify_utc_timestamps (both +08:00 and UTC cases)."""
 from __future__ import annotations
 
 import importlib.util
@@ -15,11 +15,11 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, pool
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-MIGRATION_PATH = BACKEND_ROOT / "alembic" / "versions" / "20261126_000043_unify_utc_timestamps.py"
+MIGRATION_PATH = BACKEND_ROOT / "alembic" / "versions" / "20261127_000045_unify_utc_timestamps.py"
 
 
 def _load_migration_module():
-    spec = importlib.util.spec_from_file_location("mig_20261126_000043", MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location("mig_20261127_000045", MIGRATION_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
@@ -54,7 +54,7 @@ def _throwaway_schema(schema: str):
     )
     try:
         subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "20261123_000042"],
+            [sys.executable, "-m", "alembic", "upgrade", "20261126_000044"],
             cwd=str(BACKEND_ROOT),
             env=env,
             check=True,
@@ -365,7 +365,7 @@ def test_failed_upgrade_rolls_back_so_rerun_shifts_once():
 
             def upgrade():
                 return subprocess.run(
-                    [sys.executable, "-m", "alembic", "upgrade", "20261126_000043"],
+                    [sys.executable, "-m", "alembic", "upgrade", "20261127_000045"],
                     cwd=str(BACKEND_ROOT), env=env, capture_output=True, text=True,
                 )
 
@@ -374,7 +374,7 @@ def test_failed_upgrade_rolls_back_so_rerun_shifts_once():
             assert _snapshot(schema) == before
             with root.cursor() as cur:
                 cur.execute("SELECT version_num FROM alembic_version")
-                assert cur.fetchone()[0] == "20261123_000042"
+                assert cur.fetchone()[0] == "20261126_000044"
                 cur.execute("DROP TRIGGER tz_test_fail")
 
             rerun = upgrade()
