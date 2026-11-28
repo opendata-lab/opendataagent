@@ -2,19 +2,7 @@
 
 来源：2026-10-27 从 opendataworks docs/TODO.md 迁出；原设计和报告位于来源仓库。
 
-## 知识与记忆验证补全
-
-- **现状**（2026-11-27 更新）：PR 2（只保留知识）已实施：取消“记忆”概念与 `/memories` 路由，迁移 `20261127_000047` 删除 `kind` / `inject_mode`、原样保留存量 memory 行为知识并将 `content` 扩为 MEDIUMTEXT（正文上限 20000 字，总结产出仍 500 字）；改为全部按需读取（目录上限 100 条、挂载全部可见生效知识文件、提示词约定扩展关键词 grep 与分段 read，预览与运行共用资格判断）；管理页合并为单一知识页，对话中 `read`/`grep`/`find` 访问知识目录时展示书本图标与“查阅知识 / 搜索知识”；每日总结技能放开有对话依据的业务口径提炼。后端全量测试、MySQL 临时库集成与迁移测试、前端全量测试及构建已通过。
-- **要做**：在 `dataagent_qa`（MySQL `127.0.0.1:3326`、Redis、真实模型、Docker 沙箱）完成实施计划第 8 项本地端到端验证：粘贴几千字口径文档并审核通过每日总结知识；用不含原词的口语化问题提问，确认模型经目录或扩展关键词 grep 找到知识并分段 read，对话中显示“搜索知识 / 查阅知识”与书本图标；手动触发一次每日总结确认产出待审核知识（含带依据的业务口径）；同时补桌面和窄屏页面检查、沙箱只读挂载及关闭开关后不注入确认。后续演进项见下方“知识运行前检索与钩子注入”“插件管理与导入”“MCP 工具名命名空间”。
-- **来源**：[设计](design/2026-11-19-experience-library-design.md)、[计划](plans/2026-11-19-experience-library-plan.md)，2026-11-19 初版实现与 2026-11-27 PR 2（只保留知识）。
-
 ## DataAgent 运行时与插件
-
-### 调用方仍在传已废弃的 `execution_mode`
-
-- **现状**（2026-11-27 核实）：DataAgent 早已忽略提交接口的 `execution_mode`，但 OntoFoundry（`apps/api/src/ontofoundry_api/services/dataagent.py` 的 `deliver_message`）与 OpenDataWorks（`frontend/src/views/datastudio/composables/useMetadataGeneration.js`）仍在发送。
-- **要做**：在两个仓库删掉该字段及相关传参；DataAgent 侧无需改动。
-- **来源**：移除 `database` 提示参数时顺带核对调用方，2026-11-27。
 
 ### 独立登录 Widget 的统一账号与续聊
 
@@ -225,6 +213,10 @@
 - **前端依赖审计**：2026-11-03 全新 npm ci 报告 29 项漏洞（10 moderate、17 high、2 critical）；需单独核对并升级传递依赖，本次未执行强制修复。来源：本次本地工具链安装；关联[实施计划](plans/2026-11-03-agent-runtime-sandbox-architecture-plan.md)，前端生产构建通过。
 
 ## 已完成
+
+- **知识与记忆验证补全**（2026-11-27，[#95](https://github.com/opendata-lab/opendataagent/pull/95)）：只保留知识 PR 已合并，Codex 同日完成本地真实模型端到端验证（`~/.agents/handoffs/2026-11-27-codex-knowledge-verify/result.md`）：存量 memory 行迁移、无“记忆”菜单与 `/memories` 路由、目录命中与 `read`/`grep` 书本图标展示、每日总结产出待审核知识并按持久化来源助手归属。[设计](design/2026-11-19-experience-library-design.md) · [计划](plans/2026-11-19-experience-library-plan.md)
+
+- **调用方仍在传已废弃的 `execution_mode`**（2026-11-27，[ontofoundry#122](https://github.com/opendata-lab/ontofoundry/pull/122)、[opendataworks#526](https://github.com/opendata-lab/opendataworks/pull/526)）：OntoFoundry 与 OpenDataWorks 均已移除向 DataAgent 发送的 `execution_mode` 字段。
 
 - **写操作审批体验（等待审批显示失败、重复行，会话授权与拒绝说明）**（2026-11-26，[#87](https://github.com/opendata-lab/opendataagent/pull/87)）：拦截待审批工具时标记 `awaiting_approval: true` 且 `is_error: false`，恢复执行复用原 `tool_call_id` 合并为同一行（等待确认 → 正在执行 → 已执行 / 执行失败 / 已拒绝 / 未执行）；卡片标题改为“{名} 需要你确认”，保留“工具：中文名（真实名）”，非破坏性工具支持“本会话内允许此工具”（持久化至 `da_agent_topic.approved_tools_json`，破坏性工具忽略 `remember`），拒绝时支持填写可选说明。主应用、Widget、SDK 同步生效。[设计](design/2026-11-26-approval-ux-design.md) · [计划](plans/2026-11-26-approval-ux-plan.md)
 
