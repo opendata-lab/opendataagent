@@ -1,6 +1,6 @@
 {
   "name": "@opendataagent/agent-conversation",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/opendata-lab/opendataagent.git",
